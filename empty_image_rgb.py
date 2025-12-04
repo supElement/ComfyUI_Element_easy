@@ -21,12 +21,12 @@ class EmptyImageRGB:
             },
         }
 
-    # 必须定义输出类型
+    # 输出类型
     RETURN_TYPES = ("IMAGE", "INT", "INT")
     RETURN_NAMES = ("IMAGE", "actual_width", "actual_height")
     FUNCTION = "generate"
     
-    # 你的分类
+    # 分类
     CATEGORY = "Element_easy/image"
 
     def generate(self, width, height, divisible_by, color_code):
@@ -69,7 +69,7 @@ class EmptyImageRGB:
         image_tensor[0, :, :, 1] = g
         image_tensor[0, :, :, 2] = b
 
-        # --- 4. UI 反馈信息 (关键部分) ---
+        # --- 4. UI 反馈信息 ---
         info_text = (
             f"Color: RGB{tuple(color)}\n"
             # f"Set Size: {width} x {height}\n"
@@ -77,9 +77,9 @@ class EmptyImageRGB:
             f"▶ Actual: {actual_w} x {actual_h}"
         )
 
-        # ★★★ 重点：这里必须返回一个字典，包含 "ui" 和 "result" ★★★
-        # "ui": {"text":List[string]} 是传给 JS 的
-        # "result": Tuple 是传给下一个节点的
+        # 返回一个字典，包含 "ui" 和 "result"
+        # "ui": {"text":List[string]} 传给 JS
+        # "result": Tuple 传给下一个节点
         return {
             "ui": {"text": [info_text]}, 
             "result": (image_tensor, actual_w, actual_h)

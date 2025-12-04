@@ -1,5 +1,5 @@
 # __init__.py
-__version__ = "1.2.3" 
+__version__ = "0.0.6" 
 
 from .random_chars import RandomCharacterGenerator
 from .empty_image_rgb import EmptyImageRGB
@@ -20,3 +20,4 @@ NODE_DISPLAY_NAME_MAPPINGS = {
 }
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
+

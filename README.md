@@ -1,7 +1,5 @@
 # ComfyUI_Element_easy
 
-## Version
-**v0.0.6**
 
 3个方便我自己使用的小节点，我不是程序员，所以可能不会继续更新。
 
@@ -16,3 +14,6 @@ Random Chars (Append)：为输入的文本添加无效的特殊字符（可以�
 
 <img width="1590" height="1080" alt="节点截图 2025-12-04 164008" src="https://github.com/user-attachments/assets/1cdacfe2-7c7a-4434-9f48-1ec571bb19ab" />
 
+
+## Version
+**v0.0.6**

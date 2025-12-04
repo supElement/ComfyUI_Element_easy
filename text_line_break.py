@@ -51,7 +51,7 @@ class TextLineBreak:
         if width <= 0: return text
         wrapped_output = []
         
-        # 避头字符集：这些符号绝不能出现在行首
+        # 避头字符集
         # 包含了全角/半角标点
         no_start_chars = "，。？！：；”’）》]…,.;:?!)]}、"
         
@@ -92,9 +92,9 @@ class TextLineBreak:
                     if not is_valid_break_point:
                         continue
 
-                    # B. 判断断开后是否违反避头规则 (关键修复！)
+                    # B. 判断断开后是否违反避头规则
                     # 如果我们在 'i' 处断开，那么 'char_after' 就会变成下一行的行首
-                    # 如果它是避头字符，这里绝对不能断！
+                    # 如果它是避头字符不能断！
                     if char_after in no_start_chars:
                         continue
                         

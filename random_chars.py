@@ -28,7 +28,7 @@ class RandomCharacterGenerator:
                 "link_text": ("STRING", {
                     "default": "", "multiline": False, "placeholder": "连接符"
                 }),
-                # 4. 插入位置 (这是你新增的功能)
+                # 4. 插入位置
                 "location": (["end", "insert", "before"], {"default": "end"}),
                 # 5. 种子
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
@@ -45,7 +45,7 @@ class RandomCharacterGenerator:
     RETURN_NAMES = ("final_text", "char_count")
     FUNCTION = "process"
     
-    # 分类：在菜单中显示的位置
+   
     CATEGORY = "Element_easy/Text"
 
     def process(self, character_pool, max_count, link_text, location, seed, text_A=None, text_B=None, text_C=None, text_D=None):

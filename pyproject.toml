@@ -1,6 +1,6 @@
 [project]
 name = "element_easy"
-description = "Some easy-to-use lightweight nodes, mostly for image and mask processing."
+description = "Some easy-to-use lightweight nodes, mostly for image and mask processing.black_white_color, chessboard, empty_image_rgb, image_pad_blur, mask_noise_element, mask_stroke, random_chars, text_line_break."
 version = "1.1.0"
 license = {file = "LICENSE"} 
 # classifiers = [

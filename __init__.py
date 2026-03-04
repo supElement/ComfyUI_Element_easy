@@ -1,5 +1,5 @@
 # __init__.py
-__version__ = "0.1.0" 
+__version__ = "0.1.1" 
 
 from .random_chars import RandomCharacterGenerator
 from .empty_image_rgb import EmptyImageRGB

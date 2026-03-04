@@ -6,9 +6,10 @@
 ## Version
 **v1.1.3**
   
-  添加 Black White Color 节点
+  添加 Black White Color 节点,输入端口的mask会与由节点生成的mask做 ADD 运算。
   
-  <img width="1725" height="579" alt="image" src="https://github.com/user-attachments/assets/3d492ffa-aeac-47d2-bce2-0776ccff672d" />
+  <img width="1596" height="1084" alt="image" src="https://github.com/user-attachments/assets/c715e5e6-1ff3-46ff-9d48-a0a87d2506df" />
+
 
 ## Version
 **v0.0.9**

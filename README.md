@@ -12,9 +12,13 @@
 
   支持任意降噪权重设置，支持存储和加载预设。
 
-  bug fix ，添加可选latent 输入端口以同步ltx audio vae 载入与卸载顺序。
+  fix bug, 添加可选latent 输入端口以同步ltx audio vae 载入与卸载顺序。
+  
+  fix bug, UI界面的实时数列显示与sigma输出同步。
+  
 
-<img width="1060" height="811" alt="image" src="https://github.com/user-attachments/assets/277480c6-5fb8-4501-a4a2-bcc809810d31" />
+<img width="1349" height="791" alt="image" src="https://github.com/user-attachments/assets/736c7a43-09d7-4e62-a17b-1bb8d55611f1" />
+
 
 
 ## Version

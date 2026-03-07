@@ -12,7 +12,9 @@
 
   支持任意降噪权重设置，支持存储和加载预设。
 
-<img width="1352" height="808" alt="image" src="https://github.com/user-attachments/assets/732a80a3-ffd0-400d-9188-7075d6df7f38" />
+  bug fix ，添加可选latent 输入端口以同步ltx audio vae 载入与卸载顺序。
+
+<img width="1060" height="811" alt="image" src="https://github.com/user-attachments/assets/277480c6-5fb8-4501-a4a2-bcc809810d31" />
 
 
 ## Version

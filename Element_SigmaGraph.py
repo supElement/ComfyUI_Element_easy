@@ -40,6 +40,11 @@ class Element_SigmaGraph:
                     "multiline": True,
                 }),
             },
+            
+            # 【修改点 1】：新增可选的 latent 输入。这在代码逻辑中作为占位符，但能强制 ComfyUI 保持正确的执行顺序和显存回收策略。
+            "optional": {
+                "latent": ("LATENT",),
+            }    
         }
 
     RETURN_TYPES = ("SIGMAS", "INT",)
@@ -125,7 +130,9 @@ class Element_SigmaGraph:
 
         return unique_points
 
-    def calculate_sigmas(self, steps, graph_data):
+    # 【修改点 2】：参数中接收可选的 latent=None
+    
+    def calculate_sigmas(self, steps, graph_data, latent=None):
         """
         Calculates a sigma schedule tensor and returns it along with the steps.
         """
@@ -163,10 +170,15 @@ class Element_SigmaGraph:
                 ratio = (clamped_progress - p1["x"]) / x_diff
                 ratio = max(0.0, min(1.0, ratio))
                 sigma = p1["y"] + ratio * (p2["y"] - p1["y"])
-
-            sigma_values.append(max(0.001, sigma))
+                
+            # 【修改点 3】：移除 0.001 限制，允许曲线真正到达 0.0
+            
+            sigma_values.append(max(0.0, sigma))
 
         sigmas_tensor = torch.tensor(sigma_values, dtype=torch.float32)
+        
+        # 【修改点 4】：显式指定 device="cpu"，与 ComfyUI 原生 Scheduler 的输出设备保持完全一致
+        sigmas_tensor = torch.tensor(sigma_values, dtype=torch.float32, device="cpu")
         
         # 返回长度为 N+1 的 tensor，以及整数 N
         return (sigmas_tensor, steps,)

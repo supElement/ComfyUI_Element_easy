@@ -36,7 +36,9 @@ const POINT_COLOR     = "#1E88E5";
 function calcSigmas(pts, steps) {
   steps = Math.max(1, steps | 0);
   const p = (pts ||[]).slice().sort((a, b) => a.x - b.x);
-  if (p.length < 2) return Array(steps).fill(1.0);
+  
+  // 【修改点 1】：如果点数不够，默认返回的数组长度也要改成 steps + 1
+  if (p.length < 2) return Array(steps + 1).fill(1.0);
 
   if (!p.some((pt) => Math.abs(pt.x) < 1e-6))
     p.unshift({ x: 0, y: p[0].y });
@@ -45,15 +47,22 @@ function calcSigmas(pts, steps) {
 
   const out =[];
   let idx = 0;
-  for (let i = 0; i < steps; i++) {
-    const t = steps === 1 ? 0 : i / (steps - 1);
+  
+  // 【修改点 2】：循环上限改为 steps + 1，生成 N+1 个数字
+  for (let i = 0; i < steps + 1; i++) {
+	  
+	// 【修改点 3】：分母直接用 steps，且不需要特判 steps === 1 了
+    const t = i / steps;
+	
     while (idx < p.length - 2 && p[idx + 1].x < t) idx++;
     const [p1, p2] = [p[idx], p[idx + 1]];
     const dx = p2.x - p1.x;
     let y = dx < 1e-6
       ? (Math.abs(t - p2.x) < Math.abs(t - p1.x) ? p2.y : p1.y)
       : p1.y + ((t - p1.x) / dx) * (p2.y - p1.y);
-    out.push(Math.max(0.001, Math.round(y * 100) / 100));
+	
+	// 【修改点 4】：将 0.001 的下限限制改为 0.0，允许曲线彻底归零（保留了原作者的两位小数四舍五入）
+    out.push(Math.max(0.0, Math.round(y * 100) / 100));
   }
   return out;
 }

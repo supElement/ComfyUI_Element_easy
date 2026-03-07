@@ -3,6 +3,18 @@
 
 我自己使用的小节点，我不是程序员，所以可能不会继续更新。
 
+
+## Version
+**v1.1.5**
+  
+  添加自定义sigma，Element_SigmaGraph 节点, 原始代码来自作者Temult 的 TWanSigmaGraph节点  https://github.com/Temult/TWanSigmaGraph ，感谢原作者Temult。
+  因为Temult很久没有更新了，节点的sigma输出的值有bug，曲线调整无效。我修复了bug，另外使steps的值与采样步数相同，为了方便更新，我把它放到了这个仓库。
+
+  支持任意降噪权重设置，支持存储和加载预设。
+
+<img width="1352" height="808" alt="image" src="https://github.com/user-attachments/assets/732a80a3-ffd0-400d-9188-7075d6df7f38" />
+
+
 ## Version
 **v1.1.3**
   

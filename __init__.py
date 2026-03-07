@@ -1,5 +1,5 @@
 # __init__.py
-__version__ = "1.1.0" 
+__version__ = "1.1.5" 
 
 from .random_chars import RandomCharacterGenerator
 from .empty_image_rgb import EmptyImageRGB
@@ -9,6 +9,7 @@ from .mask_noise_element import MaskNoiseInjectionElement
 from .image_pad_blur import ImagePadBlur
 from .chessboard import ChessboardPattern_Element
 from .black_white_color import BlackWhiteColor
+from .Element_SigmaGraph import Element_SigmaGraph
 
 
 WEB_DIRECTORY = "js"
@@ -22,6 +23,7 @@ NODE_CLASS_MAPPINGS = {
     "ImagePadBlur_Element": ImagePadBlur,
     "ChessboardPattern_Element": ChessboardPattern_Element,
     "BlackWhiteColor_Element": BlackWhiteColor,
+    "Element_SigmaGraph": Element_SigmaGraph,
 
 }
 
@@ -33,7 +35,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MaskNoiseInjection_Element": "Image Noise Using Mask",
     "ImagePadBlur_Element": "Image Pad & Blur",
     "ChessboardPattern_Element": "chessboard",
-    "BlackWhiteColor_Element": "Black White Color",
+    "Element_SigmaGraph": "Element_SigmaGraph",
 
 }
 

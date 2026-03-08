@@ -5,16 +5,18 @@
 
 
 ## Version
-**v1.1.5**
+**v1.2.0**
   
   添加自定义sigma，Element_SigmaGraph 节点, 原始代码来自作者Temult 的 TWanSigmaGraph节点  https://github.com/Temult/TWanSigmaGraph ，感谢原作者Temult。
   因为Temult很久没有更新了，节点的sigma输出的值有bug，曲线调整无效。我修复了bug，另外使steps的值与采样步数相同，为了方便更新，我把它放到了这个仓库。
 
   支持任意降噪权重设置，支持存储和加载预设。
 
-  fix bug, 添加可选latent 输入端口以同步ltx audio vae 载入与卸载顺序。
+  Optimization：添加可选latent 输入端口以同步ltx audio vae 载入与卸载顺序。
   
-  fix bug, UI界面的实时数列显示与sigma输出同步。
+  fix：修复UI界面的实时数列显示与sigma输出不同步的问题。
+
+  fix：修复增加和删除点时曲线参数异常的问题。
   
 
 <img width="1349" height="791" alt="image" src="https://github.com/user-attachments/assets/736c7a43-09d7-4e62-a17b-1bb8d55611f1" />

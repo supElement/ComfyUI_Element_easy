@@ -326,19 +326,25 @@ function setup(node) {
       draw(pts);
     }
   });
-
+  
+  // 替换原有增减点逻辑
+  
   addBtn.onclick = () => {
     const pts = strToPts(gw.value);
-    const n = pts.length + 1;
-    applyPoints(calcSigmas(pts, n).map((y,i)=>({ x:i/(n-1), y })));
+    const new_len = pts.length + 1; // 新点数
+    const steps = new_len - 1;      // 对应的区间步数
+    // 传入步数，得到 new_len 个 y 值，然后均匀分布 x 坐标
+    applyPoints(calcSigmas(pts, steps).map((y, i) => ({ x: i / steps, y })));
   };
   delBtn.onclick = () => {
     const pts = strToPts(gw.value);
     if (pts.length > MIN_POINTS) {
-      const n = pts.length - 1;
-      applyPoints(calcSigmas(pts, n).map((y,i)=>({ x:i/(n-1), y })));
+      const new_len = pts.length - 1; // 新点数
+      const steps = new_len - 1;      // 对应的区间步数
+      applyPoints(calcSigmas(pts, steps).map((y, i) => ({ x: i / steps, y })));
     }
   };
+
 
   let dragIdx = -1;
   canvas.onpointerdown = (e) => {

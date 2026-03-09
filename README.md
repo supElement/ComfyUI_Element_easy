@@ -27,6 +27,8 @@
 **v1.1.3**
   
   添加 Black White Color 节点,输入端口的mask会与由节点生成的mask做 ADD 运算。
+
+  起初 ChessboardPattern 节点的 目的是为了在qwenEdit中风格转换时尽量保持构图不变，先转换mask区域风格，再转换invert mask区域（这种方法在Klein模型中不起作用），后来发现这种遮罩会影响模型对物体的识别，所以才有了 Black White Color 节点。
   
   <img width="1596" height="1084" alt="image" src="https://github.com/user-attachments/assets/c715e5e6-1ff3-46ff-9d48-a0a87d2506df" />
 

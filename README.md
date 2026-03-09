@@ -17,7 +17,7 @@
 
 
 
-## Optimization
+## Update
 ## v1.2.1
   
   添加自定义sigma，Element_SigmaGraph 节点, 原始代码来自作者Temult 的 TWanSigmaGraph节点  https://github.com/Temult/TWanSigmaGraph ，感谢原作者Temult。

@@ -5,18 +5,15 @@
 # 
 # 修改说明:
 # - 修复了曲线调整无效的问题
+# - 【新增】加入 WebSocket 监听功能，当连接外部输入时自动更新UI界面
 #
 # 修改者: [supElement]
 # 修改日期: 2026-02-28
 ——*/
 
-
-// Element_SigmaGraphWidget.js – v0.1.2
-// -------------------------------
-// Companion widget for the Element_SigmaGraph node.
-
 import { app } from "/../scripts/app.js";
 import { $el } from "/../scripts/ui.js";
+import { api } from "/../scripts/api.js"; // 【修改点1】：引入 api 模块用于监听后端发来的信息
 
 /*—— Constants ——*/
 const NODE_CLASS      = "Element_SigmaGraph";
@@ -37,7 +34,6 @@ function calcSigmas(pts, steps) {
   steps = Math.max(1, steps | 0);
   const p = (pts ||[]).slice().sort((a, b) => a.x - b.x);
   
-  // 【修改点 1】：如果点数不够，默认返回的数组长度也要改成 steps + 1
   if (p.length < 2) return Array(steps + 1).fill(1.0);
 
   if (!p.some((pt) => Math.abs(pt.x) < 1e-6))
@@ -48,12 +44,8 @@ function calcSigmas(pts, steps) {
   const out =[];
   let idx = 0;
   
-  // 【修改点 2】：循环上限改为 steps + 1，生成 N+1 个数字
   for (let i = 0; i < steps + 1; i++) {
-	  
-	// 【修改点 3】：分母直接用 steps，且不需要特判 steps === 1 了
     const t = i / steps;
-	
     while (idx < p.length - 2 && p[idx + 1].x < t) idx++;
     const [p1, p2] = [p[idx], p[idx + 1]];
     const dx = p2.x - p1.x;
@@ -61,8 +53,7 @@ function calcSigmas(pts, steps) {
       ? (Math.abs(t - p2.x) < Math.abs(t - p1.x) ? p2.y : p1.y)
       : p1.y + ((t - p1.x) / dx) * (p2.y - p1.y);
 	
-	// 【修改点 4】：将 0.001 的下限限制改为 0.0，允许曲线彻底归零（保留了原作者的两位小数四舍五入）
-    out.push(Math.max(0.0, Math.round(y * 100) / 100));
+    out.push(Math.max(0.0, Math.round(y * 100000) / 100000));  //精确到小数点后5位
   }
   return out;
 }
@@ -84,7 +75,7 @@ function strToPts(str) {
     const y = nums[0] || 1;
     return [{ x: 0, y }, { x: 1, y: nums[0] != null ? y : 0 }];
   }
-  return nums.map((y, i) => ({ x: i / (nums.length - 1), y: Math.round(y * 100) / 100 }));
+  return nums.map((y, i) => ({ x: i / (nums.length - 1), y: Math.round(y * 100000) / 100000 }));  //精确到小数点后5位
 }
 
 /*—— Main Widget Setup ——*/
@@ -107,7 +98,7 @@ function setup(node) {
   if (cached) {
     try {
       initialPts = strToPts(cached);
-      ta.value = JSON.stringify(initialPts);  // 【关键修复】防止初始化时丢失 x 坐标
+      ta.value = JSON.stringify(initialPts);
       gw.value = JSON.stringify(initialPts);
     } catch {
       initialPts = null;
@@ -118,7 +109,7 @@ function setup(node) {
     const defaultPts =[{x: 0, y: 1}, {x: 0.33, y: 0.67}, {x: 0.67, y: 0.33}, {x: 1, y: 0}];
     initialPts = defaultPts;
     const defaultJson = JSON.stringify(initialPts);
-    ta.value = defaultJson;  // 【关键修复】
+    ta.value = defaultJson;
     gw.value = defaultJson;
   }
 
@@ -182,7 +173,7 @@ function setup(node) {
   });
   wrap.appendChild(slotBar);
 
-  const slotsData = JSON.parse(localStorage.getItem(LS_KEY) || "[]");
+/*   const slotsData = JSON.parse(localStorage.getItem(LS_KEY) || "[]");
   let recordMode = false;
   const recBtn = $el("button", { textContent: "💾", title: "Toggle save mode", style: { minWidth: "28px", cursor: "pointer" } });
   slotBar.appendChild(recBtn);
@@ -220,7 +211,87 @@ function setup(node) {
       b.style.opacity = ok ? "1" : "0.3";
       b.style.cursor  = ok ? "pointer" : "not-allowed";
     });
+  }; */
+  
+  // === 【修改点：从本地存储改为读取 JSON 文件】 ===
+  let slotsData =[]; 
+  let recordMode = false;
+  const recBtn = $el("button", { textContent: "💾", title: "Toggle save mode", style: { minWidth: "28px", cursor: "pointer" } });
+  slotBar.appendChild(recBtn);
+
+  const slotBtns =[];
+  
+  // 1. 按钮创建（默认都处于半透明的禁用状态，等待数据加载）
+  for (let i = 0; i < NUM_SLOTS; i++) {
+    const b = $el("button", {
+      textContent: `${i + 1}`,
+      disabled: true, 
+      style: { flex: "1", minWidth: "20px", opacity: "0.3", cursor: "not-allowed" }
+    });
+    slotBar.appendChild(b);
+    slotBtns.push(b);
+
+    b.onclick = async () => {
+      if (recordMode) {
+        // 保存数据
+        slotsData[i] = gw.value;
+        b.style.opacity = "0.5"; // 给点视觉反馈表示正在保存
+        try {
+            await fetch('/element_easy/sigma_presets', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(slotsData)
+            });
+        } catch (e) {
+            console.error("[Element_SigmaGraph] 保存预设失败", e);
+        }
+        recBtn.click(); // 自动退出录制模式
+      } else if (slotsData[i]) {
+        // 读取数据并应用到图表
+        let pts;
+        try { pts = JSON.parse(slotsData[i]); }
+        catch { pts = strToPts(slotsData[i]); }
+        applyPoints(pts);
+      }
+    };
+  }
+
+  // 2. 统一切换按钮显示状态的函数
+  function updateSlotUI() {
+    slotBtns.forEach((b, i) => {
+      const ok = slotsData[i] || recordMode;
+      b.disabled = !ok;
+      b.style.opacity = ok ? "1" : "0.3";
+      b.style.cursor  = ok ? "pointer" : "not-allowed";
+    });
+  }
+
+  // 3. 录制按钮点击事件
+  recBtn.onclick = () => {
+    recordMode = !recordMode;
+    recBtn.style.background = recordMode ? "#4caf50" : "";
+    updateSlotUI();
   };
+
+  // 4. 异步向 Python 后端请求预设文件
+  async function loadPresetsFromFile() {
+    try {
+        const response = await fetch('/element_easy/sigma_presets');
+        if (response.ok) {
+            const data = await response.json();
+            if (Array.isArray(data)) {
+                slotsData = data;
+                updateSlotUI(); // 数据拿到后，刷新按钮高亮状态
+            }
+        }
+    } catch (e) {
+        console.error("[Element_SigmaGraph] 读取预设文件失败", e);
+    }
+  }
+  
+  // 节点创建时立刻加载
+  loadPresetsFromFile();
+  // ===========================================
 
   const infoBtn = $el("button", { textContent: "ℹ️", title: "Instructions", style: { flex: "0 0 auto", minWidth: "10px", opacity: "0.6", cursor: "pointer", background: "transparent", border: "none", color: "#ccc" } });
   const advBtn = $el("button", { textContent: "§", title: "Advanced (WIP)", disabled: true, style: { flex: "0 0 auto", minWidth: "10px", opacity: "0.4", cursor: "not-allowed", background: "transparent", border: "none", color: "#666" } });
@@ -250,16 +321,23 @@ function setup(node) {
   function applyPoints(pts) {
     pushUndo(gw.value);
     const clean = pts.map((p) => ({
-      x: Math.round(p.x * 1000) / 1000,
-      y: Math.round(p.y * 100) / 100
+      x: Math.round(p.x * 100000) / 100000,  //精确到小数点后5位
+      y: Math.round(p.y * 100000) / 100000   //精确到小数点后5位
     }));
     const jsonStr = JSON.stringify(clean);
     gw.value = jsonStr;
-    ta.value = jsonStr; // 【关键修复】确保 widget 的 text 区域也保存完整的坐标
+    ta.value = jsonStr;
 
     localStorage.setItem(storageKey, gw.value);
     draw(clean);
   }
+
+  // 【修改点2】：将 UI 的强制刷新方法挂载到 node 实例上，方便外部通讯调用
+  node._applyPoints = applyPoints;
+  node._updateSteps = (newSteps) => {
+    const sw = node.widgets.find((w) => w.name === STEPS_NAME);
+    if (sw) sw.value = newSteps;
+  };
 
   const ctx = canvas.getContext("2d");
   function draw(overridePts) {
@@ -302,7 +380,7 @@ function setup(node) {
 
     const stepsW = node.widgets.find((w) => w.name === STEPS_NAME).value | 0;
     preview.value = calcSigmas(pts, stepsW)
-      .map((v) => v.toFixed(2))
+      .map((v) => parseFloat(v.toFixed(5)))  //精确到小数点后5位，去除多余的0
       .join(", ");
   }
 
@@ -322,29 +400,25 @@ function setup(node) {
       const prev = undoStack.shift();
       gw.value = prev;
       const pts = strToPts(prev);
-      ta.value = prev; // 【关键修复】撤销时也要恢复完整的 JSON 状态
+      ta.value = prev; 
       draw(pts);
     }
   });
   
-  // 替换原有增减点逻辑
-  
   addBtn.onclick = () => {
     const pts = strToPts(gw.value);
-    const new_len = pts.length + 1; // 新点数
-    const steps = new_len - 1;      // 对应的区间步数
-    // 传入步数，得到 new_len 个 y 值，然后均匀分布 x 坐标
+    const new_len = pts.length + 1; 
+    const steps = new_len - 1;      
     applyPoints(calcSigmas(pts, steps).map((y, i) => ({ x: i / steps, y })));
   };
   delBtn.onclick = () => {
     const pts = strToPts(gw.value);
     if (pts.length > MIN_POINTS) {
-      const new_len = pts.length - 1; // 新点数
-      const steps = new_len - 1;      // 对应的区间步数
+      const new_len = pts.length - 1; 
+      const steps = new_len - 1;      
       applyPoints(calcSigmas(pts, steps).map((y, i) => ({ x: i / steps, y })));
     }
   };
-
 
   let dragIdx = -1;
   canvas.onpointerdown = (e) => {
@@ -417,8 +491,34 @@ app.registerExtension({
       };
     }
   },
+  
+  // 【关键：添加 WebSocket 监听器】
+  setup() {
+    api.addEventListener("element_sigma_graph_update", (event) => {
+        const data = event.detail;
+        if (!data || !data.node_id) return;
+        
+        // 根据 Python 传来的 ID，在当前工作流中找到那个节点
+        const node = app.graph.getNodeById(data.node_id);
+        
+        if (node && node.type === NODE_CLASS) {
+            // 1. 更新节点的 Steps 框
+            const sw = node.widgets.find((w) => w.name === STEPS_NAME);
+            if (sw) sw.value = data.steps;
+            
+            // 2. 将新的点坐标传给画布，并重绘曲线和底部预览文本
+            if (node._applyPoints) {
+                node._applyPoints(data.points);
+            }
+            
+            // 3. 强制标记节点脏区，通知 ComfyUI 立即刷新该节点外观
+            node.setDirtyCanvas(true, true);
+        }
+    });
+  }
 });
 
+// 处理新添加节点的初始化
 if (app.on) {
   app.on("nodeAdded", (n) => { if (n.type === NODE_CLASS) setup(n); });
 } else {

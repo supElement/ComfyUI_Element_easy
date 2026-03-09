@@ -4,24 +4,20 @@
 # 
 # 修改说明:
 # - 修复了曲线调整无效的问题
+# - 【新增】加入 custom_sigmas 输入端，支持接收外部传入数列并自动更新 UI
 #
 # 修改者: [supElement]
 # 修改日期: 2026-02-28
 
-# Import necessary libraries
+import os
 import json
 import torch
-import math # Import math for isnan
-import re   # 新增正则库用于后备兼容解析
+import math 
+import re   
+from server import PromptServer  # 【修改点1】：引入服务，用于向前端发送 UI 更新信号
+from aiohttp import web   # 【新增】：用于处理网络请求的库
 
 class Element_SigmaGraph:
-    """
-    A ComfyUI node that generates a sigma schedule tensor based on user-defined
-    points edited via a custom graph widget in the UI. It also outputs the
-    number of steps used. The schedule typically decreases from high sigma
-    (noise) to low sigma.
-    """
-    # Define a small epsilon for floating point comparisons
     EPSILON = 1e-6
 
     @classmethod
@@ -40,11 +36,13 @@ class Element_SigmaGraph:
                     "multiline": True,
                 }),
             },
-            
-            # 【修改点 1】：新增可选的 latent 输入。这在代码逻辑中作为占位符，但能强制 ComfyUI 保持正确的执行顺序和显存回收策略。
             "optional": {
+                "custom_sigmas": ("SIGMAS",),  # 【修改点2】：新增输入端口，用于接收外部数列
                 "latent": ("LATENT",),
-            }    
+            },
+            "hidden": {
+                "unique_id": "UNIQUE_ID",      # 【修改点3】：获取节点 ID，用于精准定位更新哪个界面的 UI
+            }
         }
 
     RETURN_TYPES = ("SIGMAS", "INT",)
@@ -62,14 +60,13 @@ class Element_SigmaGraph:
             if not isinstance(points_data, list):
                 raise ValueError("Graph data is not a list.")
         except json.JSONDecodeError:
-            # 兼容旧工作流：当JS传过来的是逗号分隔的纯文本时，手动将纯文本转换回节点列表
             try:
                 nums_str = re.findall(r'-?\d+\.?\d*', points_data_str)
                 nums = [float(n) for n in nums_str]
                 if not nums:
                     raise ValueError("No valid numbers found in string.")
                 if len(nums) == 1:
-                    points_data = [{"x": 0.0, "y": nums[0]}, {"x": 1.0, "y": 0.0}]
+                    points_data =[{"x": 0.0, "y": nums[0]}, {"x": 1.0, "y": 0.0}]
                 else:
                     points_data =[{"x": float(i) / (len(nums) - 1), "y": float(y)} for i, y in enumerate(nums)]
             except Exception as e:
@@ -79,7 +76,6 @@ class Element_SigmaGraph:
             print(f"[Element_SigmaGraph Warning] Invalid graph_data input: {e}. Using default points.")
             return default_points_list
 
-        # Filter for valid point structure and numeric types
         try:
             valid_points =[]
             for p in points_data:
@@ -101,7 +97,6 @@ class Element_SigmaGraph:
         if not points:
              return default_points_list
 
-        # Ensure boundary points exist using a tolerance
         has_start = any(abs(p['x'] - 0.0) < self.EPSILON for p in points)
         has_end = any(abs(p['x'] - 1.0) < self.EPSILON for p in points)
 
@@ -112,10 +107,8 @@ class Element_SigmaGraph:
             end_y = min(points, key=lambda p: abs(p['x'] - 1.0))['y'] if points else 0.0
             points.append({"x": 1.0, "y": end_y})
 
-        # Sort points by x-coordinate
         points.sort(key=lambda p: p["x"])
 
-        # Remove duplicate points based on x-coordinate with tolerance
         unique_points = []
         if points:
             unique_points.append(points[0])
@@ -130,26 +123,58 @@ class Element_SigmaGraph:
 
         return unique_points
 
-    # 【修改点 2】：参数中接收可选的 latent=None
-    
-    def calculate_sigmas(self, steps, graph_data, latent=None):
-        """
-        Calculates a sigma schedule tensor and returns it along with the steps.
-        """
+    def calculate_sigmas(self, steps, graph_data, custom_sigmas=None, latent=None, unique_id=None):
+        # 【修改点4】：如果检测到外部连线传入了数列数据
+        if custom_sigmas is not None:
+            # 判断传来的是 Tensor 还是纯 List，转换为 Python 列表
+            if isinstance(custom_sigmas, torch.Tensor):
+                sig_list = custom_sigmas.squeeze().tolist()
+            elif isinstance(custom_sigmas, list):
+                sig_list = custom_sigmas
+            else:
+                sig_list = [custom_sigmas]
+                
+            if not isinstance(sig_list, list):
+                sig_list = [sig_list]
+
+            num_sigmas = len(sig_list)
+            if num_sigmas >= 2:
+                new_steps = num_sigmas - 1
+                
+                # 按照长度将 X 轴均分，将 Y 轴设为数列的具体值
+                points =[{"x": float(i) / new_steps, "y": float(v)} for i, v in enumerate(sig_list)]
+                
+                
+                # 提取准确的节点 ID
+                node_id_str = unique_id[0] if isinstance(unique_id, list) else str(unique_id)
+                
+                # 通过 WebSocket 给前端发送数据刷新 UI 的事件
+                if unique_id is not None:
+                    PromptServer.instance.send_sync("element_sigma_graph_update", {
+                        "node_id": node_id_str,
+                        "points": points,
+                        "steps": new_steps
+                    })
+                
+                # 确保直接返回传入的数据
+                if isinstance(custom_sigmas, torch.Tensor):
+                    sigmas_tensor = custom_sigmas.clone().detach().to("cpu", dtype=torch.float32)
+                else:
+                    sigmas_tensor = torch.tensor(sig_list, dtype=torch.float32, device="cpu")
+                    
+                return (sigmas_tensor, new_steps,)
+            else:
+                print("[Element_SigmaGraph Warning] custom_sigmas 输入的数据过短，已回退至界面曲线数据。")
+
+        # 原有逻辑：如果没连线，照常读取界面的曲线
         steps = max(1, int(steps))
         points = self._validate_and_clean_points(graph_data)
-        
-        # 【1】：N 步采样需要 N+1 个 sigma 节点来构成 N 个区间
         num_sigmas_to_generate = steps + 1
 
-        # --- Perform Interpolation ---
         sigma_values =[]
         current_point_idx = 0
 
-        # 【2】：移除了 if steps == 1 的特判，统一循环逻辑
         for i in range(num_sigmas_to_generate):
-            # 【3】：分母改为 steps，由于步数至少为1，不会出现除零错误
-            # i 的取值范围是 0 到 steps，所以 step_progress 刚好从 0.0 平滑过渡到 1.0
             step_progress = i / steps
             step_progress = min(1.0, max(0.0, step_progress))
 
@@ -171,17 +196,48 @@ class Element_SigmaGraph:
                 ratio = max(0.0, min(1.0, ratio))
                 sigma = p1["y"] + ratio * (p2["y"] - p1["y"])
                 
-            # 【修改点 3】：移除 0.001 限制，允许曲线真正到达 0.0
-            
             sigma_values.append(max(0.0, sigma))
-
-        sigmas_tensor = torch.tensor(sigma_values, dtype=torch.float32)
-        
-        # 【修改点 4】：显式指定 device="cpu"，与 ComfyUI 原生 Scheduler 的输出设备保持完全一致
+            
         sigmas_tensor = torch.tensor(sigma_values, dtype=torch.float32, device="cpu")
-        
-        # 返回长度为 N+1 的 tensor，以及整数 N
         return (sigmas_tensor, steps,)
 
 NODE_CLASS_MAPPINGS = { "Element_SigmaGraph": Element_SigmaGraph }
 NODE_DISPLAY_NAME_MAPPINGS = { "Element_SigmaGraph": "Sigma Schedule Graph" }
+
+# ==========================================
+# 预设文件存储 API (与前端交互)
+# ==========================================
+
+# 获取当前 Python 文件所在的目录 (即 ComfyUI_Element_easy)
+base_dir = os.path.dirname(os.path.abspath(__file__))
+presets_dir = os.path.join(base_dir, "presets")
+presets_file = os.path.join(presets_dir, "Sigma_presets.json")
+
+# 确保 presets 文件夹存在
+if not os.path.exists(presets_dir):
+    os.makedirs(presets_dir, exist_ok=True)
+
+# 处理前端获取预设的请求 (GET)
+@PromptServer.instance.routes.get("/element_easy/sigma_presets")
+async def get_sigma_presets(request):
+    if os.path.exists(presets_file):
+        try:
+            with open(presets_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return web.json_response(data)
+        except Exception as e:
+            print(f"[Element_SigmaGraph] 读取预设文件失败: {e}")
+    return web.json_response([])  # 如果文件不存在或出错，返回空数组
+
+# 处理前端保存预设的请求 (POST)
+@PromptServer.instance.routes.post("/element_easy/sigma_presets")
+async def save_sigma_presets(request):
+    try:
+        data = await request.json()
+        with open(presets_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4)
+        return web.json_response({"status": "success"})
+    except Exception as e:
+        print(f"[Element_SigmaGraph] 保存预设文件失败: {e}")
+        return web.json_response({"status": "error", "message": str(e)}, status=500)
+        

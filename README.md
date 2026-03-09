@@ -4,8 +4,21 @@
 我自己使用的小节点，我不是程序员，所以可能不会继续更新。
 
 
-## Version
-**v1.2.1**
+## Installation
+
+- 手动安装（Manual Installation）<br>
+进入 ./ComfyUI/custom_nodes目录，运行以下代码（In the ./ComfyUI/custom_nodes directory, run the following）：<br>
+
+      git clone https://github.com/supElement/ComfyUI_Element_easy.git
+
+- 在manager管理器中安装（Install using Manager）<br>
+
+  在comfyUI manager 中搜索 ComfyUI_Element_easy ，然后install。（Search for "ComfyUI_Element_easy" in ComfyUI Manager, then click Install.）
+
+
+
+## Optimization
+## v1.2.1
   
   添加自定义sigma，Element_SigmaGraph 节点, 原始代码来自作者Temult 的 TWanSigmaGraph节点  https://github.com/Temult/TWanSigmaGraph ，感谢原作者Temult。
   因为Temult很久没有更新了，节点的sigma输出的值有bug，曲线调整无效。我修复了bug，另外使steps的值与采样步数相同，为了方便更新，我把它放到了这个仓库。
@@ -25,8 +38,7 @@
 
 
 
-## Version
-**v1.1.3**
+## v1.1.3
   
   添加 Black White Color 节点,输入端口的mask会与由节点生成的mask做 ADD 运算。
 
@@ -35,16 +47,14 @@
   <img width="1596" height="1084" alt="image" src="https://github.com/user-attachments/assets/c715e5e6-1ff3-46ff-9d48-a0a87d2506df" />
 
 
-## Version
-**v0.0.9**
+## v0.0.9
 
   添加 ChessboardPattern 节点，创建黑白棋盘格图像，可选择"by_grid_size"或"by_rows_and_cols"两种模式确定单位格子的尺寸。
 
   <img width="1714" height="608" alt="image" src="https://github.com/user-attachments/assets/466bc026-adc5-42cd-abe5-c28f323dd482" />
 
 
-## Version
-**v0.0.8**
+## v0.0.8
 
   添加Image Noise Using Mask节点，方便在图像的mask区域添加随机噪点，可调整噪点大小，透明度，可选择是否为灰度模式。
   
@@ -57,16 +67,14 @@
   
 
   
-## Version
-**v0.0.7**
+## v0.0.7
 
   添加Mask Stroke节点，mask描边，支持内外描边宽度和模糊度单独控制,支持非描边区域整体添加权重（使输出的mask没有权重为0的区域）。
   
   <img width="1295" height="731" alt="节点截图 2025-12-05 011534" src="https://github.com/user-attachments/assets/56b86fb6-758a-4d6c-8fa1-997b6bc9ee9d" />
 
   
-## Version
-**v0.0.6**
+## v0.0.6
 
 Empty Image RGB：支持RGB和16位色彩信息输入，节点会自动识别色彩信息color_code。输出纯色图像，附带图像尺寸输出端口,图像尺寸会根据divisibale_by（整除）取近似值。
 

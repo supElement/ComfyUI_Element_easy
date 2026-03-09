@@ -5,7 +5,7 @@
 
 
 ## Version
-**v1.2.0**
+**v1.2.1**
   
   添加自定义sigma，Element_SigmaGraph 节点, 原始代码来自作者Temult 的 TWanSigmaGraph节点  https://github.com/Temult/TWanSigmaGraph ，感谢原作者Temult。
   因为Temult很久没有更新了，节点的sigma输出的值有bug，曲线调整无效。我修复了bug，另外使steps的值与采样步数相同，为了方便更新，我把它放到了这个仓库。
@@ -14,16 +14,13 @@
 
   Optimization：添加可选latent 输入端口以同步ltx audio vae 载入与卸载顺序。
 
-  Optimization：添加可选custom_sigmas 输入端口，方便将现有的sigma数列存储为预设，需要执行后才能更新UI界面的数据（连接输出显示节点，比如show any，单独执行show any。或者执行提示词队列）
-                存储预设：点击红框标记的图标，然后选择后面的8个数字之一。 预设精确至小数点后5位。
-                调用预设：直接点击数字之一。                
-                注意：预设存储成功后，需要断开端口的连接，才能恢复自定义sigma原本的功能，否则只能做为辅助预览 sigma 曲线的功能（中转）使用。
+  Optimization：添加可选custom_sigmas 输入端口，方便将现有的sigma数列存储为预设，需要执行后才能更新UI界面的数据（连接输出显示节点，比如show any，单独执行show any。或者执行提示词队列）<br>
+  - 存储预设：点击红框标记的图标，然后选择后面的8个数字之一。 预设精确至小数点后5位。<br>
+  - 调用预设：直接点击数字之一。<br>
   
-  fix：修复UI界面的实时数列显示与sigma输出不同步的问题。
+      注意：预设存储成功后，需要断开端口的连接，才能恢复自定义sigma原本的功能，否则只能做为辅助预览 sigma 曲线的功能（中转）使用。<br>
 
-  fix：修复增加和删除点时曲线参数异常的问题。
   
-
 <img width="2223" height="930" alt="image" src="https://github.com/user-attachments/assets/95e908cb-3a51-4f94-aae5-6b336d089da7" />
 
 

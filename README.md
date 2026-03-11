@@ -18,6 +18,14 @@
 
 
 ## Update
+
+## v1.2.2
+  
+  添加帧数计算节点 Frame Calculator，计算结果为“取整”后+1，可选择 方便视频类生成。
+
+  <img width="1043" height="578" alt="image" src="https://github.com/user-attachments/assets/0a922590-c3bb-4504-8708-443476c3ac03" />
+
+
 ## v1.2.1
   
   添加自定义sigma，Element_SigmaGraph 节点, 原始代码来自作者Temult 的 TWanSigmaGraph节点  https://github.com/Temult/TWanSigmaGraph ，感谢原作者Temult。

@@ -13,7 +13,7 @@
 
 import { app } from "/../scripts/app.js";
 import { $el } from "/../scripts/ui.js";
-import { api } from "/../scripts/api.js"; // 【修改点1】：引入 api 模块用于监听后端发来的信息
+import { api } from "/../scripts/api.js"; // 【修改1】：引入 api 模块用于监听后端发来的信息
 
 /*—— Constants ——*/
 const NODE_CLASS      = "Element_SigmaGraph";
@@ -531,3 +531,4 @@ if (app.on) {
     });
   }, 100);
 }
+

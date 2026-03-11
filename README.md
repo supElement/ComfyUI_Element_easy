@@ -18,6 +18,12 @@
 
 
 ## Update
+## v1.2.3
+  
+  添加 ImageSize Div 节点。
+
+<img width="1317" height="596" alt="image" src="https://github.com/user-attachments/assets/6f53211f-f695-4db6-9483-9da984d193ef" />
+
 
 ## v1.2.2
   

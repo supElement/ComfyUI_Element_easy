@@ -24,9 +24,9 @@ const MIN_POINTS      = 3;
 const NUM_SLOTS       = 8;
 const LS_KEY          = "sigma_graph_saveSlots";
 const UNDO_LIMIT      = 1;
-const MIN_NODE_WIDTH  = 180;
+const MIN_NODE_WIDTH  = 200;
 const GRAB_THRESHOLD  = 0.08;
-const POINT_RADIUS    = 6;
+const POINT_RADIUS    = 4;
 const POINT_COLOR     = "#1E88E5";
 
 /*—— Helper Functions ——*/
@@ -82,6 +82,13 @@ function strToPts(str) {
 function setup(node) {
   if (node._sigmaSetupDone) return;
   node._sigmaSetupDone = true;
+  
+  // 设置节点默认宽高
+  const DEFAULT_SIZE = [240, 280];
+  
+  if (node.size[0] < 200 || node.size[1] < 150) {
+    node.size = [...DEFAULT_SIZE];
+  }
 
   const gw = node.widgets.find((w) => w.name === GRAPH_DATA_NAME);
   if (!gw || !gw.element) return;
@@ -91,7 +98,7 @@ function setup(node) {
   ta.style.boxSizing = "border-box";
   ta.style.resize = "vertical";
 
-  const storageKey = `Element_SigmaGraph_last_${node.id}`;
+/*   const storageKey = `Element_SigmaGraph_last_${node.id}`;
   let initialPts = null;
   const cached = localStorage.getItem(storageKey);
   
@@ -111,13 +118,35 @@ function setup(node) {
     const defaultJson = JSON.stringify(initialPts);
     ta.value = defaultJson;
     gw.value = defaultJson;
+  } */
+
+// 直接读取 ComfyUI 给当前分配的值（若是新建则为Python默认值，若是读取工作流则为保存的值）
+  let initialPts = null;
+  if (gw.value && gw.value.trim() !== "") {
+    try {
+      initialPts = strToPts(gw.value);
+    } catch {
+      initialPts = null;
+    }
   }
+
+  // 如果什么都没读到，给一个默认曲线
+  if (!initialPts || initialPts.length === 0) {
+    initialPts = [{x: 0, y: 1}, {x: 0.5, y: 0.5}, {x: 1, y: 0}];
+    const defaultJson = JSON.stringify(initialPts);
+    ta.value = defaultJson;
+    gw.value = defaultJson;
+  } else {
+    ta.value = JSON.stringify(initialPts);
+  }
+
+
 
   const wrap = $el("div", {
     style: {
       width: "100%", position: "relative", display: "flex",
       flexDirection: "column", flexGrow: "1", minHeight: "180px",
-      paddingBottom: "20px", minWidth: `${MIN_NODE_WIDTH}px`
+      paddingBottom: "20px" //, minWidth: `${MIN_NODE_WIDTH}px`
     }
   });
   const canvas = $el("canvas", {
@@ -159,11 +188,11 @@ function setup(node) {
 
   const addBtn = $el("button", {
     textContent: "+", title: "Double density",
-    style: { position: "absolute", top: "4px", right: "40px", width: "24px", height: "24px", borderRadius: "3px", border: "1px solid #555", background: "#64B5F6", color: "#fff", cursor: "pointer" }
+    style: { position: "absolute", top: "4px", right: "32px", width: "24px", height: "24px", borderRadius: "50%", border: "1px solid #555", background: "#505050", color: "#fff", cursor: "pointer" } //1e85e5
   });
   const delBtn = $el("button", {
     textContent: "−", title: "Halve density",
-    style: { position: "absolute", top: "4px", right: "10px", width: "24px", height: "24px", borderRadius: "3px", border: "1px solid #555", background: "#EF9A9A", color: "#fff", cursor: "pointer" }
+    style: { position: "absolute", top: "4px", right: "4px", width: "24px", height: "24px", borderRadius: "50%", border: "1px solid #555", background: "#353535", color: "#fff", cursor: "pointer" }  //ff6666
   });
   wrap.appendChild(addBtn);
   wrap.appendChild(delBtn);
@@ -172,51 +201,11 @@ function setup(node) {
     style: { display: "flex", gap: "4px", marginTop: "4px", alignItems: "center" }
   });
   wrap.appendChild(slotBar);
-
-/*   const slotsData = JSON.parse(localStorage.getItem(LS_KEY) || "[]");
-  let recordMode = false;
-  const recBtn = $el("button", { textContent: "💾", title: "Toggle save mode", style: { minWidth: "28px", cursor: "pointer" } });
-  slotBar.appendChild(recBtn);
-
-  const slotBtns =[];
-  for (let i = 0; i < NUM_SLOTS; i++) {
-    const b = $el("button", {
-      textContent: `${i + 1}`,
-      disabled: !slotsData[i] && !recordMode,
-      style: { flex: "1", minWidth: "20px", opacity: slotsData[i]||recordMode ? "1" : "0.3", cursor: slotsData[i]||recordMode ? "pointer" : "not-allowed" }
-    });
-    slotBar.appendChild(b);
-    slotBtns.push(b);
-
-    b.onclick = () => {
-      if (recordMode) {
-        slotsData[i] = gw.value;
-        localStorage.setItem(LS_KEY, JSON.stringify(slotsData));
-        recBtn.click();
-      } else if (slotsData[i]) {
-        let pts;
-        try { pts = JSON.parse(slotsData[i]); }
-        catch { pts = strToPts(slotsData[i]); }
-        applyPoints(pts);
-      }
-    };
-  }
-
-  recBtn.onclick = () => {
-    recordMode = !recordMode;
-    recBtn.style.background = recordMode ? "#4caf50" : "";
-    slotBtns.forEach((b, i) => {
-      const ok = slotsData[i] || recordMode;
-      b.disabled = !ok;
-      b.style.opacity = ok ? "1" : "0.3";
-      b.style.cursor  = ok ? "pointer" : "not-allowed";
-    });
-  }; */
-  
+ 
   // === 【修改点：从本地存储改为读取 JSON 文件】 ===
   let slotsData =[]; 
   let recordMode = false;
-  const recBtn = $el("button", { textContent: "💾", title: "Toggle save mode", style: { minWidth: "28px", cursor: "pointer" } });
+  const recBtn = $el("button", { textContent: "💾", title: "Toggle save mode", style: { minWidth: "24px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: "0",lineHeight: "1" } });
   slotBar.appendChild(recBtn);
 
   const slotBtns =[];
@@ -226,7 +215,7 @@ function setup(node) {
     const b = $el("button", {
       textContent: `${i + 1}`,
       disabled: true, 
-      style: { flex: "1", minWidth: "20px", opacity: "0.3", cursor: "not-allowed" }
+      style: { flex: "1", minWidth: "16px", opacity: "0.3", cursor: "not-allowed", display: "flex", alignItems: "center", justifyContent: "center", padding: "0", fontSize: "10px" }
     });
     slotBar.appendChild(b);
     slotBtns.push(b);
@@ -293,7 +282,7 @@ function setup(node) {
   loadPresetsFromFile();
   // ===========================================
 
-  const infoBtn = $el("button", { textContent: "ℹ️", title: "Instructions", style: { flex: "0 0 auto", minWidth: "10px", opacity: "0.6", cursor: "pointer", background: "transparent", border: "none", color: "#ccc" } });
+/*   const infoBtn = $el("button", { textContent: "i", title: "Instructions", style: { flex: "0 0 auto", minWidth: "10px", opacity: "1.0", cursor: "pointer", background: "#202020", border: "none", color: "#505050" } });
   const advBtn = $el("button", { textContent: "§", title: "Advanced (WIP)", disabled: true, style: { flex: "0 0 auto", minWidth: "10px", opacity: "0.4", cursor: "not-allowed", background: "transparent", border: "none", color: "#666" } });
   slotBar.appendChild(infoBtn);
   slotBar.appendChild(advBtn);
@@ -310,7 +299,7 @@ function setup(node) {
   });
   wrap.addEventListener("click", () => {
     if (overlay.style.display === "block") overlay.style.display = "none";
-  });
+  }); */
 
   let undoStack =[];
   function pushUndo(state) {
@@ -328,7 +317,7 @@ function setup(node) {
     gw.value = jsonStr;
     ta.value = jsonStr;
 
-    localStorage.setItem(storageKey, gw.value);
+//    localStorage.setItem(storageKey, gw.value);  影响
     draw(clean);
   }
 
@@ -361,7 +350,7 @@ function setup(node) {
 
     if (pts.length >= 2) {
       ctx.strokeStyle = "#fff";
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = 1.0; //曲线宽度
       ctx.beginPath();
       pts.forEach((p, i) => {
         const px = p.x * w, py = (1 - p.y) * h;
@@ -484,13 +473,27 @@ app.registerExtension({
   name: "Element_SigmaGraph.widget",
   beforeRegisterNodeDef(nt, nd) {
     if (nd.name === NODE_CLASS) {
-      const orig = nt.prototype.onConfigure;
+      
+      // 1. 处理从已保存的工作流中加载节点的情况
+      const origConfigure = nt.prototype.onConfigure;
       nt.prototype.onConfigure = function(info) {
-        orig?.apply(this, arguments);
+        origConfigure?.apply(this, arguments);
         setup(this);
       };
+
+      // 2. 【新增】处理用户在画布上新建节点的情况
+      const origNodeCreated = nt.prototype.onNodeCreated;
+      nt.prototype.onNodeCreated = function() {
+        origNodeCreated?.apply(this, arguments);
+        
+        this.setSize([280, 420]); 
+        
+        setup(this);
+      };
+      
     }
   },
+  
   
   // 【关键：添加 WebSocket 监听器】
   setup() {

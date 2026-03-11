@@ -41,7 +41,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ChessboardPattern_Element": "chessboard",
     "Element_SigmaGraph": "Element_SigmaGraph",
     "FrameCalculator_Element": "Frame Calculator",
-    "ElementEasyImageSize": "Image_Size",
+    "ElementEasyImageSize": "ImageSize Div",
 
 }
 

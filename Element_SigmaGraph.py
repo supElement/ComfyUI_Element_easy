@@ -14,8 +14,8 @@ import json
 import torch
 import math 
 import re   
-from server import PromptServer  # 【修改点1】：引入服务，用于向前端发送 UI 更新信号
-from aiohttp import web   # 【新增】：用于处理网络请求的库
+from server import PromptServer 
+from aiohttp import web 
 
 class Element_SigmaGraph:
     EPSILON = 1e-6
@@ -37,11 +37,11 @@ class Element_SigmaGraph:
                 }),
             },
             "optional": {
-                "custom_sigmas": ("SIGMAS",),  # 【修改点2】：新增输入端口，用于接收外部数列
+                "custom_sigmas": ("SIGMAS",), 
                 "latent": ("LATENT",),
             },
             "hidden": {
-                "unique_id": "UNIQUE_ID",      # 【修改点3】：获取节点 ID，用于精准定位更新哪个界面的 UI
+                "unique_id": "UNIQUE_ID",  
             }
         }
 
@@ -49,6 +49,8 @@ class Element_SigmaGraph:
     RETURN_NAMES = ("sigmas", "steps",)
     FUNCTION = "calculate_sigmas"
     CATEGORY = "Element_easy/custom_SIGMAS"
+    
+    OUTPUT_NODE = True
 
     def _validate_and_clean_points(self, points_data_str):
         """ Parses, validates, and cleans the points data. """
@@ -124,9 +126,9 @@ class Element_SigmaGraph:
         return unique_points
 
     def calculate_sigmas(self, steps, graph_data, custom_sigmas=None, latent=None, unique_id=None):
-        # 【修改点4】：如果检测到外部连线传入了数列数据
+    
         if custom_sigmas is not None:
-            # 判断传来的是 Tensor 还是纯 List，转换为 Python 列表
+            
             if isinstance(custom_sigmas, torch.Tensor):
                 sig_list = custom_sigmas.squeeze().tolist()
             elif isinstance(custom_sigmas, list):
@@ -140,15 +142,9 @@ class Element_SigmaGraph:
             num_sigmas = len(sig_list)
             if num_sigmas >= 2:
                 new_steps = num_sigmas - 1
-                
-                # 按照长度将 X 轴均分，将 Y 轴设为数列的具体值
                 points =[{"x": float(i) / new_steps, "y": float(v)} for i, v in enumerate(sig_list)]
-                
-                
-                # 提取准确的节点 ID
                 node_id_str = unique_id[0] if isinstance(unique_id, list) else str(unique_id)
                 
-                # 通过 WebSocket 给前端发送数据刷新 UI 的事件
                 if unique_id is not None:
                     PromptServer.instance.send_sync("element_sigma_graph_update", {
                         "node_id": node_id_str,
@@ -156,7 +152,6 @@ class Element_SigmaGraph:
                         "steps": new_steps
                     })
                 
-                # 确保直接返回传入的数据
                 if isinstance(custom_sigmas, torch.Tensor):
                     sigmas_tensor = custom_sigmas.clone().detach().to("cpu", dtype=torch.float32)
                 else:
@@ -166,7 +161,6 @@ class Element_SigmaGraph:
             else:
                 print("[Element_SigmaGraph Warning] custom_sigmas 输入的数据过短，已回退至界面曲线数据。")
 
-        # 原有逻辑：如果没连线，照常读取界面的曲线
         steps = max(1, int(steps))
         points = self._validate_and_clean_points(graph_data)
         num_sigmas_to_generate = steps + 1
@@ -208,16 +202,13 @@ NODE_DISPLAY_NAME_MAPPINGS = { "Element_SigmaGraph": "Sigma Schedule Graph" }
 # 预设文件存储 API (与前端交互)
 # ==========================================
 
-# 获取当前 Python 文件所在的目录 (即 ComfyUI_Element_easy)
 base_dir = os.path.dirname(os.path.abspath(__file__))
 presets_dir = os.path.join(base_dir, "presets")
 presets_file = os.path.join(presets_dir, "Sigma_presets.json")
 
-# 确保 presets 文件夹存在
 if not os.path.exists(presets_dir):
     os.makedirs(presets_dir, exist_ok=True)
 
-# 处理前端获取预设的请求 (GET)
 @PromptServer.instance.routes.get("/element_easy/sigma_presets")
 async def get_sigma_presets(request):
     if os.path.exists(presets_file):
@@ -227,9 +218,8 @@ async def get_sigma_presets(request):
             return web.json_response(data)
         except Exception as e:
             print(f"[Element_SigmaGraph] 读取预设文件失败: {e}")
-    return web.json_response([])  # 如果文件不存在或出错，返回空数组
+    return web.json_response([])  
 
-# 处理前端保存预设的请求 (POST)
 @PromptServer.instance.routes.post("/element_easy/sigma_presets")
 async def save_sigma_presets(request):
     try:

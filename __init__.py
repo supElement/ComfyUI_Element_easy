@@ -1,5 +1,5 @@
 # __init__.py
-__version__ = "1.2.2" 
+__version__ = "1.2.3" 
 
 from .random_chars import RandomCharacterGenerator
 from .empty_image_rgb import EmptyImageRGB
@@ -11,6 +11,7 @@ from .chessboard import ChessboardPattern_Element
 from .black_white_color import BlackWhiteColor
 from .Element_SigmaGraph import Element_SigmaGraph
 from .frame_calc import FrameCalculator
+from .Image_Size import ElementEasyImageSize
 
 
 WEB_DIRECTORY = "js"
@@ -26,6 +27,7 @@ NODE_CLASS_MAPPINGS = {
     "BlackWhiteColor_Element": BlackWhiteColor,
     "Element_SigmaGraph": Element_SigmaGraph,
     "FrameCalculator_Element": FrameCalculator,
+    "ElementEasyImageSize": ElementEasyImageSize,
 
 }
 
@@ -39,6 +41,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ChessboardPattern_Element": "chessboard",
     "Element_SigmaGraph": "Element_SigmaGraph",
     "FrameCalculator_Element": "Frame Calculator",
+    "ElementEasyImageSize": "Image_Size",
 
 }
 

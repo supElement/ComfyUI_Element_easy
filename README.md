@@ -48,7 +48,7 @@
       注意：预设存储成功后，需要断开端口的连接，才能恢复自定义sigma原本的功能，否则只能做为辅助预览 sigma 曲线的功能（中转）使用。<br>
 
   
-<img width="2223" height="930" alt="image" src="https://github.com/user-attachments/assets/95e908cb-3a51-4f94-aae5-6b336d089da7" />
+<img width="1711" height="888" alt="image" src="https://github.com/user-attachments/assets/40a54618-e03a-4711-acb9-95622f2991fb" />
 
 
 

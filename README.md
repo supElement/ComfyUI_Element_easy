@@ -24,10 +24,10 @@
   添加自定义sigma，Element_SigmaGraph 节点, 原始代码来自作者Temult 的 TWanSigmaGraph节点  https://github.com/Temult/TWanSigmaGraph ，感谢原作者Temult。
   因为Temult很久没有更新了，节点的sigma输出的值有bug，曲线调整无效。我修复了bug，另外使steps的值与采样步数相同，为了方便更新，我把它放到了这个仓库。
 
-  Optimization：添加可选latent 输入端口以同步ltx audio vae 载入与卸载顺序。<br>
-  Optimization：添加可选custom_sigmas 输入端口，添加单独执行功能，方便将现有的sigma数列存储为预设<br>
-  Optimization：新增平滑曲线模式节点 Element_SigmaGraph (Curve) 。保留直线模式节点 Element_SigmaGraph <br>
-  Optimization：实现在鼠标点击曲线的位置增减控制点，其它控制点位置和曲率最大限度保持不变（双击添加，右键删除）<br>
+  - 添加可选latent 输入端口以同步ltx audio vae 载入与卸载顺序。<br>
+  - 添加可选custom_sigmas 输入端口，添加单独执行功能，方便将现有的sigma数列存储为预设<br>
+  - 新增平滑曲线模式节点 Element_SigmaGraph (Curve) 。保留直线模式节点 Element_SigmaGraph <br>
+  - 实现在鼠标点击曲线的位置增减控制点，其它控制点位置和曲率最大限度保持不变（双击添加，右键删除）<br>
 
   
   <img width="1114" height="857" alt="image" src="https://github.com/user-attachments/assets/c771ebd8-99f3-47bd-a41c-e4c8c0b46beb" />

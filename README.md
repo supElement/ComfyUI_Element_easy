@@ -18,6 +18,21 @@
 
 
 ## Update
+
+## v1.2.4
+  
+  添加自定义sigma，Element_SigmaGraph 节点, 原始代码来自作者Temult 的 TWanSigmaGraph节点  https://github.com/Temult/TWanSigmaGraph ，感谢原作者Temult。
+  因为Temult很久没有更新了，节点的sigma输出的值有bug，曲线调整无效。我修复了bug，另外使steps的值与采样步数相同，为了方便更新，我把它放到了这个仓库。
+
+  Optimization：添加可选latent 输入端口以同步ltx audio vae 载入与卸载顺序。<br>
+  Optimization：添加可选custom_sigmas 输入端口，添加单独执行功能，方便将现有的sigma数列存储为预设<br>
+  Optimization：新增平滑曲线模式节点 Element_SigmaGraph (Curve) 。保留直线模式节点 Element_SigmaGraph <br>
+  Optimization：实现在鼠标点击曲线的位置增减控制点，其它控制点位置和曲率最大限度保持不变（双击添加，右键删除）<br>
+
+  
+  <img width="1114" height="857" alt="image" src="https://github.com/user-attachments/assets/c771ebd8-99f3-47bd-a41c-e4c8c0b46beb" />
+
+
 ## v1.2.3
   
   添加 ImageSize Div 节点。
@@ -30,26 +45,6 @@
   添加帧数计算节点 Frame Calculator，计算结果为“取整”后+1，可选择Seconds或frame方式。
 
   <img width="1043" height="578" alt="image" src="https://github.com/user-attachments/assets/0a922590-c3bb-4504-8708-443476c3ac03" />
-
-
-## v1.2.1
-  
-  添加自定义sigma，Element_SigmaGraph 节点, 原始代码来自作者Temult 的 TWanSigmaGraph节点  https://github.com/Temult/TWanSigmaGraph ，感谢原作者Temult。
-  因为Temult很久没有更新了，节点的sigma输出的值有bug，曲线调整无效。我修复了bug，另外使steps的值与采样步数相同，为了方便更新，我把它放到了这个仓库。
-
-  支持任意降噪权重设置，支持存储和加载预设。
-
-  Optimization：添加可选latent 输入端口以同步ltx audio vae 载入与卸载顺序。
-
-  Optimization：添加可选custom_sigmas 输入端口，方便将现有的sigma数列存储为预设，需要执行后才能更新UI界面的数据（连接输出显示节点，比如show any，单独执行show any。或者执行提示词队列）<br>
-  - 存储预设：点击红框标记的图标，然后选择后面的8个数字之一。 预设精确至小数点后5位。<br>
-  - 调用预设：直接点击数字之一。<br>
-  
-      注意：预设存储成功后，需要断开端口的连接，才能恢复自定义sigma原本的功能，否则只能做为辅助预览 sigma 曲线的功能（中转）使用。<br>
-
-  
-<img width="1711" height="888" alt="image" src="https://github.com/user-attachments/assets/40a54618-e03a-4711-acb9-95622f2991fb" />
-
 
 
 ## v1.1.3

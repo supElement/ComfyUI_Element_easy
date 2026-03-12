@@ -3,8 +3,10 @@
 # 许可证: MIT License
 # 
 # 修改说明:
-# - 修复了曲线调整无效的问题
-# - 【新增】加入 custom_sigmas 输入端，支持接收外部传入数列并自动更新 UI
+# - 【更新】实现在鼠标点击曲线的位置增减控制点，其它控制点位置和曲率最大限度保持不变（双击添加，右键删除）
+# - 【更新】改为使用单独json文件存取预设
+# - 【新增】加入 custom_sigmas, latent 可选输入端, 添加节点可单独执行功能
+# - 【修复】y值限制在[0,1]范围内，修复浮点精度问题
 #
 # 修改者: [supElement]
 # 修改日期: 2026-02-28
@@ -24,7 +26,6 @@ class Element_SigmaGraph:
     def INPUT_TYPES(cls):
         default_points = json.dumps([
             {"x": 0.0, "y": 1.0},
-            {"x": 0.5, "y": 0.5},
             {"x": 1.0, "y": 0.0}
         ])
         return {
@@ -55,8 +56,8 @@ class Element_SigmaGraph:
 
     def _validate_and_clean_points(self, points_data_str):
         """ Parses, validates, and cleans the points data. """
-        points =[]
-        default_points_list =[{"x": 0.0, "y": 1.0}, {"x": 1.0, "y": 0.0}]
+        points = []
+        default_points_list = [{"x": 0.0, "y": 1.0}, {"x": 1.0, "y": 0.0}]
         
         try:
             points_data = json.loads(points_data_str)
@@ -69,9 +70,9 @@ class Element_SigmaGraph:
                 if not nums:
                     raise ValueError("No valid numbers found in string.")
                 if len(nums) == 1:
-                    points_data =[{"x": 0.0, "y": nums[0]}, {"x": 1.0, "y": 0.0}]
+                    points_data = [{"x": 0.0, "y": nums[0]}, {"x": 1.0, "y": 0.0}]
                 else:
-                    points_data =[{"x": float(i) / (len(nums) - 1), "y": float(y)} for i, y in enumerate(nums)]
+                    points_data = [{"x": float(i) / (len(nums) - 1), "y": float(y)} for i, y in enumerate(nums)]
             except Exception as e:
                 print(f"[Element_SigmaGraph Warning] Invalid graph_data input format: {e}. Using default points.")
                 return default_points_list
@@ -80,12 +81,14 @@ class Element_SigmaGraph:
             return default_points_list
 
         try:
-            valid_points =[]
+            valid_points = []
             for p in points_data:
                 if isinstance(p, dict) and 'x' in p and 'y' in p and \
                    isinstance(p['x'], (int, float)) and not math.isnan(p['x']) and not math.isinf(p['x']) and \
                    isinstance(p['y'], (int, float)) and not math.isnan(p['y']) and not math.isinf(p['y']):
-                    valid_points.append({"x": float(p['x']), "y": float(p['y'])})
+                    # 限制 y 在 [0, 1] 范围内
+                    y_clamped = max(0.0, min(1.0, float(p['y'])))
+                    valid_points.append({"x": float(p['x']), "y": y_clamped})
                 else:
                     print(f"[Element_SigmaGraph Warning] Ignoring invalid point data: {p}")
 
@@ -105,9 +108,11 @@ class Element_SigmaGraph:
 
         if not has_start:
             start_y = min(points, key=lambda p: abs(p['x'] - 0.0))['y'] if points else 1.0
+            start_y = max(0.0, min(1.0, start_y))
             points.append({"x": 0.0, "y": start_y})
         if not has_end:
             end_y = min(points, key=lambda p: abs(p['x'] - 1.0))['y'] if points else 0.0
+            end_y = max(0.0, min(1.0, end_y))
             points.append({"x": 1.0, "y": end_y})
 
         points.sort(key=lambda p: p["x"])
@@ -126,6 +131,43 @@ class Element_SigmaGraph:
 
         return unique_points
 
+    def _linear_interpolate(self, x_query, points):
+        """
+        线性插值：在两点之间进行线性插值
+        """
+        if not points or len(points) < 2:
+            return 0.0
+        
+        # 找到对应的区间
+        for i in range(len(points) - 1):
+            p1 = points[i]
+            p2 = points[i + 1]
+            
+            if p1['x'] <= x_query <= p2['x'] or \
+               abs(x_query - p1['x']) < self.EPSILON or \
+               abs(x_query - p2['x']) < self.EPSILON:
+                # 线性插值公式: y = y1 + (y2 - y1) * (x - x1) / (x2 - x1)
+                if abs(p2['x'] - p1['x']) < self.EPSILON:
+                    return max(0.0, min(1.0, p1['y']))
+                t = (x_query - p1['x']) / (p2['x'] - p1['x'])
+                y = p1['y'] + t * (p2['y'] - p1['y'])
+                return max(0.0, min(1.0, y))
+        
+        # 边界外使用端点值
+        if x_query < points[0]['x']:
+            return max(0.0, min(1.0, points[0]['y']))
+        else:
+            return max(0.0, min(1.0, points[-1]['y']))
+
+    def _format_sigma_value(self, val):
+        """
+        格式化 sigma 值，避免科学计数法，并处理浮点精度误差
+        """
+        if abs(val) < 1e-10:
+            val = 0.0
+        val = max(0.0, min(1.0, val))
+        return round(val, 10)
+
     def calculate_sigmas(self, steps, graph_data, custom_sigmas=None, latent=None, unique_id=None):
     
         if custom_sigmas is not None:
@@ -143,7 +185,7 @@ class Element_SigmaGraph:
             num_sigmas = len(sig_list)
             if num_sigmas >= 2:
                 new_steps = num_sigmas - 1
-                points =[{"x": float(i) / new_steps, "y": float(v)} for i, v in enumerate(sig_list)]
+                points = [{"x": float(i) / new_steps, "y": self._format_sigma_value(float(v))} for i, v in enumerate(sig_list)]
                 node_id_str = unique_id[0] if isinstance(unique_id, list) else str(unique_id)
                 
                 if unique_id is not None:
@@ -156,7 +198,8 @@ class Element_SigmaGraph:
                 if isinstance(custom_sigmas, torch.Tensor):
                     sigmas_tensor = custom_sigmas.clone().detach().to("cpu", dtype=torch.float32)
                 else:
-                    sigmas_tensor = torch.tensor(sig_list, dtype=torch.float32, device="cpu")
+                    formatted_list = [self._format_sigma_value(v) for v in sig_list]
+                    sigmas_tensor = torch.tensor(formatted_list, dtype=torch.float32, device="cpu")
                     
                 return (sigmas_tensor, new_steps,)
             else:
@@ -166,32 +209,15 @@ class Element_SigmaGraph:
         points = self._validate_and_clean_points(graph_data)
         num_sigmas_to_generate = steps + 1
 
-        sigma_values =[]
-        current_point_idx = 0
-
+        # 使用线性插值
+        sigma_values = []
         for i in range(num_sigmas_to_generate):
             step_progress = i / steps
             step_progress = min(1.0, max(0.0, step_progress))
-
-            while (current_point_idx < len(points) - 2 and
-                   points[current_point_idx + 1]["x"] < step_progress - self.EPSILON):
-                current_point_idx += 1
-
-            p1 = points[current_point_idx]
-            p2 = points[min(current_point_idx + 1, len(points) - 1)]
-
-            x_diff = p2["x"] - p1["x"]
-            sigma = 0.0
-
-            if x_diff <= self.EPSILON:
-                sigma = p2["y"] if abs(step_progress - p2["x"]) < abs(step_progress - p1["x"]) else p1["y"]
-            else:
-                clamped_progress = max(p1["x"], min(p2["x"], step_progress))
-                ratio = (clamped_progress - p1["x"]) / x_diff
-                ratio = max(0.0, min(1.0, ratio))
-                sigma = p1["y"] + ratio * (p2["y"] - p1["y"])
-                
-            sigma_values.append(max(0.0, sigma))
+            
+            sigma = self._linear_interpolate(step_progress, points)
+            sigma_formatted = self._format_sigma_value(sigma)
+            sigma_values.append(sigma_formatted)
             
         sigmas_tensor = torch.tensor(sigma_values, dtype=torch.float32, device="cpu")
         return (sigmas_tensor, steps,)
@@ -231,4 +257,3 @@ async def save_sigma_presets(request):
     except Exception as e:
         print(f"[Element_SigmaGraph] 保存预设文件失败: {e}")
         return web.json_response({"status": "error", "message": str(e)}, status=500)
-        

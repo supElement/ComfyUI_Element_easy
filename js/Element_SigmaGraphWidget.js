@@ -13,7 +13,7 @@
 
 import { app } from "/../scripts/app.js";
 import { $el } from "/../scripts/ui.js";
-import { api } from "/../scripts/api.js"; // 【修改1】：引入 api 模块用于监听后端发来的信息
+import { api } from "/../scripts/api.js";
 
 /*—— Constants ——*/
 const NODE_CLASS      = "Element_SigmaGraph";
@@ -29,7 +29,6 @@ const GRAB_THRESHOLD  = 0.08;
 const POINT_RADIUS    = 4;
 const POINT_COLOR     = "#1E88E5";
 
-/*—— Helper Functions ——*/
 function calcSigmas(pts, steps) {
   steps = Math.max(1, steps | 0);
   const p = (pts ||[]).slice().sort((a, b) => a.x - b.x);
@@ -53,7 +52,7 @@ function calcSigmas(pts, steps) {
       ? (Math.abs(t - p2.x) < Math.abs(t - p1.x) ? p2.y : p1.y)
       : p1.y + ((t - p1.x) / dx) * (p2.y - p1.y);
 	
-    out.push(Math.max(0.0, Math.round(y * 100000) / 100000));  //精确到小数点后5位
+    out.push(Math.max(0.0, Math.round(y * 100000) / 100000)); 
   }
   return out;
 }
@@ -75,15 +74,13 @@ function strToPts(str) {
     const y = nums[0] || 1;
     return [{ x: 0, y }, { x: 1, y: nums[0] != null ? y : 0 }];
   }
-  return nums.map((y, i) => ({ x: i / (nums.length - 1), y: Math.round(y * 100000) / 100000 }));  //精确到小数点后5位
+  return nums.map((y, i) => ({ x: i / (nums.length - 1), y: Math.round(y * 100000) / 100000 }));
 }
 
-/*—— Main Widget Setup ——*/
 function setup(node) {
   if (node._sigmaSetupDone) return;
   node._sigmaSetupDone = true;
   
-  // 设置节点默认宽高
   const DEFAULT_SIZE = [240, 280];
   
   if (node.size[0] < 200 || node.size[1] < 150) {
@@ -98,29 +95,6 @@ function setup(node) {
   ta.style.boxSizing = "border-box";
   ta.style.resize = "vertical";
 
-/*   const storageKey = `Element_SigmaGraph_last_${node.id}`;
-  let initialPts = null;
-  const cached = localStorage.getItem(storageKey);
-  
-  if (cached) {
-    try {
-      initialPts = strToPts(cached);
-      ta.value = JSON.stringify(initialPts);
-      gw.value = JSON.stringify(initialPts);
-    } catch {
-      initialPts = null;
-    }
-  }
-
-  if (!initialPts) {
-    const defaultPts =[{x: 0, y: 1}, {x: 0.33, y: 0.67}, {x: 0.67, y: 0.33}, {x: 1, y: 0}];
-    initialPts = defaultPts;
-    const defaultJson = JSON.stringify(initialPts);
-    ta.value = defaultJson;
-    gw.value = defaultJson;
-  } */
-
-// 直接读取 ComfyUI 给当前分配的值（若是新建则为Python默认值，若是读取工作流则为保存的值）
   let initialPts = null;
   if (gw.value && gw.value.trim() !== "") {
     try {
@@ -130,7 +104,6 @@ function setup(node) {
     }
   }
 
-  // 如果什么都没读到，给一个默认曲线
   if (!initialPts || initialPts.length === 0) {
     initialPts = [{x: 0, y: 1}, {x: 0.5, y: 0.5}, {x: 1, y: 0}];
     const defaultJson = JSON.stringify(initialPts);
@@ -139,7 +112,6 @@ function setup(node) {
   } else {
     ta.value = JSON.stringify(initialPts);
   }
-
 
 
   const wrap = $el("div", {
@@ -202,29 +174,62 @@ function setup(node) {
   });
   wrap.appendChild(slotBar);
  
-  // === 【修改点：从本地存储改为读取 JSON 文件】 ===
+  // 改为读取 JSON 文件
   let slotsData =[]; 
   let recordMode = false;
-  const recBtn = $el("button", { textContent: "💾", title: "Toggle save mode", style: { minWidth: "24px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: "0",lineHeight: "1" } });
+  
+  const recBtn = $el("button", { 
+    textContent: "💾", 
+    title: "Toggle save mode", 
+    style: { 
+      minWidth: "24px", 
+      height: "24px", 
+      cursor: "pointer", 
+      display: "flex", 
+      alignItems: "center", 
+      justifyContent: "center", 
+      padding: "0",
+      lineHeight: "1",
+      background: "none",  
+      color: "#fff", 
+      border: "none", 
+      borderRadius: "5px", 
+      fontSize: "20px" 
+    } 
+  });
+  
   slotBar.appendChild(recBtn);
 
   const slotBtns =[];
   
-  // 1. 按钮创建（默认都处于半透明的禁用状态，等待数据加载）
   for (let i = 0; i < NUM_SLOTS; i++) {
     const b = $el("button", {
       textContent: `${i + 1}`,
       disabled: true, 
-      style: { flex: "1", minWidth: "16px", opacity: "0.3", cursor: "not-allowed", display: "flex", alignItems: "center", justifyContent: "center", padding: "0", fontSize: "10px" }
+      style: { 
+        flex: "1", 
+        minWidth: "16px", 
+        height: "24px",
+        opacity: "0.3", 
+        cursor: "not-allowed", 
+        display: "flex", 
+        alignItems: "center", 
+        justifyContent: "center", 
+        padding: "0", 
+        fontSize: "14px",
+        background: "#888",
+        color: "#fff",
+        border: "none",
+        borderRadius: "5px"
+      }
     });
     slotBar.appendChild(b);
     slotBtns.push(b);
 
     b.onclick = async () => {
       if (recordMode) {
-        // 保存数据
         slotsData[i] = gw.value;
-        b.style.opacity = "0.5"; // 给点视觉反馈表示正在保存
+        b.style.opacity = "0.5"; 
         try {
             await fetch('/element_easy/sigma_presets', {
                 method: 'POST',
@@ -236,7 +241,6 @@ function setup(node) {
         }
         recBtn.click(); // 自动退出录制模式
       } else if (slotsData[i]) {
-        // 读取数据并应用到图表
         let pts;
         try { pts = JSON.parse(slotsData[i]); }
         catch { pts = strToPts(slotsData[i]); }
@@ -244,25 +248,41 @@ function setup(node) {
       }
     };
   }
-
-  // 2. 统一切换按钮显示状态的函数
+  
   function updateSlotUI() {
     slotBtns.forEach((b, i) => {
-      const ok = slotsData[i] || recordMode;
+      const hasData = slotsData[i];
+      const ok = hasData || recordMode;
+      
       b.disabled = !ok;
-      b.style.opacity = ok ? "1" : "0.3";
-      b.style.cursor  = ok ? "pointer" : "not-allowed";
+      
+      if (recordMode && hasData) {
+        // 录制模式 + 有预设：蓝色高亮
+        b.style.opacity = "1";
+        b.style.cursor = "pointer";
+        b.style.background = "#1E88E5";
+
+      } else {
+        b.style.opacity = ok ? "1" : "0.3";
+        b.style.cursor = ok ? "pointer" : "not-allowed";
+        b.style.background = "#888";  
+
+      }
     });
   }
-
-  // 3. 录制按钮点击事件
+   
   recBtn.onclick = () => {
     recordMode = !recordMode;
-    recBtn.style.background = recordMode ? "#4caf50" : "";
+    if (recordMode) {
+      recBtn.style.background = "#ff4444";  // 红色表示录制中
+      recBtn.style.border = "1px solid #ff4444";
+    } else {
+      recBtn.style.background = "none";  // 恢复默认
+      recBtn.style.border = "none";
+    }
     updateSlotUI();
   };
 
-  // 4. 异步向 Python 后端请求预设文件
   async function loadPresetsFromFile() {
     try {
         const response = await fetch('/element_easy/sigma_presets');
@@ -270,7 +290,7 @@ function setup(node) {
             const data = await response.json();
             if (Array.isArray(data)) {
                 slotsData = data;
-                updateSlotUI(); // 数据拿到后，刷新按钮高亮状态
+                updateSlotUI(); // 获得数据后，刷新按钮高亮状态
             }
         }
     } catch (e) {
@@ -280,26 +300,6 @@ function setup(node) {
   
   // 节点创建时立刻加载
   loadPresetsFromFile();
-  // ===========================================
-
-/*   const infoBtn = $el("button", { textContent: "i", title: "Instructions", style: { flex: "0 0 auto", minWidth: "10px", opacity: "1.0", cursor: "pointer", background: "#202020", border: "none", color: "#505050" } });
-  const advBtn = $el("button", { textContent: "§", title: "Advanced (WIP)", disabled: true, style: { flex: "0 0 auto", minWidth: "10px", opacity: "0.4", cursor: "not-allowed", background: "transparent", border: "none", color: "#666" } });
-  slotBar.appendChild(infoBtn);
-  slotBar.appendChild(advBtn);
-
-  const overlay = $el("div", {
-    style: { position: "absolute", top: "15%", left: "50%", transform: "translate(-50%, -50%)", width: "240px", background: "#222", color: "#ccc", border: "1px solid #555", borderRadius: "6px", padding: "8px 12px", fontSize: "11px", lineHeight: "1.4", textAlign: "center", display: "none", zIndex: "9999", pointerEvents: "auto" }
-  });
-  overlay.innerHTML = `<strong>Sigma Schedule Editor</strong><br>Bidirectional editor for sigma schedules.<br>Use <strong>+ / –</strong> to adjust density.<br>Expand node to preview sigmas.`;
-  wrap.appendChild(overlay);
-
-  infoBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    overlay.style.display = overlay.style.display === "none" ? "block" : "none";
-  });
-  wrap.addEventListener("click", () => {
-    if (overlay.style.display === "block") overlay.style.display = "none";
-  }); */
 
   let undoStack =[];
   function pushUndo(state) {
@@ -310,18 +310,15 @@ function setup(node) {
   function applyPoints(pts) {
     pushUndo(gw.value);
     const clean = pts.map((p) => ({
-      x: Math.round(p.x * 100000) / 100000,  //精确到小数点后5位
-      y: Math.round(p.y * 100000) / 100000   //精确到小数点后5位
+      x: Math.round(p.x * 100000) / 100000,  
+      y: Math.round(p.y * 100000) / 100000   
     }));
     const jsonStr = JSON.stringify(clean);
     gw.value = jsonStr;
     ta.value = jsonStr;
-
-//    localStorage.setItem(storageKey, gw.value);  影响
     draw(clean);
   }
 
-  // 【修改点2】：将 UI 的强制刷新方法挂载到 node 实例上，方便外部通讯调用
   node._applyPoints = applyPoints;
   node._updateSteps = (newSteps) => {
     const sw = node.widgets.find((w) => w.name === STEPS_NAME);
@@ -474,14 +471,12 @@ app.registerExtension({
   beforeRegisterNodeDef(nt, nd) {
     if (nd.name === NODE_CLASS) {
       
-      // 1. 处理从已保存的工作流中加载节点的情况
       const origConfigure = nt.prototype.onConfigure;
       nt.prototype.onConfigure = function(info) {
         origConfigure?.apply(this, arguments);
         setup(this);
       };
 
-      // 2. 【新增】处理用户在画布上新建节点的情况
       const origNodeCreated = nt.prototype.onNodeCreated;
       nt.prototype.onNodeCreated = function() {
         origNodeCreated?.apply(this, arguments);
@@ -489,39 +484,31 @@ app.registerExtension({
         this.setSize([280, 420]); 
         
         setup(this);
-      };
-      
+      };      
     }
   },
-  
-  
-  // 【关键：添加 WebSocket 监听器】
+    
   setup() {
     api.addEventListener("element_sigma_graph_update", (event) => {
         const data = event.detail;
         if (!data || !data.node_id) return;
         
-        // 根据 Python 传来的 ID，在当前工作流中找到那个节点
         const node = app.graph.getNodeById(data.node_id);
         
         if (node && node.type === NODE_CLASS) {
-            // 1. 更新节点的 Steps 框
             const sw = node.widgets.find((w) => w.name === STEPS_NAME);
             if (sw) sw.value = data.steps;
             
-            // 2. 将新的点坐标传给画布，并重绘曲线和底部预览文本
             if (node._applyPoints) {
                 node._applyPoints(data.points);
             }
             
-            // 3. 强制标记节点脏区，通知 ComfyUI 立即刷新该节点外观
             node.setDirtyCanvas(true, true);
         }
     });
   }
 });
 
-// 处理新添加节点的初始化
 if (app.on) {
   app.on("nodeAdded", (n) => { if (n.type === NODE_CLASS) setup(n); });
 } else {

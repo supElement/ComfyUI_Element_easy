@@ -27,7 +27,7 @@
   - 添加可选latent 输入端口以同步ltx audio vae 载入与卸载顺序。<br>
   - 添加可选custom_sigmas 输入端口，添加单独执行功能，方便将现有的sigma数列存储为预设<br>
   - 新增平滑曲线模式节点 Element_SigmaGraph (Curve) 。保留直线模式节点 Element_SigmaGraph <br>
-  - 实现在鼠标点击曲线的位置增减控制点（双击添加，右键删除），增减点时，保持其它控制点不变。 解除控制点 X 轴方向移动限制<br>
+  - 鼠标点击曲线的位置增减控制点（双击添加，右键删除），增减点时，保持其它控制点不变。 解除控制点 X 轴方向移动限制<br>
 
   
   <img width="1114" height="857" alt="image" src="https://github.com/user-attachments/assets/c771ebd8-99f3-47bd-a41c-e4c8c0b46beb" />

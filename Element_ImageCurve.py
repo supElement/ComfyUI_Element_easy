@@ -12,10 +12,7 @@ from PIL import Image
 GLOBAL_IMAGE_CACHE = {}
 
 def compute_curve_logic(image, curve_data_str, saturation, preview_mode=False, preview_size=512):
-    """
-    preview_mode: 为True时，将图像缩放至最长边preview_size
-    """
-    # 如果是预览模式且图像较大，先缩放
+
     if preview_mode:
         h, w = image.shape[1], image.shape[2]
         max_side = max(h, w)
@@ -108,13 +105,12 @@ class Element_ImageCurve:
     OUTPUT_NODE = True
 
     def apply_curve(self, image, curve_data, saturation, preview_size, unique_id):
-        # 缓存图像和预览尺寸
+
         GLOBAL_IMAGE_CACHE[unique_id] = {
             "image": image.cpu(),
             "preview_size": preview_size
         }
         
-        # 主流程：保持原始分辨率
         out_tensor = compute_curve_logic(image, curve_data, saturation, preview_mode=False)
         
         results = []
@@ -145,7 +141,7 @@ async def live_preview(request):
     saturation = data.get("saturation", 1.0)
     preview_size = data.get("preview_size", preview_size)
     
-    # 预览模式：使用用户设置的preview_size
+    # 预览模式
     out_tensor = compute_curve_logic(image, curve_data_str, float(saturation), preview_mode=True, preview_size=preview_size)
     
     temp_dir = folder_paths.get_temp_directory()

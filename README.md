@@ -14,10 +14,16 @@
 - 在manager管理器中安装（Install using Manager）<br>
 
   在comfyUI manager 中搜索 ComfyUI_Element_easy ，然后install。（Search for "ComfyUI_Element_easy" in ComfyUI Manager, then click Install.）
-
+ 
 
 
 ## Update
+
+## v1.2.5
+  
+  添加 Element ImageCurve 节点, 曲线调色，实时预览，连接图像后，需要先运行本节点一次，将输入图像载入节点中。
+
+
 
 ## v1.2.4
   

@@ -23,7 +23,7 @@
   
   添加 Element ImageCurve 节点, 曲线调色，实时预览，连接图像后，需要先运行本节点一次，将输入图像载入节点中。
 
-
+  <img width="1592" height="918" alt="Image" src="https://github.com/user-attachments/assets/e49bf3e6-e301-4dac-b353-3d124be2ea1e" />
 
 ## v1.2.4
   

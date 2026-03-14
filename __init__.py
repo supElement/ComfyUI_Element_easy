@@ -1,5 +1,5 @@
 # __init__.py
-__version__ = "1.2.4" 
+__version__ = "1.2.5" 
 
 from .random_chars import RandomCharacterGenerator
 from .empty_image_rgb import EmptyImageRGB
@@ -13,6 +13,7 @@ from .Element_SigmaGraph import Element_SigmaGraph
 from .frame_calc import FrameCalculator
 from .Image_Size import ElementEasyImageSize
 from .Element_SigmaGraph_Curve import Element_SigmaGraph_Curve
+from .Element_ImageCurve import Element_ImageCurve
 
 
 WEB_DIRECTORY = "js"
@@ -30,6 +31,7 @@ NODE_CLASS_MAPPINGS = {
     "FrameCalculator_Element": FrameCalculator,
     "ElementEasyImageSize": ElementEasyImageSize,
     "Element_SigmaGraph_Curve": Element_SigmaGraph_Curve,
+    "Element_ImageCurve": Element_ImageCurve,
 
 }
 
@@ -45,8 +47,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "FrameCalculator_Element": "Frame Calculator",
     "ElementEasyImageSize": "ImageSize Div",
     "Element_SigmaGraph_Curve": "Element_SigmaGraph (Curve)",
+    "Element_ImageCurve": "Element ImageCurve",
 
 }
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
-

@@ -19,7 +19,7 @@
 
 ## Update
 
-## v1.2.6
+## v1.2.7
   
   添加 Element ImageCurve 节点, 曲线调色，实时预览支持单张和序列帧图像。
 

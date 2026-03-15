@@ -468,7 +468,7 @@ app.registerExtension({
                 
                 // Load 按钮
                 const loadBtn = document.createElement("button");
-                loadBtn.innerText = "Load";
+                loadBtn.innerText = "Preview";
                 loadBtn.style.flex = "7";
                 loadBtn.style.width = "auto";
                 loadBtn.style.height = "24px";
@@ -536,7 +536,7 @@ app.registerExtension({
                 
                 // Output 按钮 
                 const modeBtn = document.createElement("button");
-                modeBtn.innerText = "output";
+                modeBtn.innerText = "Multi Img";
                 modeBtn.style.flex = "3";
                 modeBtn.style.width = "auto";
 				modeBtn.style.lineHeight = "22px";

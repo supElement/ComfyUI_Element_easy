@@ -92,6 +92,8 @@ class Element_ImageCurve:
                 "curve_data": ("STRING", {"default": '{"RGB":[[0.0,0.0],[1.0,1.0]],"R":[[0.0,0.0],[1.0,1.0]],"G":[[0.0,0.0],[1.0,1.0]],"B":[[0.0,0.0],[1.0,1.0]]}'}),
                 "saturation": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.01}),
                 "preview_size": ("INT", {"default": 512, "min": 256, "max": 4096, "step": 64}),
+                "frame_index": ("INT", {"default": 0, "min": 0, "max": 9999, "step": 1}),
+                "output_mode": ("BOOLEAN", {"default": False, "label": "Output"}),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID"
@@ -104,25 +106,36 @@ class Element_ImageCurve:
     CATEGORY = "Element_easy/image"
     OUTPUT_NODE = True
 
-    def apply_curve(self, image, curve_data, saturation, preview_size, unique_id):
-
+    def apply_curve(self, image, curve_data, saturation, preview_size, frame_index, output_mode, unique_id):
+        
+        batch_size = image.shape[0]
+        
         GLOBAL_IMAGE_CACHE[unique_id] = {
             "image": image.cpu(),
-            "preview_size": preview_size
+            "preview_size": preview_size,
+            "batch_size": batch_size
         }
         
-        out_tensor = compute_curve_logic(image, curve_data, saturation, preview_mode=False)
+        if not output_mode:
+            idx = max(0, min(frame_index, batch_size - 1))
+            image_to_process = image[idx:idx+1]
+        else:
+            image_to_process = image
+            
+        out_tensor = compute_curve_logic(image_to_process, curve_data, saturation, preview_mode=False)
         
         results = []
         temp_dir = folder_paths.get_temp_directory()
-        for t in out_tensor:
+        
+        if out_tensor.shape[0] > 0:
+            t = out_tensor[0]
             img_np = (255.0 * t.cpu().numpy()).clip(0, 255).astype(np.uint8)
             img_pil = Image.fromarray(img_np)
             filename = f"curve_preview_{random.randint(1, 1000000)}.png"
             img_pil.save(os.path.join(temp_dir, filename))
             results.append({"filename": filename, "subfolder": "", "type": "temp"})
 
-        return { "ui": { "bg_image": results }, "result": (out_tensor,) }
+        return { "ui": { "bg_image": results, "batch_size": [batch_size] }, "result": (out_tensor,) }
 
 
 @PromptServer.instance.routes.post("/element_image_curve/live_preview")
@@ -135,14 +148,18 @@ async def live_preview(request):
         
     cache_data = GLOBAL_IMAGE_CACHE[unique_id]
     image = cache_data["image"]
+    batch_size = cache_data.get("batch_size", 1)
     preview_size = cache_data.get("preview_size", 512)
     
     curve_data_str = data.get("curve_data", "{}")
     saturation = data.get("saturation", 1.0)
     preview_size = data.get("preview_size", preview_size)
+    frame_index = data.get("frame_index", 0)
     
-    # 预览模式
-    out_tensor = compute_curve_logic(image, curve_data_str, float(saturation), preview_mode=True, preview_size=preview_size)
+    idx = max(0, min(frame_index, batch_size - 1))
+    image_frame = image[idx:idx+1]
+    
+    out_tensor = compute_curve_logic(image_frame, curve_data_str, float(saturation), preview_mode=True, preview_size=preview_size)
     
     temp_dir = folder_paths.get_temp_directory()
     img_np = (255.0 * out_tensor[0].cpu().numpy()).clip(0, 255).astype(np.uint8)

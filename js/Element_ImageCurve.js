@@ -554,7 +554,7 @@ app.registerExtension({
                         modeBtn.style.backgroundColor = "#56915a";
                         modeBtn.style.color = "#FFF";
                     } else {
-                        modeBtn.style.backgroundColor = "#555";
+                        modeBtn.style.backgroundColor = "#222";
                         modeBtn.style.color = "#CCC";
                     }
                 };

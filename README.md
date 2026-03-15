@@ -19,11 +19,11 @@
 
 ## Update
 
-## v1.2.5
+## v1.2.6
   
-  添加 Element ImageCurve 节点, 曲线调色，实时预览，连接图像后，需要先运行本节点一次，将输入图像载入节点中。
+  添加 Element ImageCurve 节点, 曲线调色，实时预览支持单张和序列帧图像。
 
-  <img width="1592" height="918" alt="Image" src="https://github.com/user-attachments/assets/e49bf3e6-e301-4dac-b353-3d124be2ea1e" />
+  <img width="1767" height="1008" alt="Image" src="https://github.com/user-attachments/assets/b83a3391-5658-4bce-a8db-d48b3c882c67" />
 
 ## v1.2.4
   

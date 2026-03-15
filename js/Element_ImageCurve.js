@@ -10,24 +10,88 @@ app.registerExtension({
             
             nodeType.prototype.onNodeCreated = function () {
                 if (onNodeCreated) onNodeCreated.apply(this, arguments);
-				
-				const MIN_NODE_WIDTH = 240;
-                const MIN_NODE_HEIGHT = 340;  
                 
-				if (this.size[0] < MIN_NODE_WIDTH) this.size[0] = MIN_NODE_WIDTH;
+                const MIN_NODE_WIDTH = 240;
+                const MIN_NODE_HEIGHT = 380;  // 增加高度以容纳新参数
+                
+                if (this.size[0] < MIN_NODE_WIDTH) this.size[0] = MIN_NODE_WIDTH;
                 if (this.size[1] < MIN_NODE_HEIGHT) this.size[1] = MIN_NODE_HEIGHT;
 
                 const curveWidget = this.widgets.find(w => w.name === "curve_data");
                 
                 if (curveWidget) {
-
                     if (curveWidget.inputEl) {
                         curveWidget.inputEl.style.display = "none";
                     }
+                    
                     curveWidget.computeSize = () => [0, 0];
                     curveWidget.draw = () => {};
                     curveWidget.hidden = true;
                 }
+                
+                // 隐藏 output_mode 原生控件
+                const outputModeWidget = this.widgets.find(w => w.name === "output_mode");
+                if (outputModeWidget) {
+                    outputModeWidget.computeSize = () => [0, 0];
+                    outputModeWidget.draw = () => {};
+                    if (outputModeWidget.inputEl) {
+                        outputModeWidget.inputEl.style.display = "none";
+                    }
+                    outputModeWidget.hidden = true;
+                    if (outputModeWidget.value === undefined || outputModeWidget.value === null) {
+                        outputModeWidget.value = false;
+                    }
+                }
+                
+/*                 // =============== 添加独立的 Load 按钮 ===============
+                this.addWidget("button", "Load (Execute Selected)", "load_btn", async () => {
+                    try {
+                        const p = await app.graphToPrompt();
+                        const prompt = p.output;
+                        const selectedNodeId = String(this.id);
+                        
+                        const isolatedPrompt = {};
+                        
+                        const traceDependencies = (nodeId) => {
+                            if (!prompt[nodeId] || isolatedPrompt[nodeId]) return;
+                            isolatedPrompt[nodeId] = prompt[nodeId];
+                            const inputs = prompt[nodeId].inputs;
+                            for (let key in inputs) {
+                                const val = inputs[key];
+                                if (Array.isArray(val) && val.length === 2) {
+                                    traceDependencies(String(val[0]));
+                                }
+                            }
+                        };
+                        
+                        traceDependencies(selectedNodeId);
+                        
+                        if (Object.keys(isolatedPrompt).length === 0) {
+                            console.warn("No dependencies found for node", selectedNodeId);
+                            return;
+                        }
+                        
+                        const response = await api.fetchApi("/prompt", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                                client_id: api.clientId,
+                                prompt: isolatedPrompt,
+                                extra_data: p.workflow ? { extra_pnginfo: { workflow: p.workflow } } : {}
+                            })
+                        });
+                        
+                        if (!response.ok) {
+                            const error = await response.json();
+                            throw new Error(error.error || "Failed to queue prompt");
+                        }
+                        
+                        console.log("Successfully queued selected node execution");
+                        
+                    } catch (err) {
+                        console.error("Failed to execute isolated node:", err);
+                    }
+                }); */
 
                 let curveData = {
                     RGB: [[0.0, 0.0], [1.0, 1.0]],
@@ -78,17 +142,17 @@ app.registerExtension({
                     }
                 }
 
-                const DOM_DEFAULT_HEIGHT = 260; 
+                const DOM_DEFAULT_HEIGHT = 290; 
                 const container = document.createElement("div");
                 container.style.display = "flex";
                 container.style.flexDirection = "column";
                 container.style.width = "100%";
                 container.style.height = `${DOM_DEFAULT_HEIGHT}px`; 
                 container.style.marginTop = "10px";
-                container.style.borderRadius = "8px";
+                container.style.borderRadius = "6px";
                 container.style.overflow = "hidden";
-                container.style.backgroundColor = "#1a1a1a";
-				
+                container.style.backgroundColor = "#transparent";
+                
                 const header = document.createElement("div");
                 header.style.display = "flex";
                 header.style.height = "20px";
@@ -112,7 +176,7 @@ app.registerExtension({
                     btn.style.backgroundColor = ch.id === "RGB" ? "#555" : "transparent";
                     btn.style.color = ch.color;
                     btn.style.fontWeight = "";
-					btn.style.fontSize = "10px";
+                    btn.style.fontSize = "10px";
                     
                     btn.onclick = () => {
                         activeChannel = ch.id;
@@ -132,8 +196,8 @@ app.registerExtension({
                 rcBtn.style.backgroundColor = "transparent";
                 rcBtn.style.color = "#CCC";
                 rcBtn.style.fontWeight = "";
-				rcBtn.style.fontSize = "10px";
-				
+                rcBtn.style.fontSize = "10px";
+                
                 rcBtn.onclick = () => {
                     curveData[activeChannel] = [[0.0, 0.0], [1.0, 1.0]];
                     updateBackend();
@@ -150,8 +214,8 @@ app.registerExtension({
                 rallBtn.style.backgroundColor = "transparent";
                 rallBtn.style.color = "#CCC";
                 rallBtn.style.fontWeight = "bold";
-				rallBtn.style.fontSize = "10px";
-				
+                rallBtn.style.fontSize = "10px";
+                
                 rallBtn.onclick = () => {
                     curveData = {
                         RGB: [[0.0, 0.0], [1.0, 1.0]],
@@ -172,6 +236,7 @@ app.registerExtension({
                 viewArea.style.position = "relative";
                 viewArea.style.width = "100%";
                 viewArea.style.height = "100%";
+                viewArea.style.backgroundColor = "#1a1a1a";
                 viewArea.style.overflow = "hidden";
 
                 const bgImageLayer = document.createElement("div");
@@ -197,18 +262,18 @@ app.registerExtension({
                 widget.computeSize = function(width) {
                     return [width, parseInt(container.style.height) || DOM_DEFAULT_HEIGHT];
                 };
-				
+                
                 const nodeInstance = this;
                 const onResize = this.onResize;
                 this.onResize = function(size) {
                     if (onResize) onResize.apply(this, arguments);
                     
-					if (size[0] < MIN_NODE_WIDTH) size[0] = MIN_NODE_WIDTH;
+                    if (size[0] < MIN_NODE_WIDTH) size[0] = MIN_NODE_WIDTH;
                     if (size[1] < MIN_NODE_HEIGHT) size[1] = MIN_NODE_HEIGHT;
                     
                     this.size[1] = size[1];
                     
-                    const reservedHeight = 105;
+                    const reservedHeight = 105; // 调整以适应新增的组件
                     let newHeight = size[1] - reservedHeight;
                     
                     if (newHeight < 100) newHeight = 100;
@@ -218,9 +283,6 @@ app.registerExtension({
                     requestAnimationFrame(draw);
                 };
 
-                // ==========================================
-                // 旁路预览 API 请求（简化队列版）
-                // ==========================================
                 let lastPreviewTime = 0;
                 let pendingUpdate = false;
                 let isPreviewPending = false;
@@ -251,11 +313,14 @@ app.registerExtension({
                     
                     const satWidget = nodeInstance.widgets.find(w => w.name === "saturation");
                     const previewSizeWidget = nodeInstance.widgets.find(w => w.name === "preview_size");
+                    const frameWidget = nodeInstance.widgets.find(w => w.name === "frame_index"); // 新增获取帧控件
+
                     const body = {
                         node_id: nodeInstance.id.toString(),
                         curve_data: JSON.stringify(curveData),
                         saturation: satWidget ? parseFloat(satWidget.value) : 1.0,
-                        preview_size: previewSizeWidget ? parseInt(previewSizeWidget.value) : 512
+                        preview_size: previewSizeWidget ? parseInt(previewSizeWidget.value) : 512,
+                        frame_index: frameWidget ? parseInt(frameWidget.value) : 0 // 传递指定帧
                     };
                     
                     (async () => {
@@ -294,33 +359,330 @@ app.registerExtension({
                     })();
                 };
 
+
                 const satWidget = this.widgets.find(w => w.name === "saturation");
                 if (satWidget) {
-                    const originalCallback = satWidget.callback;
-                    satWidget.callback = function(value) {
-                        if (originalCallback) originalCallback.apply(this, arguments);
-                        updateLivePreview(false);
-                    };
-                }
-
-                const previewSizeWidget = this.widgets.find(w => w.name === "preview_size");
-                if (previewSizeWidget) {
-                    const originalCallback = previewSizeWidget.callback;
-                    previewSizeWidget.callback = function(value) {
-                        if (originalCallback) originalCallback.apply(this, arguments);
-                        updateLivePreview(false);
-                    };
-
-                    if (previewSizeWidget.inputEl) {
-                        previewSizeWidget.inputEl.addEventListener('change', () => {
-                            updateLivePreview(false);
-                        });
-
-                        previewSizeWidget.inputEl.addEventListener('input', () => {
-                            updateLivePreview(false);
-                        });
+                    satWidget.computeSize = () => [0, 0];
+                    satWidget.draw = () => {};
+                    if (satWidget.inputEl) {
+                        satWidget.inputEl.style.display = "none";
                     }
+                    satWidget.hidden = true;
                 }
+                
+                const paramsToBind = ["preview_size", "frame_index"];
+                paramsToBind.forEach(paramName => {
+                    const w = this.widgets.find(widget => widget.name === paramName);
+                    if (w) {
+                        const originalCallback = w.callback;
+                        w.callback = function(value) {
+                            if (originalCallback) originalCallback.apply(this, arguments);
+                            updateLivePreview(false);
+                        };
+                
+                        if (w.inputEl) {
+                            w.inputEl.addEventListener('change', () => updateLivePreview(false));
+                            w.inputEl.addEventListener('input', () => updateLivePreview(false));
+                        }
+                    }
+                });
+                                
+                // ========== Sat 滑条 ==========
+                const satControlArea = document.createElement("div");
+                satControlArea.style.display = "flex";
+                satControlArea.style.alignItems = "center";
+                satControlArea.style.height = "24px";
+                satControlArea.style.flexShrink = "0";
+                satControlArea.style.backgroundColor = "#1a1a1a";
+                satControlArea.style.padding = "0 10px";
+                satControlArea.style.borderTop = "1px solid #333";
+                satControlArea.style.gap = "8px";
+                satControlArea.style.borderRadius = "0 0 6px 6px";
+                
+                const satLabel = document.createElement("span");
+                satLabel.innerText = "Sat";
+                satLabel.style.color = "#CCC";
+                satLabel.style.fontSize = "10px";
+                satLabel.style.fontWeight = "bold";
+                satLabel.style.width = "28px";
+                satLabel.style.flexShrink = "0";
+                satControlArea.appendChild(satLabel);
+                
+                // 创建滑条
+                const satSlider = document.createElement("input");
+                satSlider.type = "range";
+                satSlider.min = "0";
+                satSlider.max = "2";
+                satSlider.step = "0.01";
+                satSlider.style.flex = "0.85";
+                satSlider.style.height = "2px";
+                satSlider.style.accentColor = "#FFFFFF";
+                
+                satSlider.id = "sat-slider-" + this.id;
+                
+                satControlArea.appendChild(satSlider);
+                
+                // 数值显示
+                const satValueDisplay = document.createElement("span");
+                satValueDisplay.style.color = "#ffffff";
+                satValueDisplay.style.fontSize = "10px";
+                satValueDisplay.style.fontFamily = "";
+                satValueDisplay.style.width = "20px";
+                satValueDisplay.style.textAlign = "right";
+                satValueDisplay.style.flexShrink = "0";
+                satControlArea.appendChild(satValueDisplay);
+                
+                const styleId = "sat-style-" + this.id;
+                if (!document.getElementById(styleId)) {
+                    const style = document.createElement("style");
+                    style.id = styleId;
+                    style.textContent = `
+                        #${satSlider.id} {
+                            -webkit-appearance: none !important;
+                            appearance: none !important;
+                        }
+                        #${satSlider.id}::-webkit-slider-thumb {
+                            -webkit-appearance: none !important;
+                            appearance: none !important;
+                            width: 8px !important;
+                            height: 8px !important;
+                            background: #FFFFFF !important;
+                            border-radius: 50% !important;
+                            margin-top: -3px !important;
+                            border: none !important;
+                            box-shadow: none !important;
+                        }
+                        #${satSlider.id}::-webkit-slider-runnable-track {
+                            height: 2px !important;
+                            background: #333 !important;
+                            border-radius: 2px !important;
+                        }
+                    `;
+                    document.head.appendChild(style);
+                }
+                
+                
+                const initialValue = satWidget ? parseFloat(satWidget.value) : 1.0;
+                satSlider.value = initialValue;
+                satValueDisplay.innerText = initialValue.toFixed(2);
+                
+                satSlider.addEventListener("input", (e) => {
+                    const val = parseFloat(e.target.value);
+                    satValueDisplay.innerText = val.toFixed(2);
+                    if (satWidget) satWidget.value = val;
+                    updateLivePreview(true);
+                });
+                
+                satSlider.addEventListener("change", (e) => {
+                    const val = parseFloat(e.target.value);
+                    if (satWidget) satWidget.value = val;
+                    updateLivePreview(false);
+                });
+                
+
+                let satValueInternal = initialValue;
+                Object.defineProperty(satWidget, "value", {
+                    get: () => satValueInternal,
+                    set: (v) => {
+                        satValueInternal = parseFloat(v);
+                        if (satSlider) satSlider.value = satValueInternal;
+                        if (satValueDisplay) satValueDisplay.innerText = satValueInternal.toFixed(2);
+                    },
+                    configurable: true
+                });
+                
+                // 双击数值重置
+                satValueDisplay.style.cursor = "pointer";
+                satValueDisplay.title = "双击重置为 1.0";
+                satValueDisplay.addEventListener("dblclick", () => {
+                    satSlider.value = "1.0";
+                    satValueDisplay.innerText = "1.00";
+                    if (satWidget) satWidget.value = 1.0;
+                    updateLivePreview(false);
+                });
+                
+                container.appendChild(satControlArea);
+                
+/*                 // =============== 模式切换按钮 (Preview / Output) ===============
+                const modeControlArea = document.createElement("div");
+                modeControlArea.style.display = "flex";
+                modeControlArea.style.alignItems = "center";
+                modeControlArea.style.alignSelf = "stretch";
+                modeControlArea.style.width = "100%";
+                modeControlArea.style.height = "28px";
+                modeControlArea.style.flexShrink = "0";
+                modeControlArea.style.backgroundColor = "transparent";
+                modeControlArea.style.padding = "0 0px";
+                modeControlArea.style.borderTop = "none";
+                modeControlArea.style.gap = "8px";
+                modeControlArea.style.boxSizing = "border-box";
+                                
+                // 创建单按钮开关
+                const modeBtn = document.createElement("button");
+                modeBtn.innerText = "output";
+                modeBtn.style.flex = "0 0 auto";
+				modeBtn.style.lineHeight = "20px";
+                modeBtn.style.width = "60px";
+                modeBtn.style.marginLeft = "auto";
+				modeBtn.style.marginTop = "3px";
+                modeBtn.style.height = "22px";
+                modeBtn.style.border = "none";
+                modeBtn.style.borderRadius = "6px";
+                modeBtn.style.cursor = "pointer";
+                modeBtn.style.fontSize = "10px";
+                modeBtn.style.fontWeight = "bold";
+                modeBtn.style.transition = "all 0.2s ease";
+                modeBtn.style.display = "flex";
+                modeBtn.style.alignItems = "center";
+                modeBtn.style.justifyContent = "center";
+                modeBtn.style.padding = "0";
+                
+                
+                const updateModeUI = (isOutput) => {
+                    if (isOutput) {
+                        modeBtn.style.backgroundColor = "#4CAF50";
+                        modeBtn.style.color = "#FFF";
+                    } else {
+                        modeBtn.style.backgroundColor = "#555";
+                        modeBtn.style.color = "#CCC";
+                    }
+                };
+                
+                let currentMode = outputModeWidget ? outputModeWidget.value : false;
+                updateModeUI(currentMode);
+                
+                modeBtn.onclick = () => {
+                    currentMode = !currentMode;
+                    if (outputModeWidget) outputModeWidget.value = currentMode;
+                    updateModeUI(currentMode);
+                    if (app.graph) app.graph.setDirtyCanvas(true);
+                };
+                
+                modeControlArea.appendChild(modeBtn);
+                
+                container.appendChild(modeControlArea); */
+                
+                // =============== 模式切换区域 (包含 Load 和 Output 按钮) ===============
+                const modeControlArea = document.createElement("div");
+                modeControlArea.style.display = "flex";
+                modeControlArea.style.alignItems = "center";
+                modeControlArea.style.alignSelf = "stretch";
+                modeControlArea.style.width = "100%";
+                modeControlArea.style.height = "32px";
+                modeControlArea.style.flexShrink = "0";
+                modeControlArea.style.backgroundColor = "transparent";
+                modeControlArea.style.padding = "0 0px";
+                modeControlArea.style.borderTop = "none";
+                modeControlArea.style.gap = "8px";
+                modeControlArea.style.boxSizing = "border-box";
+                
+                // Load 按钮 (左边)
+                const loadBtn = document.createElement("button");
+                loadBtn.innerText = "Load";
+                loadBtn.style.flex = "7";
+                loadBtn.style.width = "auto";
+                loadBtn.style.height = "24px";
+				loadBtn.style.lineHeight = "22px";
+				loadBtn.style.marginTop = "8px";
+                loadBtn.style.border = "none";
+                loadBtn.style.borderRadius = "8px";
+                loadBtn.style.cursor = "pointer";
+                loadBtn.style.fontSize = "10px";
+                loadBtn.style.fontWeight = "bold";
+                loadBtn.style.backgroundColor = "#4f5d6d";
+                loadBtn.style.color = "#FFF";
+                loadBtn.style.transition = "all 0.2s ease";
+                
+                loadBtn.onclick = async () => {
+                    try {
+                        const p = await app.graphToPrompt();
+                        const prompt = p.output;
+                        const selectedNodeId = String(this.id);
+                        
+                        const isolatedPrompt = {};
+                        
+                        const traceDependencies = (nodeId) => {
+                            if (!prompt[nodeId] || isolatedPrompt[nodeId]) return;
+                            isolatedPrompt[nodeId] = prompt[nodeId];
+                            const inputs = prompt[nodeId].inputs;
+                            for (let key in inputs) {
+                                const val = inputs[key];
+                                if (Array.isArray(val) && val.length === 2) {
+                                    traceDependencies(String(val[0]));
+                                }
+                            }
+                        };
+                        
+                        traceDependencies(selectedNodeId);
+                        
+                        if (Object.keys(isolatedPrompt).length === 0) {
+                            console.warn("No dependencies found for node", selectedNodeId);
+                            return;
+                        }
+                        
+                        const response = await api.fetchApi("/prompt", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                                client_id: api.clientId,
+                                prompt: isolatedPrompt,
+                                extra_data: p.workflow ? { extra_pnginfo: { workflow: p.workflow } } : {}
+                            })
+                        });
+                        
+                        if (!response.ok) {
+                            const error = await response.json();
+                            throw new Error(error.error || "Failed to queue prompt");
+                        }
+                        
+                        console.log("Successfully queued selected node execution");
+                        
+                    } catch (err) {
+                        console.error("Failed to execute isolated node:", err);
+                    }
+                };
+                
+                modeControlArea.appendChild(loadBtn);
+                
+                // Output 按钮 (右边，靠右对齐)
+                const modeBtn = document.createElement("button");
+                modeBtn.innerText = "output";
+                modeBtn.style.flex = "3";
+                modeBtn.style.width = "auto";
+				modeBtn.style.lineHeight = "22px";
+                //modeBtn.style.marginLeft = "auto";  // 靠右对齐
+                modeBtn.style.height = "24px";
+				modeBtn.style.marginTop = "8px";
+                modeBtn.style.border = "none";
+                modeBtn.style.borderRadius = "8px";
+                modeBtn.style.cursor = "pointer";
+                modeBtn.style.fontSize = "10px";
+                modeBtn.style.fontWeight = "bold";
+                modeBtn.style.transition = "all 0.2s ease";
+                
+                const updateModeUI = (isOutput) => {
+                    if (isOutput) {
+                        modeBtn.style.backgroundColor = "#56915a";
+                        modeBtn.style.color = "#FFF";
+                    } else {
+                        modeBtn.style.backgroundColor = "#555";
+                        modeBtn.style.color = "#CCC";
+                    }
+                };
+                
+                let currentMode = outputModeWidget ? outputModeWidget.value : false;
+                updateModeUI(currentMode);
+                
+                modeBtn.onclick = () => {
+                    currentMode = !currentMode;
+                    if (outputModeWidget) outputModeWidget.value = currentMode;
+                    updateModeUI(currentMode);
+                    if (app.graph) app.graph.setDirtyCanvas(true);
+                };
+                
+                modeControlArea.appendChild(modeBtn);
+                container.appendChild(modeControlArea);
+				
 
                 let isDragging = false;
                 let dragIndex = -1;
@@ -441,12 +803,17 @@ app.registerExtension({
                     const toPx = (val) => PADDING + val * innerW;
                     const toPy = (val) => PADDING + (1 - val) * innerH;
 
-                    ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
-                    ctx.lineWidth = 1;
+                    ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
+                    ctx.lineWidth = 0.5; // 网格线宽
                     ctx.beginPath();
                     for(let i=0; i<=4; i++) {
-                        let px = toPx(i / 4);
-                        let py = toPy(i / 4);
+                        let px = Math.round(toPx(i / 4)) + 0.5;
+                        let py = Math.round(toPy(i / 4)) + 0.5;
+                        let startX = Math.round(toPx(0)) + 0.5;
+                        let endX = Math.round(toPx(1)) + 0.5;
+                        let startY = Math.round(toPy(0)) + 0.5;
+                        let endY = Math.round(toPy(1)) + 0.5;
+                        
                         ctx.moveTo(px, toPy(0)); ctx.lineTo(px, toPy(1));
                         ctx.moveTo(toPx(0), py); ctx.lineTo(toPx(1), py);
                     }
@@ -519,8 +886,8 @@ app.registerExtension({
                 };
 
                 setTimeout(draw, 100);
-				
-				setTimeout(() => {
+                
+                setTimeout(() => {
                     draw();
                     if (this.onResize) this.onResize(this.size);
                 }, 150);
@@ -529,6 +896,18 @@ app.registerExtension({
             const onExecuted = nodeType.prototype.onExecuted;
             nodeType.prototype.onExecuted = function(message) {
                 onExecuted?.apply(this, arguments);
+
+                // ======= 动态更新 Frame 的最大值 =======
+                if (message?.batch_size?.length > 0) {
+                    const maxFrameIndex = message.batch_size[0] - 1;
+                    const frameWidget = this.widgets.find(w => w.name === "frame_index");
+                    if (frameWidget) {
+                        frameWidget.options.max = maxFrameIndex;
+                        if (frameWidget.value > maxFrameIndex) {
+                            frameWidget.value = maxFrameIndex;
+                        }
+                    }
+                }
                 
                 if (message?.bg_image?.length > 0) {
                     const img = message.bg_image[0];
@@ -542,6 +921,20 @@ app.registerExtension({
                         }
                     }
                 }
+                // 强制同步 DOM 状态到 widget 值
+                setTimeout(() => {
+                    const satWidget = this.widgets.find(w => w.name === "saturation");
+                    const outputModeWidget = this.widgets.find(w => w.name === "output_mode");
+                    
+                    if (satWidget) {
+                        const currentVal = parseFloat(satWidget.value);
+                        satWidget.value = currentVal;
+                    }
+                    if (outputModeWidget) {
+                        const currentVal = outputModeWidget.value === "true" || outputModeWidget.value === true;
+                        outputModeWidget.value = currentVal;
+                    }
+                }, 50);
             };
         }
     }

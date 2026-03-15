@@ -12,7 +12,7 @@ app.registerExtension({
                 if (onNodeCreated) onNodeCreated.apply(this, arguments);
                 
                 const MIN_NODE_WIDTH = 240;
-                const MIN_NODE_HEIGHT = 380;  // 增加高度以容纳新参数
+                const MIN_NODE_HEIGHT = 380; 
                 
                 if (this.size[0] < MIN_NODE_WIDTH) this.size[0] = MIN_NODE_WIDTH;
                 if (this.size[1] < MIN_NODE_HEIGHT) this.size[1] = MIN_NODE_HEIGHT;
@@ -29,7 +29,6 @@ app.registerExtension({
                     curveWidget.hidden = true;
                 }
                 
-                // 隐藏 output_mode 原生控件
                 const outputModeWidget = this.widgets.find(w => w.name === "output_mode");
                 if (outputModeWidget) {
                     outputModeWidget.computeSize = () => [0, 0];
@@ -42,56 +41,6 @@ app.registerExtension({
                         outputModeWidget.value = false;
                     }
                 }
-                
-/*                 // =============== 添加独立的 Load 按钮 ===============
-                this.addWidget("button", "Load (Execute Selected)", "load_btn", async () => {
-                    try {
-                        const p = await app.graphToPrompt();
-                        const prompt = p.output;
-                        const selectedNodeId = String(this.id);
-                        
-                        const isolatedPrompt = {};
-                        
-                        const traceDependencies = (nodeId) => {
-                            if (!prompt[nodeId] || isolatedPrompt[nodeId]) return;
-                            isolatedPrompt[nodeId] = prompt[nodeId];
-                            const inputs = prompt[nodeId].inputs;
-                            for (let key in inputs) {
-                                const val = inputs[key];
-                                if (Array.isArray(val) && val.length === 2) {
-                                    traceDependencies(String(val[0]));
-                                }
-                            }
-                        };
-                        
-                        traceDependencies(selectedNodeId);
-                        
-                        if (Object.keys(isolatedPrompt).length === 0) {
-                            console.warn("No dependencies found for node", selectedNodeId);
-                            return;
-                        }
-                        
-                        const response = await api.fetchApi("/prompt", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({
-                                client_id: api.clientId,
-                                prompt: isolatedPrompt,
-                                extra_data: p.workflow ? { extra_pnginfo: { workflow: p.workflow } } : {}
-                            })
-                        });
-                        
-                        if (!response.ok) {
-                            const error = await response.json();
-                            throw new Error(error.error || "Failed to queue prompt");
-                        }
-                        
-                        console.log("Successfully queued selected node execution");
-                        
-                    } catch (err) {
-                        console.error("Failed to execute isolated node:", err);
-                    }
-                }); */
 
                 let curveData = {
                     RGB: [[0.0, 0.0], [1.0, 1.0]],
@@ -273,7 +222,7 @@ app.registerExtension({
                     
                     this.size[1] = size[1];
                     
-                    const reservedHeight = 105; // 调整以适应新增的组件
+                    const reservedHeight = 105; // 调整
                     let newHeight = size[1] - reservedHeight;
                     
                     if (newHeight < 100) newHeight = 100;
@@ -313,14 +262,14 @@ app.registerExtension({
                     
                     const satWidget = nodeInstance.widgets.find(w => w.name === "saturation");
                     const previewSizeWidget = nodeInstance.widgets.find(w => w.name === "preview_size");
-                    const frameWidget = nodeInstance.widgets.find(w => w.name === "frame_index"); // 新增获取帧控件
+                    const frameWidget = nodeInstance.widgets.find(w => w.name === "frame_index"); 
 
                     const body = {
                         node_id: nodeInstance.id.toString(),
                         curve_data: JSON.stringify(curveData),
                         saturation: satWidget ? parseFloat(satWidget.value) : 1.0,
                         preview_size: previewSizeWidget ? parseInt(previewSizeWidget.value) : 512,
-                        frame_index: frameWidget ? parseInt(frameWidget.value) : 0 // 传递指定帧
+                        frame_index: frameWidget ? parseInt(frameWidget.value) : 0 
                     };
                     
                     (async () => {
@@ -502,67 +451,8 @@ app.registerExtension({
                 });
                 
                 container.appendChild(satControlArea);
-                
-/*                 // =============== 模式切换按钮 (Preview / Output) ===============
-                const modeControlArea = document.createElement("div");
-                modeControlArea.style.display = "flex";
-                modeControlArea.style.alignItems = "center";
-                modeControlArea.style.alignSelf = "stretch";
-                modeControlArea.style.width = "100%";
-                modeControlArea.style.height = "28px";
-                modeControlArea.style.flexShrink = "0";
-                modeControlArea.style.backgroundColor = "transparent";
-                modeControlArea.style.padding = "0 0px";
-                modeControlArea.style.borderTop = "none";
-                modeControlArea.style.gap = "8px";
-                modeControlArea.style.boxSizing = "border-box";
-                                
-                // 创建单按钮开关
-                const modeBtn = document.createElement("button");
-                modeBtn.innerText = "output";
-                modeBtn.style.flex = "0 0 auto";
-				modeBtn.style.lineHeight = "20px";
-                modeBtn.style.width = "60px";
-                modeBtn.style.marginLeft = "auto";
-				modeBtn.style.marginTop = "3px";
-                modeBtn.style.height = "22px";
-                modeBtn.style.border = "none";
-                modeBtn.style.borderRadius = "6px";
-                modeBtn.style.cursor = "pointer";
-                modeBtn.style.fontSize = "10px";
-                modeBtn.style.fontWeight = "bold";
-                modeBtn.style.transition = "all 0.2s ease";
-                modeBtn.style.display = "flex";
-                modeBtn.style.alignItems = "center";
-                modeBtn.style.justifyContent = "center";
-                modeBtn.style.padding = "0";
-                
-                
-                const updateModeUI = (isOutput) => {
-                    if (isOutput) {
-                        modeBtn.style.backgroundColor = "#4CAF50";
-                        modeBtn.style.color = "#FFF";
-                    } else {
-                        modeBtn.style.backgroundColor = "#555";
-                        modeBtn.style.color = "#CCC";
-                    }
-                };
-                
-                let currentMode = outputModeWidget ? outputModeWidget.value : false;
-                updateModeUI(currentMode);
-                
-                modeBtn.onclick = () => {
-                    currentMode = !currentMode;
-                    if (outputModeWidget) outputModeWidget.value = currentMode;
-                    updateModeUI(currentMode);
-                    if (app.graph) app.graph.setDirtyCanvas(true);
-                };
-                
-                modeControlArea.appendChild(modeBtn);
-                
-                container.appendChild(modeControlArea); */
-                
-                // =============== 模式切换区域 (包含 Load 和 Output 按钮) ===============
+             
+                // ======= 模式切换 (Load Output) ======
                 const modeControlArea = document.createElement("div");
                 modeControlArea.style.display = "flex";
                 modeControlArea.style.alignItems = "center";
@@ -576,7 +466,7 @@ app.registerExtension({
                 modeControlArea.style.gap = "8px";
                 modeControlArea.style.boxSizing = "border-box";
                 
-                // Load 按钮 (左边)
+                // Load 按钮
                 const loadBtn = document.createElement("button");
                 loadBtn.innerText = "Load";
                 loadBtn.style.flex = "7";
@@ -644,13 +534,12 @@ app.registerExtension({
                 
                 modeControlArea.appendChild(loadBtn);
                 
-                // Output 按钮 (右边，靠右对齐)
+                // Output 按钮 
                 const modeBtn = document.createElement("button");
                 modeBtn.innerText = "output";
                 modeBtn.style.flex = "3";
                 modeBtn.style.width = "auto";
 				modeBtn.style.lineHeight = "22px";
-                //modeBtn.style.marginLeft = "auto";  // 靠右对齐
                 modeBtn.style.height = "24px";
 				modeBtn.style.marginTop = "8px";
                 modeBtn.style.border = "none";
@@ -804,7 +693,7 @@ app.registerExtension({
                     const toPy = (val) => PADDING + (1 - val) * innerH;
 
                     ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
-                    ctx.lineWidth = 0.5; // 网格线宽
+                    ctx.lineWidth = 0.5; // 网格
                     ctx.beginPath();
                     for(let i=0; i<=4; i++) {
                         let px = Math.round(toPx(i / 4)) + 0.5;
@@ -897,7 +786,7 @@ app.registerExtension({
             nodeType.prototype.onExecuted = function(message) {
                 onExecuted?.apply(this, arguments);
 
-                // ======= 动态更新 Frame 的最大值 =======
+                // 动态 Frame 最大值
                 if (message?.batch_size?.length > 0) {
                     const maxFrameIndex = message.batch_size[0] - 1;
                     const frameWidget = this.widgets.find(w => w.name === "frame_index");
@@ -921,7 +810,7 @@ app.registerExtension({
                         }
                     }
                 }
-                // 强制同步 DOM 状态到 widget 值
+
                 setTimeout(() => {
                     const satWidget = this.widgets.find(w => w.name === "saturation");
                     const outputModeWidget = this.widgets.find(w => w.name === "output_mode");

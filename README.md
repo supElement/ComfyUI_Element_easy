@@ -23,7 +23,7 @@
   
   添加 Element ImageCurve 节点, 曲线调色，实时预览支持单张和序列帧图像。
 
-  <img width="1767" height="1008" alt="Image" src="https://github.com/user-attachments/assets/b83a3391-5658-4bce-a8db-d48b3c882c67" />
+  <img width="1767" height="1008" alt="Image" src="https://github.com/user-attachments/assets/f3bcfd71-eaba-4933-aa97-01ee6eefad62" />
 
 ## v1.2.4
   

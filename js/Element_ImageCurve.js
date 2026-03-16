@@ -12,34 +12,45 @@ app.registerExtension({
                 if (onNodeCreated) onNodeCreated.apply(this, arguments);
                 
                 const MIN_NODE_WIDTH = 240;
-                const MIN_NODE_HEIGHT = 380; 
+                const MIN_NODE_HEIGHT = 400; 
                 
                 if (this.size[0] < MIN_NODE_WIDTH) this.size[0] = MIN_NODE_WIDTH;
                 if (this.size[1] < MIN_NODE_HEIGHT) this.size[1] = MIN_NODE_HEIGHT;
 
-                const curveWidget = this.widgets.find(w => w.name === "curve_data");
+                const hideWidgetAndSlot = (widgetName) => {
+                    // 1. 彻底隐藏 UI 控件
+                    const w = this.widgets?.find(w => w.name === widgetName);
+                    if (w) {
+                        w.type = "hidden"; // 更改类型防止 Vue 渲染原生控件
+                        w.hidden = true;
+                        w.computeSize = () => [0, 0];
+                        w.draw = () => {};
+                        // 移除DOM 元素及父容器
+                        if (w.inputEl) {
+                            w.inputEl.style.display = "none";
+                            if (w.inputEl.parentElement) {
+                                w.inputEl.parentElement.style.display = "none";
+                            }
+                        }
+                    }
+                    // 去除节点隐藏的连接点 (Input Slot)
+                    if (this.inputs) {
+                        const idx = this.inputs.findIndex(i => i.name === widgetName);
+                        if (idx !== -1) {
+                            this.removeInput(idx);
+                        }
+                    }
+                };
+
+                // 立即隐藏 (curve_data, Output )
+                hideWidgetAndSlot("curve_data");
+                hideWidgetAndSlot("output_mode");
                 
-                if (curveWidget) {
-                    if (curveWidget.inputEl) {
-                        curveWidget.inputEl.style.display = "none";
-                    }
-                    
-                    curveWidget.computeSize = () => [0, 0];
-                    curveWidget.draw = () => {};
-                    curveWidget.hidden = true;
-                }
+                const curveWidget = this.widgets?.find(w => w.name === "curve_data");
+                const outputModeWidget = this.widgets?.find(w => w.name === "output_mode");
                 
-                const outputModeWidget = this.widgets.find(w => w.name === "output_mode");
-                if (outputModeWidget) {
-                    outputModeWidget.computeSize = () => [0, 0];
-                    outputModeWidget.draw = () => {};
-                    if (outputModeWidget.inputEl) {
-                        outputModeWidget.inputEl.style.display = "none";
-                    }
-                    outputModeWidget.hidden = true;
-                    if (outputModeWidget.value === undefined || outputModeWidget.value === null) {
-                        outputModeWidget.value = false;
-                    }
+                if (outputModeWidget && (outputModeWidget.value === undefined || outputModeWidget.value === null)) {
+                    outputModeWidget.value = false;
                 }
 
                 let curveData = {
@@ -92,15 +103,25 @@ app.registerExtension({
                 }
 
                 const DOM_DEFAULT_HEIGHT = 290; 
+                let currentWidgetHeight = DOM_DEFAULT_HEIGHT; 
+
                 const container = document.createElement("div");
                 container.style.display = "flex";
                 container.style.flexDirection = "column";
                 container.style.width = "100%";
-                container.style.height = `${DOM_DEFAULT_HEIGHT}px`; 
-                container.style.marginTop = "10px";
+                container.style.height = "100%";
+                container.style.marginTop = "0px";
                 container.style.borderRadius = "6px";
                 container.style.overflow = "hidden";
-                container.style.backgroundColor = "#transparent";
+                container.style.backgroundColor = "transparent";
+				
+/*                 // Nodes 2.0？
+                const isNodes2_0 = !!document.querySelector("comfy-app") || 
+                                   !!document.querySelector(".comfy-vue") || 
+                                   (window.comfyAPI && window.comfyAPI.vue);
+
+                container.style.marginTop = isNodes2_0 ? "0px" : "10px";
+                // ========================================================== */
                 
                 const header = document.createElement("div");
                 header.style.display = "flex";
@@ -131,7 +152,7 @@ app.registerExtension({
                         activeChannel = ch.id;
                         Object.values(buttons).forEach(b => b.style.backgroundColor = "transparent");
                         btn.style.backgroundColor = "#555";
-                        draw();
+                        if (typeof draw === 'function') draw();
                     };
                     buttons[ch.id] = btn;
                     header.appendChild(btn);
@@ -149,9 +170,9 @@ app.registerExtension({
                 
                 rcBtn.onclick = () => {
                     curveData[activeChannel] = [[0.0, 0.0], [1.0, 1.0]];
-                    updateBackend();
-                    draw();
-                    updateLivePreview(false);
+                    if (typeof updateBackend === 'function') updateBackend();
+                    if (typeof draw === 'function') draw();
+                    if (typeof updateLivePreview === 'function') updateLivePreview(false);
                 };
                 header.appendChild(rcBtn);
 
@@ -172,9 +193,9 @@ app.registerExtension({
                         G: [[0.0, 0.0], [1.0, 1.0]],
                         B: [[0.0, 0.0], [1.0, 1.0]]
                     };
-                    updateBackend();
-                    draw();
-                    updateLivePreview(false);
+                    if (typeof updateBackend === 'function') updateBackend();
+                    if (typeof draw === 'function') draw();
+                    if (typeof updateLivePreview === 'function') updateLivePreview(false);
                 };
                 header.appendChild(rallBtn);
 
@@ -206,13 +227,35 @@ app.registerExtension({
 
                 container.appendChild(viewArea);
                 const ctx = canvas.getContext("2d");
+				
+				// 同步
+                const resizeObserver = new ResizeObserver((entries) => {
+                    for (let entry of entries) {
+                        const { width, height } = entry.contentRect;
+                        if (width > 0 && height > 0) {
+                            if (canvas.width !== width || canvas.height !== height) {
+                                canvas.width = width;
+                                canvas.height = height;
+                                if (typeof draw === 'function') draw();
+                            }
+                        }
+                    }
+                });
+                resizeObserver.observe(viewArea);
+                // ===================================================================
 
                 const widget = this.addDOMWidget("CurveUI", "div", container, { serialize: false, hideOnZoom: false });
+                
                 widget.computeSize = function(width) {
-                    return [width, parseInt(container.style.height) || DOM_DEFAULT_HEIGHT];
+                    // 兼容逻辑
+                    if (app.canvas && app.canvas.resizing_node === nodeInstance) {
+                        return [width, 310]; 
+                    }
+                    return [width, currentWidgetHeight];
                 };
                 
                 const nodeInstance = this;
+				
                 const onResize = this.onResize;
                 this.onResize = function(size) {
                     if (onResize) onResize.apply(this, arguments);
@@ -220,16 +263,14 @@ app.registerExtension({
                     if (size[0] < MIN_NODE_WIDTH) size[0] = MIN_NODE_WIDTH;
                     if (size[1] < MIN_NODE_HEIGHT) size[1] = MIN_NODE_HEIGHT;
                     
+                    this.size[0] = size[0];
                     this.size[1] = size[1];
                     
-                    const reservedHeight = 105; // 调整
-                    let newHeight = size[1] - reservedHeight;
+                    let newHeight = size[1] - 90;
                     
-                    if (newHeight < 100) newHeight = 100;
+                    if (newHeight < 310) newHeight = 310;
                     
-                    container.style.height = `${newHeight}px`;
-                    
-                    requestAnimationFrame(draw);
+					currentWidgetHeight = newHeight;
                 };
 
                 let lastPreviewTime = 0;
@@ -260,9 +301,9 @@ app.registerExtension({
                     pendingUpdate = false;
                     isPreviewPending = true;
                     
-                    const satWidget = nodeInstance.widgets.find(w => w.name === "saturation");
-                    const previewSizeWidget = nodeInstance.widgets.find(w => w.name === "preview_size");
-                    const frameWidget = nodeInstance.widgets.find(w => w.name === "frame_index"); 
+                    const satWidget = nodeInstance.widgets?.find(w => w.name === "saturation");
+                    const previewSizeWidget = nodeInstance.widgets?.find(w => w.name === "preview_size");
+                    const frameWidget = nodeInstance.widgets?.find(w => w.name === "frame_index"); 
 
                     const body = {
                         node_id: nodeInstance.id.toString(),
@@ -308,16 +349,8 @@ app.registerExtension({
                     })();
                 };
 
-
-                const satWidget = this.widgets.find(w => w.name === "saturation");
-                if (satWidget) {
-                    satWidget.computeSize = () => [0, 0];
-                    satWidget.draw = () => {};
-                    if (satWidget.inputEl) {
-                        satWidget.inputEl.style.display = "none";
-                    }
-                    satWidget.hidden = true;
-                }
+                hideWidgetAndSlot("saturation");
+                const satWidget = this.widgets?.find(w => w.name === "saturation");
                 
                 const paramsToBind = ["preview_size", "frame_index"];
                 paramsToBind.forEach(paramName => {
@@ -430,12 +463,22 @@ app.registerExtension({
                 
 
                 let satValueInternal = initialValue;
+                let satUpdateRaf = null;
+                
                 Object.defineProperty(satWidget, "value", {
                     get: () => satValueInternal,
                     set: (v) => {
-                        satValueInternal = parseFloat(v);
-                        if (satSlider) satSlider.value = satValueInternal;
-                        if (satValueDisplay) satValueDisplay.innerText = satValueInternal.toFixed(2);
+                        const newVal = parseFloat(v);
+                        if (satValueInternal === newVal) return; // 避免重复设置相同值
+                        satValueInternal = newVal;
+                        
+                        // 使用 RAF 批量更新 DOM，避免强制同步布局
+                        if (satUpdateRaf) return;
+                        satUpdateRaf = requestAnimationFrame(() => {
+                            if (satSlider) satSlider.value = satValueInternal;
+                            if (satValueDisplay) satValueDisplay.innerText = satValueInternal.toFixed(2);
+                            satUpdateRaf = null;
+                        });
                     },
                     configurable: true
                 });
@@ -458,13 +501,23 @@ app.registerExtension({
                 modeControlArea.style.alignItems = "center";
                 modeControlArea.style.alignSelf = "stretch";
                 modeControlArea.style.width = "100%";
-                modeControlArea.style.height = "32px";
+                //modeControlArea.style.height = "32px";
                 modeControlArea.style.flexShrink = "0";
                 modeControlArea.style.backgroundColor = "transparent";
                 modeControlArea.style.padding = "0 0px";
                 modeControlArea.style.borderTop = "none";
                 modeControlArea.style.gap = "8px";
                 modeControlArea.style.boxSizing = "border-box";
+				//modeControlArea.style.marginBottom = "0px";
+				
+				// Nodes 2.0？
+                const isNodes2_0 = !!document.querySelector("comfy-app") || 
+                                   !!document.querySelector(".comfy-vue") || 
+                                   (window.comfyAPI && window.comfyAPI.vue);
+
+                modeControlArea.style.marginBottom = isNodes2_0 ? "10px" : "0px";
+                // ==========================================================
+				
                 
                 // Load 按钮
                 const loadBtn = document.createElement("button");

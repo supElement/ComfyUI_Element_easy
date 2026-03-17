@@ -247,14 +247,20 @@ app.registerExtension({
                 const widget = this.addDOMWidget("CurveUI", "div", container, { serialize: false, hideOnZoom: false });
                 
                 widget.computeSize = function(width) {
-                    // 兼容逻辑
-                    if (app.canvas && app.canvas.resizing_node === nodeInstance) {
-                        return [width, 310]; 
-                    }
                     return [width, currentWidgetHeight];
                 };
                 
                 const nodeInstance = this;
+
+                const origComputeSize = this.computeSize;
+                this.computeSize = function(out) {
+                    let size = origComputeSize ? origComputeSize.apply(this, arguments) : [MIN_NODE_WIDTH, MIN_NODE_HEIGHT];
+                    
+                    let trueMinHeight = size[1] - currentWidgetHeight + 310;
+                    
+                    size[1] = Math.max(MIN_NODE_HEIGHT, trueMinHeight);
+                    return size;
+                };
 				
                 const onResize = this.onResize;
                 this.onResize = function(size) {
@@ -270,7 +276,7 @@ app.registerExtension({
                     
                     if (newHeight < 310) newHeight = 310;
                     
-					currentWidgetHeight = newHeight;
+                    currentWidgetHeight = newHeight;
                 };
 
                 let lastPreviewTime = 0;

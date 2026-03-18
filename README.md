@@ -19,9 +19,15 @@
 
 ## Update
 
+## v1.3.0
+  
+  添加 Element HueSat 节点, 曲线调整（色相 VS 饱和度），实时预览支持单张和序列帧图像。双击加点，右键减点。
+
+  <img width="1782" height="892" alt="Image" src="https://github.com/user-attachments/assets/d31be07b-64cf-4dc7-a664-ecf1cc57135b" />
+
 ## v1.2.7
   
-  添加 Element ImageCurve 节点, 曲线调色，实时预览支持单张和序列帧图像。
+  添加 Element ImageCurve 节点, 曲线调色，实时预览支持单张和序列帧图像。双击加点，右键减点。
 
   <img width="1767" height="1008" alt="Image" src="https://github.com/user-attachments/assets/f3bcfd71-eaba-4933-aa97-01ee6eefad62" />
 

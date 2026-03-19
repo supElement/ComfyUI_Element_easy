@@ -28,7 +28,7 @@
   添加 Element HueSat 节点, 曲线调整（色相 VS 饱和度），实时预览支持单张和序列帧图像。双击加点，右键减点。<br>
   - 注意：不要在曲线两端同时加点，虽然不会发生错误，但会使另一个点无效，实时上端点有一个就能完成调色了,因为两端的曲线是闭环的。（Note: Do not add points at both ends of the curve at the same time. Although it will not cause an error, it will invalidate the other point.）
 
-  <img width="1782" height="892" alt="Image" src="https://github.com/user-attachments/assets/d31be07b-64cf-4dc7-a664-ecf1cc57135b" />
+  <img width="1695" height="891" alt="Image" src="https://github.com/user-attachments/assets/627e1951-244b-4b13-937c-23c8d98748e8" />
 
 ## v1.2.7
   

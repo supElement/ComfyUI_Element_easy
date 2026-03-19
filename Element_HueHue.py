@@ -246,12 +246,6 @@ async def huehue_live_preview(request):
         proc_device = _get_processing_device()
         proc_dtype = _get_processing_dtype(proc_device, image_frame.dtype)
 
-        print(
-            f"[ElementHueHue][live_preview] cache_device={image.device}, cache_dtype={image.dtype}, "
-            f"proc_device={proc_device}, proc_dtype={proc_dtype}, frame_index={idx}",
-            flush=True
-        )
-
         with torch.no_grad():
             frame_gpu = image_frame.to(device=proc_device, non_blocking=True)
             lut_tensor = _build_lut_tensor(curve_data_str, proc_device, frame_gpu.dtype)

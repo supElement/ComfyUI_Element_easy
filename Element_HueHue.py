@@ -180,12 +180,6 @@ class ElementHueHue:
         proc_dtype = _get_processing_dtype(proc_device, image.dtype)
         out_dtype = image.dtype
 
-        print(
-            f"[ElementHueHue][apply_curve] input_device={image.device}, input_dtype={image.dtype}, "
-            f"proc_device={proc_device}, proc_dtype={proc_dtype}, shape={tuple(image.shape)}, output_mode={output_mode}",
-            flush=True
-        )
-
         with torch.no_grad():
             if not output_mode:
                 idx = max(0, min(frame_index, batch_size - 1))

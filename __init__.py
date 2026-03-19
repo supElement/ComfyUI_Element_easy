@@ -1,5 +1,5 @@
 # __init__.py
-__version__ = "1.3.0" 
+__version__ = "1.3.1" 
 
 from .random_chars import RandomCharacterGenerator
 from .empty_image_rgb import EmptyImageRGB
@@ -15,6 +15,8 @@ from .Image_Size import ElementEasyImageSize
 from .Element_SigmaGraph_Curve import Element_SigmaGraph_Curve
 from .Element_ImageCurve import Element_ImageCurve
 from .Element_HueSat import ElementHueSat
+from .Element_HueHue import ElementHueHue
+from .Element_HueBright import ElementHueBright
 
 WEB_DIRECTORY = "js"
 
@@ -33,6 +35,8 @@ NODE_CLASS_MAPPINGS = {
     "Element_SigmaGraph_Curve": Element_SigmaGraph_Curve,
     "Element_ImageCurve": Element_ImageCurve,
     "ElementHueSat": ElementHueSat,
+    "ElementHueHue": ElementHueHue,
+    "ElementHueBright": ElementHueBright,
 
 }
 
@@ -50,6 +54,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "Element_SigmaGraph_Curve": "Element_SigmaGraph (Curve)",
     "Element_ImageCurve": "Element ImageCurve",
     "ElementHueSat": "Element HueSat",
+    "ElementHueHue": "Element HueHue",
+    "ElementHueBright": "Element HueBright",
 
 }
 

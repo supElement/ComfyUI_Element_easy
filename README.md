@@ -19,6 +19,10 @@
 
 ## Update
 
+## v1.3.1
+  
+  添加 Element HueBright（色相 VS 亮度）和 Element HueHue（色相 VS 色相）节点, 曲线调整，实时预览支持单张和序列帧图像。双击加点，右键减点。
+
 ## v1.3.0
   
   添加 Element HueSat 节点, 曲线调整（色相 VS 饱和度），实时预览支持单张和序列帧图像。双击加点，右键减点。<br>

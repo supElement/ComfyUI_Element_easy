@@ -166,7 +166,7 @@ app.registerExtension({
             gradBar.style.bottom = `${PADDING - 0}px`;
             gradBar.style.left = `${PADDING}px`;
             gradBar.style.right = `${PADDING}px`;
-            gradBar.style.height = "10px";
+            gradBar.style.height = "4px";
             gradBar.style.borderRadius = "0px";
             //gradBar.style.background = "linear-gradient(to right, #FF0000, #FFFF00, #00FF00, #00FFFF, #0000FF, #FF00FF, #FF0000)";
 			const a = 0.7; 

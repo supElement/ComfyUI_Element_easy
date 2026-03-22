@@ -157,7 +157,7 @@ app.registerExtension({
             bgImageLayer.style.backgroundSize = "contain";
             bgImageLayer.style.backgroundPosition = "center";
             bgImageLayer.style.backgroundRepeat = "no-repeat";
-            bgImageLayer.style.opacity = "0.8";
+            bgImageLayer.style.opacity = "1.0";
             viewArea.appendChild(bgImageLayer);
 
             const PADDING = 14;

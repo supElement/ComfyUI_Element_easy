@@ -137,19 +137,24 @@ def compute_HueBright_logic(image, curve_data_str=None, lut_tensor=None, preview
     idx1 = (idx0 + 1) % lut_len
     w = h_pos - idx0.to(h_pos.dtype)
 
-   # bright_mult = lut_tensor[idx0] * (1.0 - w) + lut_tensor[idx1] * w
-   # new_v = torch.clamp(v * bright_mult, 0.0, 1.0)
+    w = w * w * (3.0 - 2.0 * w)
     
     bright_val = lut_tensor[idx0] * (1.0 - w) + lut_tensor[idx1] * w
+    bright_val = torch.clamp(bright_val, min=1e-5)
+    
     is_dark = bright_val < 1.0
 
     v_dark = v * bright_val
     
-    # 柔和 0.7，暴力 1.2
-    lift_strength = 1.0  
-    v_bright = v + (bright_val - 1.0) * lift_strength
+    gamma_power = 1.0 / bright_val
+    v_bright = torch.pow(v + 1e-7, gamma_power)
     
-    new_v = torch.where(is_dark, v_dark, v_bright)
+    adjusted_v = torch.where(is_dark, v_dark, v_bright)
+    
+    # 引入饱和度 (S) 权重遮罩
+    # 灰度图的 s=0，所以调整强度必须为 0；色彩越纯，调整越强。
+    new_v = v + s * (adjusted_v - v)
+    
     new_v = torch.clamp(new_v, 0.0, 1.0)
     
     new_hsv = torch.stack([h, s, new_v], dim=-1)

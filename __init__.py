@@ -1,5 +1,5 @@
 # __init__.py
-__version__ = "1.3.1" 
+__version__ = "1.3.2" 
 
 from .random_chars import RandomCharacterGenerator
 from .empty_image_rgb import EmptyImageRGB
@@ -17,6 +17,7 @@ from .Element_ImageCurve import Element_ImageCurve
 from .Element_HueSat import ElementHueSat
 from .Element_HueHue import ElementHueHue
 from .Element_HueBright import ElementHueBright
+from .Load_image_Preview import LoadImageWithPreview
 
 WEB_DIRECTORY = "js"
 
@@ -37,6 +38,7 @@ NODE_CLASS_MAPPINGS = {
     "ElementHueSat": ElementHueSat,
     "ElementHueHue": ElementHueHue,
     "ElementHueBright": ElementHueBright,
+    "LoadImageWithPreview": LoadImageWithPreview,
 
 }
 
@@ -48,6 +50,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MaskNoiseInjection_Element": "Image Noise Using Mask",
     "ImagePadBlur_Element": "Image Pad & Blur",
     "ChessboardPattern_Element": "chessboard",
+    "BlackWhiteColor_Element": "BlackWhiteColor",
     "Element_SigmaGraph": "Element_SigmaGraph",
     "FrameCalculator_Element": "Frame Calculator",
     "ElementEasyImageSize": "ImageSize Div",
@@ -56,6 +59,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ElementHueSat": "Element HueSat",
     "ElementHueHue": "Element HueHue",
     "ElementHueBright": "Element HueBright",
+    "LoadImageWithPreview": "LoadImage_Preview",
 
 }
 

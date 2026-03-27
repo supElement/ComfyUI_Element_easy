@@ -19,6 +19,13 @@
 
 ## Update
 
+## v1.3.2
+  
+  添加 LoadImage_Preview 节点, 浏览指定路径下的图像文件，选择其中一张后进入编辑面板（绘制mask或在图像上绘制方框、圆等）。<br>
+  - shift+左键 画直线、正方形或正圆，L-alpha 用于载入图像alpha到画布。
+
+  <img width="1364" height="1016" alt="image" src="https://github.com/user-attachments/assets/4ff0c960-3e0b-4403-ac7e-74f143e3d1b3" />
+
 ## v1.3.1
   
   添加 Element HueBright（色相 VS 亮度）和 Element HueHue（色相 VS 色相）节点, 曲线调整，实时预览支持单张和序列帧图像。双击加点，右键减点。

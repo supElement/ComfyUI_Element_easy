@@ -21,7 +21,8 @@
 
 ## v1.3.2
   
-  添加 LoadImage_Preview 节点, 浏览指定路径下的图像文件，选择其中一张后进入编辑面板（绘制mask或在图像上绘制方框、圆等）。<br>
+  添加 LoadImage_Preview 节点,其中浏览图像功能引用了作者Enashka的ComfyUI-nhknodes扩展image_loader_with_previews节点中的部分代码。<br>
+  - 主要功能：浏览指定路径下的图像文件，选择其中一张后进入编辑面板（绘制mask或在图像上绘制方框、圆等）。
   - shift+左键 画直线、正方形或正圆，L-alpha 用于载入图像alpha到画布。
 
   <img width="1364" height="1016" alt="image" src="https://github.com/user-attachments/assets/4ff0c960-3e0b-4403-ac7e-74f143e3d1b3" />

@@ -1,0 +1,20 @@
+name: Translate Readme
+
+on:
+  push:
+    branches: ['**']  
+
+jobs:
+  translate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 3
+
+      - name: Auto Translate
+        uses: 
+        with:
+          token: ${{ secrets.Action_Bot }} 
+          langs: "en" 

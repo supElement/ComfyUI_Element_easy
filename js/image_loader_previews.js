@@ -728,7 +728,19 @@ app.registerExtension({
         const maskCtx = maskCanvas.getContext("2d");
         maskCanvas.style.opacity = maskOpacity;
 
-        const canvasContainer = $el("div.ee-canvas-container", [imgEl, shapeCanvas, maskCanvas]);
+        const canvasContainer = $el("div.ee-canvas-container", {
+            style: {
+                userSelect: "none",
+                webkitUserSelect: "none"
+            }
+        }, [imgEl, shapeCanvas, maskCanvas]);
+        
+        imgEl.draggable = false;
+        imgEl.style.webkitUserDrag = "none";
+        imgEl.style.userDrag = "none";
+        
+        canvasContainer.onselectstart = () => false;
+        canvasContainer.ondragstart = () => false;
         
         editorView.appendChild(toolbar);
         editorView.appendChild(canvasContainer);

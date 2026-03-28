@@ -3,7 +3,7 @@
 # ComfyUI_Element_easy
 
 
-一些方便使用的小节点，我不是程序员，所以可能不会继续更新。
+一些方便使用的小节点。包括：black_white_color, chessboard, empty_image_rgb, image_pad_blur, mask_noise_element, mask_stroke, random_chars, text_line_break. Element_SigmaGraph,Element_SigmaGraph (Curve),Element ImageCurve,Element HueSat,Element HueBright,Element HueHue,LoadImage_Preview,Frame Calculator,ImageSize Div
 
 
 ## Installation

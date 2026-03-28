@@ -14,7 +14,7 @@ jobs:
           fetch-depth: 3
 
       - name: Auto Translate
-        uses: 
+        uses: Lin-jun-xiang/action-translate-readme@v2
         with:
-          token: ${{ secrets.Action_Bot }} 
+          token: ${{ secrets.githubTokenClassic }} 
           langs: "en" 

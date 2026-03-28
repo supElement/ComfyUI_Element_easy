@@ -16,5 +16,5 @@ jobs:
       - name: Auto Translate
         uses: Lin-jun-xiang/action-translate-readme@v2
         with:
-          token: ${{ secrets.ElEMENT_TOKEN_CLASSIC }} 
+          token: ${{ secrets.ZHIPU_API_KEY }} 
           langs: "en" 

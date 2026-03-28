@@ -12,7 +12,7 @@ jobs:
       
       - name: Translate with Zhipu (Free Forever)
         env:
-          ZHIPU_KEY: ${{ secrets.ZHIPU_API_KEY }}  # 只需在Secrets里设置这一个
+          ZHIPU_KEY: ${{ secrets.ZHIPU_API_KEY }}  # 在Secrets里设置
         run: |
           python << 'PYEOF'
           import requests, os, json

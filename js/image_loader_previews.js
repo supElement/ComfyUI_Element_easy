@@ -272,6 +272,8 @@ app.registerExtension({
         if (node.comfyClass !== NODE_NAME) return;
 		
         const isNewNode = typeof node.id !== 'number' || node.id < 0;
+		
+		let lastScrollTop = 0;
         
         if (isNewNode) {
             node.size = [580, 600];
@@ -462,12 +464,10 @@ app.registerExtension({
             btn.classList.add('active');
             
             if (tool === 'brush' || tool === 'eraser') {
-                // 画笔和橡皮擦：隐藏默认光标，显示圆圈
                 maskCanvas.style.cursor = "none";
                 brushCursor.style.display = "block";
                 updateBrushCursor();
             } else {
-                // Box 和 Circle：使用十字光标，隐藏圆圈
                 maskCanvas.style.cursor = "crosshair";
                 brushCursor.style.display = "none";
             }
@@ -704,7 +704,6 @@ app.registerExtension({
             ])
         ]);
         
-        // 创建工具栏 - 使用两行布局
         const toolbar = $el("div.ee-toolbar");
         
         // 第一行：工具按钮
@@ -796,7 +795,6 @@ app.registerExtension({
                 requestAnimationFrame(resizeCanvas);
             }
             
-            // 自适应布局：根据宽度决定是否合并为单行
             updateToolbarLayout(size[0]);
         };
         
@@ -806,12 +804,10 @@ app.registerExtension({
             const neededWidth = 1160; // 足够放置所有元素的单行宽度
             
             if (containerWidth >= neededWidth) {
-                // 宽度足够，合并为单行
                 toolbar.style.flexDirection = "row";
                 toolbar.style.flexWrap = "nowrap";
                 toolbarRow2.style.marginLeft = "auto";
             } else {
-                // 宽度不足，使用两行布局
                 toolbar.style.flexDirection = "column";
                 toolbar.style.flexWrap = "wrap";
                 toolbarRow2.style.marginLeft = "0";
@@ -893,7 +889,7 @@ app.registerExtension({
             }
         };
 
-        const loadImages = async () => {
+        const loadImages = async (restoreScroll = 0) => {
             currentPath = pathWidget.value;
             gridView.innerHTML = "<div style='color:white; padding:10px;'>loading...</div>";
             
@@ -906,6 +902,12 @@ app.registerExtension({
                 const images = await res.json();
                 const filenames = Object.keys(images);
                 renderGrid(filenames);
+				
+                if (restoreScroll > 0) {
+                    requestAnimationFrame(() => {
+                        gridView.scrollTop = restoreScroll;
+                    });
+                }
                 
             } catch (err) {
                 gridView.innerHTML = "<div style='color:red;'>Loading failed, please check the directory</div>";
@@ -916,7 +918,12 @@ app.registerExtension({
             gridView.innerHTML = "";
             filenames.forEach(filename => {
                 const item = $el("div.ee-grid-item", {
-                    onclick: () => openEditor(filename)
+                    onclick: () => {
+                        lastScrollTop = gridView.scrollTop; 
+						localStorage.setItem('ee_scroll_' + currentPath, lastScrollTop.toString()); 
+						localStorage.setItem('ee_image_' + currentPath, filename);
+                        openEditor(filename);
+                    }
                 }, [
                     $el("img", { src: `/element_easy/view?folder_path=${encodeURIComponent(currentPath)}&filename=${encodeURIComponent(filename)}` })
                 ]);
@@ -930,7 +937,11 @@ app.registerExtension({
             editorView.style.display = "none";
             header.querySelector("#ee-btn-back").style.display = "none";
             header.querySelector("#ee-btn-lmask").style.display = "none";
-            loadImages(); 
+			
+			const savedScroll = localStorage.getItem('ee_scroll_' + currentPath);
+			const scrollPos = savedScroll ? parseInt(savedScroll, 10) : 0;
+			
+            loadImages(lastScrollTop);
         };
 
         // 加载图像 Alpha 通道为 Mask
@@ -956,15 +967,13 @@ app.registerExtension({
                 const alphaImageData = alphaCtx.createImageData(tempImg.width, tempImg.height);
                 const alphaData = alphaImageData.data;
                 
-                // 将 alpha 通道转换为灰度
                 for (let i = 0; i < data.length; i += 4) {
-                    const alpha = data[i + 3]; // 获取原图 Alpha 通道
+                    const alpha = data[i + 3]; 
                     
-                    // RGB 设为灰色，用于在 UI 中显示遮罩颜色
-                    alphaData[i] = 128;       // R
-                    alphaData[i + 1] = 128;   // G
-                    alphaData[i + 2] = 128;   // B
-                    alphaData[i + 3] = alpha; // A
+                    alphaData[i] = 128;       
+                    alphaData[i + 1] = 128;   
+                    alphaData[i + 2] = 128;   
+                    alphaData[i + 3] = alpha; 
                 }
                 
                 alphaCtx.putImageData(alphaImageData, 0, 0);
@@ -975,7 +984,17 @@ app.registerExtension({
         };
 
         const openEditor = (filename) => {
-            const isSwitchingImage = imageWidget && imageWidget.value !== filename;
+			
+			const savedScroll = localStorage.getItem('ee_scroll_' + currentPath);
+			lastScrollTop = savedScroll ? parseInt(savedScroll, 10) : 0;
+			
+			const isSwitchingImage = imageWidget && imageWidget.value !== filename;
+            
+            if (imageWidget) {
+                imageWidget.value = filename;
+            }
+            
+            localStorage.setItem('ee_image_' + currentPath, filename);
             
             if (isSwitchingImage) {
                 maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
@@ -985,10 +1004,7 @@ app.registerExtension({
                 if (maskColorWidget) maskColorWidget.value = ""; 
                 history = [];
             }
-            
-            if (imageWidget) {
-                imageWidget.value = filename;
-            }
+
             
             gridView.style.display = "none";
             editorView.style.display = "flex";
@@ -1015,8 +1031,10 @@ app.registerExtension({
         };
 
         let isDrawing = false;
+		let isWindowTracking = false;
         let startX = 0, startY = 0;
         let snapshot = null;
+		let currentPos = { x: 0, y: 0 };
 
         const getPos = (e) => {
             const canvasRect = maskCanvas.getBoundingClientRect();
@@ -1027,9 +1045,18 @@ app.registerExtension({
             const scaleX = maskCanvas.width / canvasRect.width;
             const scaleY = maskCanvas.height / canvasRect.height;
             
+            const rawX = relativeX * scaleX;
+            const rawY = relativeY * scaleY;
+            
+            const isInside = rawX >= 0 && rawX <= maskCanvas.width && 
+                             rawY >= 0 && rawY <= maskCanvas.height;
+            
             return {
-                x: Math.max(0, Math.min(maskCanvas.width, relativeX * scaleX)),
-                y: Math.max(0, Math.min(maskCanvas.height, relativeY * scaleY))
+                x: Math.max(0, Math.min(maskCanvas.width, rawX)),  
+                y: Math.max(0, Math.min(maskCanvas.height, rawY)),
+                rawX: rawX, 
+                rawY: rawY,
+                isInside: isInside
             };
         };
 
@@ -1079,13 +1106,18 @@ app.registerExtension({
             }
         });
 
+
         maskCanvas.addEventListener("mousedown", (e) => {
+            const pos = getPos(e);
+            
+            if (!pos.isInside) return;
+            
             isDrawing = true;
             saveHistory();
-            const pos = getPos(e);
-            startX = pos.x;
-            startY = pos.y;
-            lastBrushPos = pos;
+            startX = pos.rawX; 
+            startY = pos.rawY;
+            lastBrushPos = { x: pos.rawX, y: pos.rawY };
+            currentPos = { x: pos.rawX, y: pos.rawY, isInside: true };
             
             const targetCtx = drawTargetIsImage ? shapeCtx : maskCtx;
             const targetCanvas = drawTargetIsImage ? shapeCanvas : maskCanvas;
@@ -1096,11 +1128,15 @@ app.registerExtension({
                 targetCtx.lineCap = "round";
                 targetCtx.lineJoin = "round";
                 targetCtx.beginPath();
-                targetCtx.moveTo(startX, startY);
+                targetCtx.moveTo(pos.rawX, pos.rawY);
             }
+            
+            window.addEventListener("mousemove", handleWindowMouseMove);
+            window.addEventListener("mouseup", handleWindowMouseUp);
+            isWindowTracking = true;
         });
 
-        maskCanvas.addEventListener("mouseenter", () => {
+        maskCanvas.addEventListener("mouseenter", (e) => {
             if (currentTool === 'brush' || currentTool === 'eraser') {
                 brushCursor.style.display = "block";
             }
@@ -1148,18 +1184,8 @@ app.registerExtension({
             brushCursor.style.top = cursorY + "px";
         };
 
-        maskCanvas.addEventListener("mousemove", (e) => {
-            if (!cursorRafId) {
-                cursorRafId = requestAnimationFrame(() => {
-                    cursorRafId = null;
-                    updateCursorPosition(e);
-                });
-            }
-            
-            if (!isDrawing) return;
-            const pos = getPos(e);
+        const updateDrawing = (pos) => {
             const scaleX = maskCanvas.width / maskCanvas.getBoundingClientRect().width;
-            
             const targetCtx = drawTargetIsImage ? shapeCtx : maskCtx;
             const drawColor = drawTargetIsImage ? shapeColor : maskColor;
             const drawOpacity = drawTargetIsImage ? shapeOpacity : 1.0;
@@ -1172,22 +1198,21 @@ app.registerExtension({
                 targetCtx.strokeStyle = drawColor;
                 targetCtx.globalAlpha = drawOpacity;
                 
-                // Shift 键：画直线
                 if (isShiftPressed && lastBrushPos) {
                     targetCtx.putImageData(snapshot, 0, 0);
                     targetCtx.beginPath();
                     targetCtx.moveTo(startX, startY);
-                    targetCtx.lineTo(pos.x, pos.y);
+                    targetCtx.lineTo(pos.rawX, pos.rawY);
                     targetCtx.stroke();
                 } else {
-                    targetCtx.lineTo(pos.x, pos.y);
+                    targetCtx.lineTo(pos.rawX, pos.rawY);
                     targetCtx.stroke();
                     targetCtx.beginPath();          
-                    targetCtx.moveTo(pos.x, pos.y);
-                    lastBrushPos = pos;
+                    targetCtx.moveTo(pos.rawX, pos.rawY);
+                    lastBrushPos = { x: pos.rawX, y: pos.rawY };
                 }
-                
                 targetCtx.globalAlpha = 1.0;
+                
             } else if (currentTool === 'eraser') {
                 targetCtx.lineWidth = brushSize * scaleX;
                 targetCtx.lineCap = "round";
@@ -1195,53 +1220,118 @@ app.registerExtension({
                 targetCtx.globalCompositeOperation = "destination-out";
                 targetCtx.globalAlpha = 1.0;
                 
-                // Shift 键：擦除直线
                 if (isShiftPressed && lastBrushPos) {
                     targetCtx.putImageData(snapshot, 0, 0);
                     targetCtx.beginPath();
                     targetCtx.moveTo(startX, startY);
-                    targetCtx.lineTo(pos.x, pos.y);
+                    targetCtx.lineTo(pos.rawX, pos.rawY);
                     targetCtx.stroke();
                 } else {
-                    targetCtx.lineTo(pos.x, pos.y);
+                    targetCtx.lineTo(pos.rawX, pos.rawY);
                     targetCtx.stroke();
                     targetCtx.beginPath();        
-                    targetCtx.moveTo(pos.x, pos.y);
-                    lastBrushPos = pos;
+                    targetCtx.moveTo(pos.rawX, pos.rawY);
+                    lastBrushPos = { x: pos.rawX, y: pos.rawY };
                 }
+                
             } else {
-                // rect 或 circle
+				// rect 和 circle
+                if (snapshot) {  
+                    targetCtx.putImageData(snapshot, 0, 0);
+                    targetCtx.globalCompositeOperation = "source-over";
+                    targetCtx.lineWidth = shapeThickness * scaleX;
+                    targetCtx.strokeStyle = drawColor;
+                    targetCtx.fillStyle = drawColor;
+                    targetCtx.globalAlpha = drawOpacity;
+                    
+                    let endX = pos.rawX;
+                    let endY = pos.rawY;
+                    
+                    if (currentTool === 'rect') {
+                        let width = endX - startX;
+                        let height = endY - startY;
+                        
+                        if (isShiftPressed) {
+                            const size = Math.max(Math.abs(width), Math.abs(height));
+                            width = width > 0 ? size : -size;
+                            height = height > 0 ? size : -size;
+                        }
+                        
+                        if (shapeFill) {
+                            targetCtx.fillRect(startX, startY, width, height);
+                        }
+                        targetCtx.strokeRect(startX, startY, width, height);
+                    
+                    } else if (currentTool === 'circle') {
+                        let radiusX = Math.abs(endX - startX);
+                        let radiusY = Math.abs(endY - startY);
+                        
+                        if (isShiftPressed) {
+                            const radius = Math.max(radiusX, radiusY);
+                            radiusX = radius;
+                            radiusY = radius;
+                        }
+                        
+                        targetCtx.beginPath();
+                        targetCtx.ellipse(startX, startY, radiusX, radiusY, 0, 0, Math.PI * 2);
+                        if (shapeFill) targetCtx.fill();
+                        targetCtx.stroke();
+                    }
+                    targetCtx.globalAlpha = 1.0;
+                }
+            }
+        };
+
+        const handleWindowMouseMove = (e) => {
+            if (!isDrawing) return;
+            
+            const pos = getPos(e);
+            currentPos = { x: pos.rawX, y: pos.rawY, isInside: pos.isInside };
+            
+            updateDrawing(pos);
+        };
+        
+        const handleWindowMouseUp = (e) => {
+            if (!isDrawing) {
+                cleanupWindowTracking();
+                return;
+            }
+            
+            const pos = getPos(e);
+            
+            if ((currentTool === 'rect' || currentTool === 'circle') && snapshot) {
+                const scaleX = maskCanvas.width / maskCanvas.getBoundingClientRect().width;
+                const targetCtx = drawTargetIsImage ? shapeCtx : maskCtx;
+                const drawColor = drawTargetIsImage ? shapeColor : maskColor;
+                const drawOpacity = drawTargetIsImage ? shapeOpacity : 1.0;
+                
+                let endX = pos.rawX;
+                let endY = pos.rawY;
+                
                 targetCtx.putImageData(snapshot, 0, 0);
+                targetCtx.globalCompositeOperation = "source-over";
                 targetCtx.lineWidth = shapeThickness * scaleX;
                 targetCtx.strokeStyle = drawColor;
                 targetCtx.fillStyle = drawColor;
                 targetCtx.globalAlpha = drawOpacity;
                 
-                let endX = pos.x;
-                let endY = pos.y;
-                
                 if (currentTool === 'rect') {
                     let width = endX - startX;
                     let height = endY - startY;
                     
-                    // Shift 键：正方形
                     if (isShiftPressed) {
                         const size = Math.max(Math.abs(width), Math.abs(height));
                         width = width > 0 ? size : -size;
                         height = height > 0 ? size : -size;
                     }
                     
-                    if (shapeFill) {
-                        targetCtx.fillRect(startX, startY, width, height);
-                    }
-                    
+                    if (shapeFill) targetCtx.fillRect(startX, startY, width, height);
                     targetCtx.strokeRect(startX, startY, width, height);
-                
+                    
                 } else if (currentTool === 'circle') {
                     let radiusX = Math.abs(endX - startX);
                     let radiusY = Math.abs(endY - startY);
                     
-                    // Shift 键：正圆
                     if (isShiftPressed) {
                         const radius = Math.max(radiusX, radiusY);
                         radiusX = radius;
@@ -1249,29 +1339,42 @@ app.registerExtension({
                     }
                     
                     targetCtx.beginPath();
-                    // 使用 ellipse 画椭圆/正圆
-                    targetCtx.ellipse(
-                        startX, 
-                        startY, 
-                        radiusX, 
-                        radiusY, 
-                        0, 
-                        0, 
-                    Math.PI * 2
-                    );
-                    
+                    targetCtx.ellipse(startX, startY, radiusX, radiusY, 0, 0, Math.PI * 2);
                     if (shapeFill) targetCtx.fill();
                     targetCtx.stroke();
                 }
-                
                 targetCtx.globalAlpha = 1.0;
             }
+            
+            finishDrawing();
+            cleanupWindowTracking();
+        };
+        
+        const cleanupWindowTracking = () => {
+            window.removeEventListener("mousemove", handleWindowMouseMove);
+            window.removeEventListener("mouseup", handleWindowMouseUp);
+            isWindowTracking = false;
+        };
+
+        maskCanvas.addEventListener("mousemove", (e) => {
+            if (!cursorRafId) {
+                cursorRafId = requestAnimationFrame(() => {
+                    cursorRafId = null;
+                    updateCursorPosition(e);
+                });
+            }
+            
+            if (!isDrawing) return;
+            
+            const pos = getPos(e);
+            updateDrawing(pos);
         });
 
         const finishDrawing = () => {
             if(isDrawing) {
                 isDrawing = false;
                 lastBrushPos = null;
+                snapshot = null;  
                 if (drawTargetIsImage) {
                     exportShapes();
                 } else {
@@ -1279,10 +1382,9 @@ app.registerExtension({
                 }
             }
         };
-
+        
         maskCanvas.addEventListener("mouseup", finishDrawing);
-        maskCanvas.addEventListener("mouseout", finishDrawing);
-
+        
         const clearAll = () => {
             saveHistory();
             maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
@@ -1353,9 +1455,18 @@ app.registerExtension({
             };
         }       
         setTimeout(() => {
-            if (imageWidget && imageWidget.value) {
-                currentPath = pathWidget.value;
-                openEditor(imageWidget.value);
+            currentPath = pathWidget.value;
+            
+            const lastSelectedImage = localStorage.getItem('ee_image_' + currentPath);
+            const targetImage = lastSelectedImage || (imageWidget ? imageWidget.value : null);
+            
+            if (targetImage) {
+                
+                
+                const savedScroll = localStorage.getItem('ee_scroll_' + currentPath);
+                lastScrollTop = savedScroll ? parseInt(savedScroll, 10) : 0;
+                
+                openEditor(targetImage);
             } else {
                 loadImages();
             }
@@ -1365,6 +1476,20 @@ app.registerExtension({
 
         const originalOnRemoved = node.onRemoved;
         node.onRemoved = function() {
+            try {
+                const keysToRemove = [];
+                for (let i = 0; i < localStorage.length; i++) {
+                    const key = localStorage.key(i);
+                    if (key && (key.startsWith('ee_scroll_') || key.startsWith('ee_image_'))) {
+                        keysToRemove.push(key);
+                    }
+                }
+                keysToRemove.forEach(key => localStorage.removeItem(key));
+            } catch (e) {}
+            
+            cleanupWindowTracking();
+            window.removeEventListener("mouseup", globalMouseUp);
+            
             if (brushCursor && brushCursor.parentNode) {
                 brushCursor.parentNode.removeChild(brushCursor);
             }

@@ -1,4 +1,9 @@
-> ## 🌐 **简体中文** | [English](./README.en.md)
+<div align="center">
+
+[![中文](https://img.shields.io/badge/语言-简体中文-red?style=for-the-badge)](./README.md)
+[![English](https://img.shields.io/badge/Language-English-blue?style=for-the-badge)](./README.en.md)
+
+</div>
 
 # ComfyUI_Element_easy
 

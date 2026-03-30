@@ -2,15 +2,8 @@
 # 原始代码来自 TWanSigmaGraph (https://github.com/Temult/TWanSigmaGraph)
 # 原作者: Temult
 # 许可证: MIT License
-# 
-# 修改说明:
-# - 【重大更新】实现三次样条插值，曲线真正平滑且经过所有控制点
-# - 【更新】实现在鼠标点击曲线的位置增减控制点，其它控制点位置和曲率最大限度保持不变（双击添加，右键删除）
-# - 【更新】改为使用单独json文件存取预设
-# - 【新增】加入 custom_sigmas, latent 可选输入端, 添加节点可单独执行功能
-# - 【修复】y值限制在[0,1]范围内，修复浮点精度问题
-#
 # 修改者: [supElement]
+# 添加、修改、优化了太多内容，不一一描述了。
 # 修改日期: 2026-02-28
 */
 
@@ -18,28 +11,65 @@ import { app } from "/../scripts/app.js";
 import { $el } from "/../scripts/ui.js";
 import { api } from "/../scripts/api.js";
 
-/*—— Constants ——*/
-const NODE_CLASS      = "Element_SigmaGraph_Curve";
+const NODE_CLASS = "Element_SigmaGraph_Curve";
 const GRAPH_DATA_NAME = "graph_data";
-const STEPS_NAME      = "steps";
-const CANVAS_TYPE     = "SIGMA_GRAPH_CURVE_CANVAS";
-const MIN_POINTS      = 2;
-const NUM_SLOTS       = 8;
-const LS_KEY          = "sigma_graph_saveSlots";
-const UNDO_LIMIT      = 1;
-const MIN_NODE_WIDTH  = 200;
-const GRAB_THRESHOLD  = 0.08;
-const POINT_RADIUS    = 4;
-const POINT_COLOR     = "#1E88E5";
-const CURVE_COLOR     = "#fff";
-const CONTROL_COLOR   = "#ff6b6b";  // 控制点颜色
-const GUIDE_COLOR     = "#444";     // 辅助线颜色
+const STEPS_NAME = "steps";
+const CANVAS_TYPE = "SIGMA_GRAPH_CURVE_CANVAS";
+const MIN_POINTS = 2;
+const NUM_SLOTS = 8;
+const LS_KEY = "sigma_graph_saveSlots";
+const UNDO_LIMIT = 1;
+const MIN_NODE_WIDTH = 240;
+const MIN_NODE_HEIGHT = 280;
+const NON_WIDGET_HEIGHT = 90;
+const MIN_WIDGET_HEIGHT = 100;
+const GRAB_THRESHOLD = 0.08;
+const POINT_RADIUS = 4;
+const POINT_COLOR = "#1E88E5";
+const CURVE_COLOR = "#fff";
+const CONTROL_COLOR = "#ff6b6b";
+const GUIDE_COLOR = "#444";
 
-/*—— Cubic Spline Interpolation ——*/
 
-/**
- * 计算三次样条插值系数（Thomas算法）
- */
+function linearInterpolate(x, points) {
+    const sorted = points.slice().sort((a, b) => a.x - b.x);
+    
+    if (x <= sorted[0].x) return sorted[0].y;
+    if (x >= sorted[sorted.length - 1].x) return sorted[sorted.length - 1].y;
+    
+    for (let i = 0; i < sorted.length - 1; i++) {
+        const p0 = sorted[i];
+        const p1 = sorted[i + 1];
+        
+        if (x >= p0.x && x <= p1.x) {
+            const t = (x - p0.x) / (p1.x - p0.x);
+            return p0.y + t * (p1.y - p0.y);
+        }
+    }
+    
+    return sorted[sorted.length - 1].y;
+}
+
+function calcLinearSigmas(points, steps) {
+    steps = Math.max(1, steps | 0);
+    const p = (points || []).slice().sort((a, b) => a.x - b.x);
+    
+    if (p.length < 2) return Array(steps + 1).fill(1.0);
+    
+    if (!p.some((pt) => Math.abs(pt.x) < 1e-6))
+        p.unshift({ x: 0, y: Math.max(0.0, Math.min(1.0, p[0].y)) });
+    if (!p.some((pt) => Math.abs(pt.x - 1) < 1e-6))
+        p.push({ x: 1, y: Math.max(0.0, Math.min(1.0, p[p.length - 1].y)) });
+    
+    const out = [];
+    for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        const y = linearInterpolate(t, p);
+        out.push(formatValue(y));
+    }
+    return out;
+}
+
 function computeSplineCoefficients(points) {
     const n = points.length - 1;
     if (n < 1) return [];
@@ -52,7 +82,6 @@ function computeSplineCoefficients(points) {
         h.push(x[i+1] - x[i]);
     }
     
-    // 构建三对角矩阵
     const A = Array(n+1).fill().map(() => Array(n+1).fill(0));
     const b = Array(n+1).fill(0);
     
@@ -66,7 +95,6 @@ function computeSplineCoefficients(points) {
         b[i] = 3 * ((y[i+1] - y[i]) / h[i] - (y[i] - y[i-1]) / h[i-1]);
     }
     
-    // Thomas算法求解
     const cPrime = Array(n+1).fill(0);
     const dPrime = Array(n+1).fill(0);
     const M = Array(n+1).fill(0);
@@ -85,7 +113,6 @@ function computeSplineCoefficients(points) {
         M[i] = dPrime[i] - cPrime[i] * M[i+1];
     }
     
-    // 计算系数
     const coeffs = [];
     for (let i = 0; i < n; i++) {
         const a = y[i];
@@ -102,22 +129,16 @@ function computeSplineCoefficients(points) {
     return coeffs;
 }
 
-/**
- * 评估样条函数在x处的值
- */
 function evaluateSpline(x, coeffs) {
     for (let coeff of coeffs) {
         if (x >= coeff.x0 && x <= coeff.x1) {
             const dx = x - coeff.x0;
             const val = coeff.a + coeff.b*dx + coeff.c*dx*dx + coeff.d*dx*dx*dx;
-            // 限制在 [0, 1]
             return Math.max(0.0, Math.min(1.0, val));
         }
     }
-    // 边界处理
     if (coeffs.length === 0) return 0;
     if (x < coeffs[0].x0) {
-        // 返回限制后的端点值
         return Math.max(0.0, Math.min(1.0, coeffs[0].a));
     }
     const last = coeffs[coeffs.length-1];
@@ -125,70 +146,12 @@ function evaluateSpline(x, coeffs) {
     return Math.max(0.0, Math.min(1.0, lastVal));
 }
 
-/**
- * 将样条转换为贝塞尔曲线控制点，用于Canvas绘制
- * 每个区间转换为一条三次贝塞尔曲线，并限制控制点在合理范围内
- */
-function splineToBezier(points) {
-    if (points.length < 2) return [];
-    
-    const coeffs = computeSplineCoefficients(points);
-    const bezierCurves = [];
-    
-    for (let i = 0; i < points.length - 1; i++) {
-        const p0 = points[i];
-        const p3 = points[i+1];
-        const coeff = coeffs[i];
-        
-        // 计算一阶导数在端点的值
-        const dx = p3.x - p0.x;
-        const dy_dx_0 = coeff.b;
-        const dy_dx_1 = coeff.b + 2*coeff.c*dx + 3*coeff.d*dx*dx;
-        
-        // 转换为贝塞尔控制点
-        const cp1x = p0.x + dx / 3;
-        // 限制控制点y值在[0,1]范围内，避免曲线绘制越界
-        let cp1y = p0.y + dy_dx_0 * (dx / 3);
-        cp1y = Math.max(-0.5, Math.min(1.5, cp1y)); // 允许稍微超出以便曲线平滑，但不要太离谱
-        
-        const cp2x = p3.x - dx / 3;
-        let cp2y = p3.y - dy_dx_1 * (dx / 3);
-        cp2y = Math.max(-0.5, Math.min(1.5, cp2y));
-        
-        bezierCurves.push({
-            p0: { x: p0.x, y: Math.max(0.0, Math.min(1.0, p0.y)) },
-            cp1: { x: cp1x, y: cp1y },
-            cp2: { x: cp2x, y: cp2y },
-            p3: { x: p3.x, y: Math.max(0.0, Math.min(1.0, p3.y)) }
-        });
-    }
-    
-    return bezierCurves;
-}
-
-/**
- * 格式化数值，避免科学计数法，处理浮点精度
- */
-function formatValue(val) {
-    // 处理极小的浮点误差
-    if (Math.abs(val) < 1e-10) val = 0.0;
-    if (Math.abs(val - 1.0) < 1e-10) val = 1.0;
-    // 限制范围
-    val = Math.max(0.0, Math.min(1.0, val));
-    // 四舍五入到10位小数，避免科学计数法
-    return Math.round(val * 10000000000) / 10000000000;
-}
-
-/**
- * 计算平滑曲线上的采样点（用于预览）
- */
 function calcSmoothSigmas(points, steps) {
     steps = Math.max(1, steps | 0);
     const p = (points || []).slice().sort((a, b) => a.x - b.x);
     
     if (p.length < 2) return Array(steps + 1).fill(1.0);
     
-    // 确保边界
     if (!p.some((pt) => Math.abs(pt.x) < 1e-6))
         p.unshift({ x: 0, y: Math.max(0.0, Math.min(1.0, p[0].y)) });
     if (!p.some((pt) => Math.abs(pt.x - 1) < 1e-6))
@@ -197,15 +160,21 @@ function calcSmoothSigmas(points, steps) {
     const coeffs = computeSplineCoefficients(p);
     const out = [];
     
-    for (let i = 0; i < steps + 1; i++) {
+    for (let i = 0; i <= steps; i++) {
         const t = i / steps;
         let y = evaluateSpline(t, coeffs);
-        // 格式化避免科学计数法
         y = formatValue(y);
         out.push(y);
     }
     
     return out;
+}
+
+function formatValue(val) {
+    if (Math.abs(val) < 1e-10) val = 0.0;
+    if (Math.abs(val - 1.0) < 1e-10) val = 1.0;
+    val = Math.max(0.0, Math.min(1.0, val));
+    return Math.round(val * 10000000000) / 10000000000;
 }
 
 function strToPts(str) {
@@ -215,7 +184,6 @@ function strToPts(str) {
             Array.isArray(arr) &&
             arr.every((o) => typeof o.x === "number" && typeof o.y === "number")
         ) {
-            // 解析时限制y值
             return arr.map(p => ({
                 x: p.x,
                 y: Math.max(0.0, Math.min(1.0, p.y))
@@ -237,23 +205,69 @@ function strToPts(str) {
     }));
 }
 
+
 function setup(node) {
     if (node._sigmaSetupDone) return;
     node._sigmaSetupDone = true;
     
-    const DEFAULT_SIZE = [240, 280];
-    
-    if (node.size[0] < 200 || node.size[1] < 150) {
-        node.size = [...DEFAULT_SIZE];
+    const isNodes2_0 = !!document.querySelector("comfy-app") ||
+                       !!document.querySelector(".comfy-vue") ||
+                       (window.comfyAPI && window.comfyAPI.vue);
+					   
+    const savedSize = node.properties?._ui_size;
+    if (savedSize && Array.isArray(savedSize) && savedSize.length === 2) {
+        node.size = [
+            Math.max(MIN_NODE_WIDTH, Number(savedSize[0]) || MIN_NODE_WIDTH),
+            Math.max(MIN_NODE_HEIGHT, Number(savedSize[1]) || MIN_NODE_HEIGHT)
+        ];
+    } else if (!node.size || node.size[0] < MIN_NODE_WIDTH || node.size[1] < MIN_NODE_HEIGHT) {
+        node.size = [MIN_NODE_WIDTH, MIN_NODE_HEIGHT];
     }
+					   
+	node.minSize = [MIN_NODE_WIDTH, MIN_NODE_HEIGHT]; 
+    
+    if (node.properties === undefined) node.properties = {};
+    if (node.properties._curveMode === undefined) {
+        node.properties._curveMode = true;
+    }
+    let isCurveMode = node.properties._curveMode;
 
+    const hideWidgetAndSlot = (widgetName) => {
+        const w = node.widgets?.find(x => x.name === widgetName);
+        if (w) {
+            w.type = "hidden";
+            w.hidden = true;
+            w.computeSize = () => [0, 0];
+            w.draw = () => {};
+            if (w.inputEl) {
+                w.inputEl.style.display = "none";
+                if (w.inputEl.parentElement) w.inputEl.parentElement.style.display = "none";
+            }
+        }
+        if (node.inputs) {
+            const idx = node.inputs.findIndex(i => i.name === widgetName);
+            if (idx !== -1) node.removeInput(idx);
+        }
+    };
+    
+    hideWidgetAndSlot(GRAPH_DATA_NAME);
+    
+    if (node.size[0] < MIN_NODE_WIDTH) node.size[0] = MIN_NODE_WIDTH;
+    if (node.size[1] < MIN_NODE_HEIGHT) node.size[1] = MIN_NODE_HEIGHT;
+    
     const gw = node.widgets.find((w) => w.name === GRAPH_DATA_NAME);
-    if (!gw || !gw.element) return;
+    if (!gw) return;
     const ta = gw.element;
-
-    ta.style.minHeight = "10px";
-    ta.style.boxSizing = "border-box";
-    ta.style.resize = "vertical";
+    
+    if (ta) {
+        ta.style.minHeight = "0px";
+        ta.style.height = "0px";
+        ta.style.padding = "0px";
+        ta.style.border = "none";
+        ta.style.overflow = "hidden";
+        ta.style.position = "absolute";
+        ta.style.visibility = "hidden";
+    }
 
     let initialPts = null;
     if (gw.value && gw.value.trim() !== "") {
@@ -265,9 +279,7 @@ function setup(node) {
     }
 
     if (!initialPts || initialPts.length === 0) {
-		
         initialPts = [{x: 0, y: 1}, {x: 1, y: 0}];
-		
         const defaultJson = JSON.stringify(initialPts);
         ta.value = defaultJson;
         gw.value = defaultJson;
@@ -277,14 +289,22 @@ function setup(node) {
 
     const wrap = $el("div", {
         style: {
-            width: "100%", position: "relative", display: "flex",
-            flexDirection: "column", flexGrow: "1", minHeight: "180px",
-            paddingBottom: "20px"
+            width: "100%",
+            height: "100%", 
+            position: "relative",
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden", 
+            boxSizing: "border-box",
+            paddingBottom: isNodes2_0 ? "8px" : "0px"
         }
     });
+    
     const canvas = $el("canvas", {
         style: {
-            width: "100%", flexGrow: "1", minHeight: "125px",
+            width: "100%",
+            flex: "1 1 0", 
+            minHeight: "0px", 
             background: "#282828", border: "1px solid #555",
             borderRadius: "4px", cursor: "crosshair"
         }
@@ -299,34 +319,138 @@ function setup(node) {
             background: "#181818", color: "#ccc",
             border: "1px solid #555", borderRadius: "4px",
             boxSizing: "border-box", padding: "4px", resize: "none",
-            marginTop: "4px"
+            marginTop: "4px", 
+            flexShrink: "0" 
         }
     });
     wrap.appendChild(preview);
 
-    node.addDOMWidget(CANVAS_TYPE, "custom", wrap, {
-        getHeight: () => Math.max(180, wrap.scrollHeight)
+    const domWidget = node.addDOMWidget(CANVAS_TYPE, "custom", wrap, { 
+        serialize: true, 
+        hideOnZoom: false 
     });
-
-    if (node.size[0] < MIN_NODE_WIDTH) {
-        node.setSize([MIN_NODE_WIDTH, node.size[1]]);
-    }
-    const prevOnResize = node.onResize;
-    node.onResize = function() {
-        prevOnResize?.apply(this, arguments);
-        if (this.size[0] < MIN_NODE_WIDTH) {
-            this.setSize([MIN_NODE_WIDTH, this.size[1]]);
+    
+    if (domWidget) {
+        if (isNodes2_0) {
+            domWidget.computeSize = function(width) {
+                return [Math.max(MIN_NODE_WIDTH, Number(width) || MIN_NODE_WIDTH), MIN_WIDGET_HEIGHT];
+            };
+            try {
+                Object.defineProperty(domWidget, 'min_size', {
+                    get: () => [MIN_NODE_WIDTH, MIN_WIDGET_HEIGHT],
+                    configurable: true
+                });
+            } catch(e) {}
+        } else {
         }
+    }
+
+    const origComputeSize = node.computeSize;
+    node.computeSize = function(out) {
+        let size = origComputeSize
+            ? origComputeSize.apply(this, arguments)
+            : [MIN_NODE_WIDTH, MIN_NODE_HEIGHT];
+
+        size[0] = Math.max(MIN_NODE_WIDTH, size[0]);
+        size[1] = Math.max(MIN_NODE_HEIGHT, size[1]);
+        return size;
     };
 
+    const origOnResize = node.onResize;
+    node.onResize = function(size) {
+        if (origOnResize) origOnResize.apply(this, arguments);
+
+        const w = Math.max(
+            MIN_NODE_WIDTH,
+            Number(size?.[0] ?? this.size?.[0]) || MIN_NODE_WIDTH
+        );
+        const h = Math.max(
+            MIN_NODE_HEIGHT,
+            Number(size?.[1] ?? this.size?.[1]) || MIN_NODE_HEIGHT
+        );
+
+        this.size[0] = w;
+        this.size[1] = h;
+        if (size) {
+            size[0] = w;
+            size[1] = h;
+        }
+
+        if (!isNodes2_0 && wrap) {
+            wrap.style.height = Math.max(MIN_WIDGET_HEIGHT, h - NON_WIDGET_HEIGHT) + "px";
+        }
+        this.properties = this.properties || {};
+        this.properties._ui_size = [w, h];
+        
+        if (node._sigmaDraw) node._sigmaDraw();
+        if (app.graph) app.graph.setDirtyCanvas(true, true);
+    };
+
+    
+    const modeBtn = $el("button", {
+        textContent: "C",
+        title: "Switch between curve modes (C: Curve mode, L: Linear mode)",
+        style: {
+            position: "absolute",
+            top: "4px",
+            right: "32px",
+            width: "24px",
+            height: "24px",
+            borderRadius: "50%",
+            border: "1px solid #555",
+            background: isCurveMode ? "#1E88E5" : "#505050",
+            color: "#fff",
+            cursor: "pointer",
+            zIndex: "10",
+            fontWeight: "bold",
+            fontSize: "12px"
+        }
+    });
+    wrap.appendChild(modeBtn);
+
     const resetBtn = $el("button", {
-        textContent: "R", title: "Reset curve",
-        style: { position: "absolute", top: "4px", right: "4px", width: "24px", height: "24px", borderRadius: "50%", border: "1px solid #555", background: "#505050", color: "#fff", cursor: "pointer" }
+        textContent: "R",
+        title: "Reset the curve to the default state.)",
+        style: {
+            position: "absolute",
+            top: "4px",
+            right: "4px",
+            width: "24px",
+            height: "24px",
+            borderRadius: "50%",
+            border: "1px solid #555",
+            background: "#505050",
+            color: "#fff",
+            cursor: "pointer",
+            zIndex: "10",
+            fontWeight: "bold",
+            fontSize: "12px"
+        }
     });
     wrap.appendChild(resetBtn);
 
+    function updateModeButtonVisual() {
+        if (isCurveMode) {
+            modeBtn.textContent = "C";
+            modeBtn.style.background = "#1E88E5";
+            modeBtn.title = "Current mode: Curve (Click to switch to Linear mode)";
+        } else {
+            modeBtn.textContent = "L";
+            modeBtn.style.background = "#757575";
+            modeBtn.title = "Current mode: Linear (Click to switch to Curve mode)";
+        }
+    }
+
+    modeBtn.onclick = () => {
+        isCurveMode = !isCurveMode;
+        node.properties._curveMode = isCurveMode;
+        updateModeButtonVisual();
+        draw();
+    };
+
+
     const slotBar = $el("div", {
-        style: { display: "flex", gap: "4px", marginTop: "4px", alignItems: "center" }
+        style: { display: "flex", gap: "4px", marginTop: "4px", alignItems: "center", flexShrink: 0 }
     });
     wrap.appendChild(slotBar);
  
@@ -335,7 +459,7 @@ function setup(node) {
     
     const recBtn = $el("button", { 
         textContent: "💾", 
-        title: "Toggle save mode", 
+        title: "Switch save mode (after activation, click the number button to save the current curve)", 
         style: { 
             minWidth: "24px", 
             height: "24px", 
@@ -383,7 +507,10 @@ function setup(node) {
 
         b.onclick = async () => {
             if (recordMode) {
-                slotsData[i] = gw.value;
+                slotsData[i] = {
+                    points: gw.value,
+                    curveMode: isCurveMode 
+                };
                 b.style.opacity = "0.5"; 
                 try {
                     await fetch('/element_easy/sigma_Curve_presets', {
@@ -392,13 +519,25 @@ function setup(node) {
                         body: JSON.stringify(slotsData)
                     });
                 } catch (e) {
-                    console.error("[Element_SigmaGraph] 保存预设失败", e);
+                    console.error("[Element_SigmaGraph] Save preset failed", e);
                 }
-                recBtn.click(); // 自动退出录制模式
+                recBtn.click();
             } else if (slotsData[i]) {
+                let preset = slotsData[i];
                 let pts;
-                try { pts = JSON.parse(slotsData[i]); }
-                catch { pts = strToPts(slotsData[i]); }
+                let mode = true; 
+                
+                if (typeof preset === 'object' && preset !== null) {
+                    pts = strToPts(preset.points);
+                    mode = preset.curveMode !== undefined ? preset.curveMode : true;
+                } else {
+                    pts = strToPts(preset);
+                }
+                
+                isCurveMode = mode;
+                node.properties._curveMode = mode;
+                updateModeButtonVisual();
+                
                 applyPoints(pts);
             }
         };
@@ -406,7 +545,8 @@ function setup(node) {
     
     function updateSlotUI() {
         slotBtns.forEach((b, i) => {
-            const hasData = slotsData[i];
+            const preset = slotsData[i];
+            const hasData = preset && (typeof preset === 'object' ? preset.points : preset);
             const ok = hasData || recordMode;
             
             b.disabled = !ok;
@@ -446,7 +586,7 @@ function setup(node) {
                 }
             }
         } catch (e) {
-            console.error("[Element_SigmaGraph] 读取预设文件失败", e);
+            console.error("[Element_SigmaGraph] Failed to read preset file", e);
         }
     }
     
@@ -461,7 +601,7 @@ function setup(node) {
     function applyPoints(pts) {
         pushUndo(gw.value);
         const clean = pts.map((p) => ({
-            x: Math.round(p.x * 100000) / 100000,  
+            x: Math.round(p.x * 100000) / 100000,
             y: formatValue(p.y)
         }));
         const jsonStr = JSON.stringify(clean);
@@ -478,9 +618,6 @@ function setup(node) {
 
     const ctx = canvas.getContext("2d");
     
-    /**
-     * 绘制平滑样条曲线和控制点
-     */
     function draw(overridePts) {
         const pts = overridePts || strToPts(gw.value);
         const dpr = window.devicePixelRatio || 1;
@@ -490,8 +627,7 @@ function setup(node) {
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, w, h);
 
-        // 绘制网格
-        ctx.strokeStyle = "#444";
+        ctx.strokeStyle = GUIDE_COLOR;
         ctx.lineWidth = 0.5;
         ctx.beginPath();
         for (let i = 1; i < 10; i++) {
@@ -502,67 +638,34 @@ function setup(node) {
         ctx.stroke();
 
         if (pts.length >= 2) {
-            // 计算贝塞尔曲线控制点并绘制
-            const bezierCurves = splineToBezier(pts);
-            
-            // 绘制平滑曲线 - 使用clip限制绘制区域在[0,1]范围内
-            ctx.save();
-            ctx.beginPath();
-            ctx.rect(0, 0, w, h);
-            ctx.clip();
-            
             ctx.strokeStyle = CURVE_COLOR;
-            ctx.lineWidth = 1.0;
+            ctx.lineWidth = 1.5;
             ctx.lineCap = "round";
             ctx.lineJoin = "round";
             ctx.beginPath();
-            
-            if (bezierCurves.length > 0) {
-                const first = bezierCurves[0];
-                ctx.moveTo(first.p0.x * w, (1 - Math.max(0.0, Math.min(1.0, first.p0.y))) * h);
-                
-                for (let curve of bezierCurves) {
-                    // 限制绘制点的y值在[0,1]可视化范围内
-                    const cp1y_clamped = Math.max(0.0, Math.min(1.0, curve.cp1.y));
-                    const cp2y_clamped = Math.max(0.0, Math.min(1.0, curve.cp2.y));
-                    const p3y_clamped = Math.max(0.0, Math.min(1.0, curve.p3.y));
-                    
-                    ctx.bezierCurveTo(
-                        curve.cp1.x * w, (1 - cp1y_clamped) * h,
-                        curve.cp2.x * w, (1 - cp2y_clamped) * h,
-                        curve.p3.x * w, (1 - p3y_clamped) * h
-                    );
+
+            if (isCurveMode) {
+                const coeffs = computeSplineCoefficients(pts);
+                const drawSteps = Math.max(w * 2, 200);
+                for (let i = 0; i <= drawSteps; i++) {
+                    const t = i / drawSteps;
+                    const y = evaluateSpline(t, coeffs);
+                    const px = t * w;
+                    const py = (1 - Math.max(0.0, Math.min(1.0, y))) * h;
+                    if (i === 0) ctx.moveTo(px, py);
+                    else ctx.lineTo(px, py);
+                }
+            } else {
+                const sorted = pts.slice().sort((a, b) => a.x - b.x);
+                for (let i = 0; i < sorted.length; i++) {
+                    const px = sorted[i].x * w;
+                    const py = (1 - Math.max(0.0, Math.min(1.0, sorted[i].y))) * h;
+                    if (i === 0) ctx.moveTo(px, py);
+                    else ctx.lineTo(px, py);
                 }
             }
             ctx.stroke();
-            ctx.restore();
-            
-            // 可选：绘制控制点和辅助线（用于调试，默认关闭）
-            const showControlPoints = false;
-            if (showControlPoints) {
-                ctx.strokeStyle = GUIDE_COLOR;
-                ctx.lineWidth = 0.5;
-                ctx.setLineDash([2, 2]);
-                
-                for (let curve of bezierCurves) {
-                    ctx.beginPath();
-                    ctx.moveTo(curve.p0.x * w, (1 - curve.p0.y) * h);
-                    ctx.lineTo(curve.cp1.x * w, (1 - curve.cp1.y) * h);
-                    ctx.moveTo(curve.p3.x * w, (1 - curve.p3.y) * h);
-                    ctx.lineTo(curve.cp2.x * w, (1 - curve.cp2.y) * h);
-                    ctx.stroke();
-                    
-                    // 控制点
-                    ctx.fillStyle = CONTROL_COLOR;
-                    ctx.beginPath();
-                    ctx.arc(curve.cp1.x * w, (1 - curve.cp1.y) * h, 2, 0, 2 * Math.PI);
-                    ctx.arc(curve.cp2.x * w, (1 - curve.cp2.y) * h, 2, 0, 2 * Math.PI);
-                    ctx.fill();
-                }
-                ctx.setLineDash([]);
-            }
 
-            // 绘制锚点（数据点）
             pts.forEach((p) => {
                 const px = p.x * w;
                 const py = (1 - Math.max(0.0, Math.min(1.0, p.y))) * h;
@@ -570,21 +673,19 @@ function setup(node) {
                 ctx.beginPath();
                 ctx.arc(px, py, POINT_RADIUS, 0, 2 * Math.PI);
                 ctx.fill();
-                
-                // 点的外圈
-                //ctx.strokeStyle = "#fff";
-                //ctx.lineWidth = 1;
-                //ctx.stroke();
             });
         }
 
-        // 更新预览
         const stepsW = node.widgets.find((w) => w.name === STEPS_NAME).value | 0;
-        const sigmaValues = calcSmoothSigmas(pts, stepsW);
+        const sigmaValues = isCurveMode 
+            ? calcSmoothSigmas(pts, stepsW) 
+            : calcLinearSigmas(pts, stepsW);
         preview.value = sigmaValues
             .map((v) => parseFloat(v.toFixed(5)))
             .join(", ");
     }
+    
+    node._sigmaDraw = draw;
 
     let debounce;
     ta.addEventListener("input", () => {
@@ -613,97 +714,88 @@ function setup(node) {
         applyPoints(defaultPoints);
     };
 
-    /* ============================================
-     * 双击加点功能 - 手动检测实现
-     * ============================================ */
-    
-    // 【关键】这些变量必须在 onpointerdown 外部声明，否则无法记录状态
     let dragIdx = -1;
     let lastClickTime = 0;
     let lastClickX = 0;
     let lastClickY = 0;
-    const DOUBLE_CLICK_DELAY = 300; // 毫秒
+    const DOUBLE_CLICK_DELAY = 300;
 
-   canvas.onpointerdown = (e) => {
-       const rect = canvas.getBoundingClientRect();
-       const x = (e.clientX - rect.left) / rect.width;
-       const y = 1 - (e.clientY - rect.top) / rect.height;
-       let pts = strToPts(gw.value);  // 【修改】用 let 而不是 const，方便后续复制
-       const currentTime = Date.now();
-   
-       // 右键删除点
-       if (e.button === 2) {
-           const idx = pts.findIndex(p => Math.hypot(p.x - x, p.y - y) < GRAB_THRESHOLD);
-           if (idx > 0 && idx < pts.length - 1 && pts.length > MIN_POINTS) {
-               pushUndo(gw.value);
-               pts.splice(idx, 1);
-               applyPoints(pts);
-           }
-           e.preventDefault();
-           return;
-       }
-   
-       // 检测双击（手动实现）
-       const timeDiff = currentTime - lastClickTime;
-       const distDiff = Math.hypot(x - lastClickX, y - lastClickY);
-   
-       if (timeDiff < DOUBLE_CLICK_DELAY && distDiff < 0.05 && e.button === 0) {
-           e.preventDefault();
-           lastClickTime = 0;
-           
-           // 【关键】创建副本用于修改
-           pts = pts.slice();
-           
-           const existingIdx = pts.findIndex(p => Math.hypot(p.x - x, p.y - y) < GRAB_THRESHOLD);
-           if (existingIdx >= 0) return;
-           
-           pushUndo(gw.value);
-           
-           // 找到 x 所在的区间
-           pts.sort((a, b) => a.x - b.x);
-           let insertIdx = pts.findIndex(p => p.x > x);
-           if (insertIdx === -1) insertIdx = pts.length;
-           
-           const leftPt = pts[insertIdx - 1] || pts[0];
-           const rightPt = pts[insertIdx] || pts[pts.length - 1];
-           
-           // 检查间距
-           if (Math.abs(rightPt.x - leftPt.x) < 0.05) {
-               return;
-           }
-           
-           // 使用当前样条计算曲线 y 值
-           const coeffs = computeSplineCoefficients(pts);
-           const curveY = evaluateSpline(x, coeffs);
-           
-           const newX = Math.max(leftPt.x + 0.005, Math.min(rightPt.x - 0.005, x));
-           
-           const newPoint = { 
-               x: newX,
-               y: formatValue(curveY)
-           };
-           
-           pts.splice(insertIdx, 0, newPoint);
-           
-           applyPoints(pts);
-           return;
-       }
-   
-       // 记录本次点击
-       lastClickTime = currentTime;
-       lastClickX = x;
-       lastClickY = y;
-   
-       // 单击 - 开始拖拽
-       if (e.button === 0) {
-           dragIdx = pts.findIndex(p => Math.hypot(p.x - x, p.y - y) < GRAB_THRESHOLD);
-           if (dragIdx >= 0) {
-               e.target.setPointerCapture(e.pointerId);
-           }
-       }
-   };
-
+    canvas.onpointerdown = (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const x = (e.clientX - rect.left) / rect.width;
+        const y = 1 - (e.clientY - rect.top) / rect.height;
+        let pts = strToPts(gw.value);
+        const currentTime = Date.now();
     
+        if (e.button === 2) {
+            const idx = pts.findIndex(p => Math.hypot(p.x - x, p.y - y) < GRAB_THRESHOLD);
+            if (idx > 0 && idx < pts.length - 1 && pts.length > MIN_POINTS) {
+                pushUndo(gw.value);
+                pts.splice(idx, 1);
+                applyPoints(pts);
+            }
+            e.preventDefault();
+            return;
+        }
+    
+        const timeDiff = currentTime - lastClickTime;
+        const distDiff = Math.hypot(x - lastClickX, y - lastClickY);
+    
+        if (timeDiff < DOUBLE_CLICK_DELAY && distDiff < 0.05 && e.button === 0) {
+            e.preventDefault();
+            lastClickTime = 0;
+            
+            pts = pts.slice();
+            
+            const existingIdx = pts.findIndex(p => Math.hypot(p.x - x, p.y - y) < GRAB_THRESHOLD);
+            if (existingIdx >= 0) return;
+            
+            pushUndo(gw.value);
+            
+            pts.sort((a, b) => a.x - b.x);
+            let insertIdx = pts.findIndex(p => p.x > x);
+            if (insertIdx === -1) insertIdx = pts.length;
+            
+            const leftPt = pts[insertIdx - 1] || pts[0];
+            const rightPt = pts[insertIdx] || pts[pts.length - 1];
+            
+            if (Math.abs(rightPt.x - leftPt.x) < 0.05) {
+                return;
+            }
+            
+            let newY;
+            if (isCurveMode) {
+                const coeffs = computeSplineCoefficients(pts);
+                newY = evaluateSpline(x, coeffs);
+            } else {
+                const t = (x - leftPt.x) / (rightPt.x - leftPt.x);
+                newY = leftPt.y + t * (rightPt.y - leftPt.y);
+            }
+            
+            const newX = Math.max(leftPt.x + 0.005, Math.min(rightPt.x - 0.005, x));
+            
+            const newPoint = { 
+                x: newX,
+                y: formatValue(newY)
+            };
+            
+            pts.splice(insertIdx, 0, newPoint);
+            applyPoints(pts);
+            return;
+        }
+    
+        lastClickTime = currentTime;
+        lastClickX = x;
+        lastClickY = y;
+    
+        if (e.button === 0) {
+            dragIdx = pts.findIndex(p => Math.hypot(p.x - x, p.y - y) < GRAB_THRESHOLD);
+            if (dragIdx >= 0) {
+                e.target.setPointerCapture(e.pointerId);
+            }
+        }
+    };
+
     canvas.onpointermove = (e) => {
         const rect = canvas.getBoundingClientRect();
         const x = (e.clientX - rect.left) / rect.width;
@@ -711,15 +803,12 @@ function setup(node) {
         const pts = strToPts(gw.value);
 
         if (dragIdx >= 0) {
-            // 限制 y 在 [0,1] 范围内
             const ny = Math.min(1, Math.max(0, y));
-            // 边界点只能上下移动，内部点可以左右移动但保持排序
             if (dragIdx === 0) {
                 pts[dragIdx] = { x: 0, y: ny };
             } else if (dragIdx === pts.length - 1) {
                 pts[dragIdx] = { x: 1, y: ny };
             } else {
-                // 限制 x 在相邻点之间
                 const minX = pts[dragIdx - 1].x + 0.01;
                 const maxX = pts[dragIdx + 1].x - 0.01;
                 const nx = Math.min(maxX, Math.max(minX, x));
@@ -744,15 +833,56 @@ function setup(node) {
     const sw = node.widgets.find((w) => w.name === STEPS_NAME);
     if (sw) sw.callback = () => applyPoints(strToPts(ta.value));
 
+    const origSerialize = node.onSerialize;
+    node.onSerialize = function(o) {
+        if (origSerialize) origSerialize.apply(this, arguments);
+        this.properties = this.properties || {};
+        this.properties._ui_size = [this.size?.[0] || MIN_NODE_WIDTH, this.size?.[1] || MIN_NODE_HEIGHT];
+        this.properties._curveMode = isCurveMode;
+    };
+    
+    const origConfigure = node.onConfigure;
+    node.onConfigure = function(o) {
+        if (origConfigure) origConfigure.apply(this, arguments);
+        
+        const savedSize = this.properties?._ui_size || o?.properties?._ui_size;
+        if (Array.isArray(savedSize) && savedSize.length === 2) {
+            const w = Math.max(MIN_NODE_WIDTH, Number(savedSize[0]) || MIN_NODE_WIDTH);
+            const h = Math.max(MIN_NODE_HEIGHT, Number(savedSize[1]) || MIN_NODE_HEIGHT);
+            //let h = Number(savedSize[1]) || MIN_NODE_HEIGHT; 
+            this.size = [w, h];
+        }
+        
+        if (this.properties?._curveMode !== undefined) {
+            isCurveMode = this.properties._curveMode;
+            updateModeButtonVisual();
+        }
+		this.minSize = [MIN_NODE_WIDTH, MIN_NODE_HEIGHT];
+    };
+
+    updateModeButtonVisual();
     applyPoints(strToPts(ta.value));
     new ResizeObserver(() => draw()).observe(canvas);
 }
 
-/*—— Registration ——*/
 app.registerExtension({
     name: "Element_SigmaGraph_Curve.widget",
     beforeRegisterNodeDef(nt, nd) {
         if (nd.name === NODE_CLASS) {
+            
+            try {
+                if (nd?.input?.required) {
+                    if (nd.input.required.graph_data) {
+                        nd.input.required.graph_data[1] = {
+                            ...(nd.input.required.graph_data[1] || {}),
+                            hidden: true,
+                            forceInput: false,
+                        };
+                    }
+                }
+            } catch (e) {
+                console.warn("[SigmaGraphCurve] nodeData hide patch failed:", e);
+            }
             
             const origConfigure = nt.prototype.onConfigure;
             nt.prototype.onConfigure = function(info) {
@@ -764,7 +894,7 @@ app.registerExtension({
             nt.prototype.onNodeCreated = function() {
                 origNodeCreated?.apply(this, arguments);
                 
-                this.setSize([280, 420]); 
+                if (!this.properties) this.properties = {};
                 
                 setup(this);
             };      

@@ -31,7 +31,7 @@ app.registerExtension({
 
         $el("style", {
             textContent: `
-                .ee-container { display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 100px; overflow: hidden; background: #1e1e1e; font-family: sans-serif; }
+                .ee-container { display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 100px; overflow: hidden; background: #1e1e1e; font-family: sans-serif; user-select: none; -webkit-user-select: none;}
                 .ee-header { display: flex; padding: 4px; background: #333; gap: 5px; align-items: center; }
                 .ee-btn { background: #444; color: white; border: none; padding: 4px 8px; cursor: pointer; border-radius: 3px; font-size: 12px; }
                 .ee-btn:hover { background: #555; }
@@ -1500,7 +1500,7 @@ app.registerExtension({
             } catch (e) {}
             
             cleanupWindowTracking();
-            window.removeEventListener("mouseup", globalMouseUp);
+            //window.removeEventListener("mouseup", globalMouseUp);
             
             if (brushCursor && brushCursor.parentNode) {
                 brushCursor.parentNode.removeChild(brushCursor);

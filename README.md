@@ -28,9 +28,11 @@
 
 ## v1.3.8 
 重要更新！！！
-- 合并Element_SigmaGraph 与 Element_SigmaGraph(curve)节点为Element_SigmaGraph，修复Element_SigmaGraph 节点曲线模式下，sigma输出与曲线不匹配的问题
-- 在节点Element_SigmaGraph 中新增模式切换按钮 “C” 平滑曲线模式 和 线性模式
-- 修复某些情况下可能无法删除LoadImage_Preview节点的问题。优化 LoadImage_Preview 节点。
+- 合并Element_SigmaGraph 与 Element_SigmaGraph(curve)节点为Element_SigmaGraph；去除graph_data的数值显示框。
+- 在节点Element_SigmaGraph 中新增模式切换按钮 “C” 平滑曲线模式 和 线性模式。
+- 修复Element_SigmaGraph 节点曲线模式下，sigma输出与曲线不匹配的问题。
+- 修复快速缩小Element_SigmaGraph 节点高度时卡顿阻塞的问题。
+- 修复某些情况下可能无法删除LoadImage_Preview节点的问题；优化 LoadImage_Preview 节点。
 
 ## v1.3.5
   

@@ -8,7 +8,7 @@
 # ComfyUI_Element_easy
 
 
-一些方便使用的小节点。包括：black_white_color, chessboard, empty_image_rgb, image_pad_blur, mask_noise_element, mask_stroke, random_chars, text_line_break. Element_SigmaGraph,Element_SigmaGraph (Curve),Element ImageCurve,Element HueSat,Element HueBright,Element HueHue,LoadImage_Preview,Frame Calculator,ImageSize Div
+一些方便使用的小节点。因为太懒没有合并代码。包括：black_white_color, chessboard, empty_image_rgb, image_pad_blur, mask_noise_element, mask_stroke, random_chars, text_line_break. Element_SigmaGraph,Element_SigmaGraph (Curve),Element ImageCurve,Element HueSat,Element HueBright,Element HueHue,LoadImage_Preview,Frame Calculator,ImageSize Div
 
 
 ## Installation
@@ -25,6 +25,12 @@
 
 
 ## Update
+
+## v1.3.8 
+重要更新！！！
+- 合并Element_SigmaGraph 与 Element_SigmaGraph(curve)节点为Element_SigmaGraph，修复Element_SigmaGraph 节点曲线模式下，sigma输出与曲线不匹配的问题
+- 在节点Element_SigmaGraph 中新增模式切换按钮 “C” 平滑曲线模式 和 线性模式
+- 修复某些情况下可能无法删除LoadImage_Preview节点的问题。优化 LoadImage_Preview 节点。
 
 ## v1.3.5
   
@@ -53,19 +59,16 @@
 
   <img width="1767" height="1008" alt="Image" src="https://github.com/user-attachments/assets/f3bcfd71-eaba-4933-aa97-01ee6eefad62" />
 
-## v1.2.4
+## v1.2.4 （fix in V1.3.8）
   
-  添加自定义sigma，Element_SigmaGraph 节点, 原始代码来自作者Temult 的 TWanSigmaGraph节点  https://github.com/Temult/TWanSigmaGraph ，感谢原作者Temult。
-  因为Temult很久没有更新了，节点的sigma输出的值有bug，曲线调整无效。为了方便更新，我把它放到了这个仓库。
+  添加自定义sigma，Element_SigmaGraph 节点, 原始代码来自作者Temult 的 TWanSigmaGraph节点https://github.com/Temult/TWanSigmaGraph , 修改、优化、添加了很多内容。
 
   - 添加可选latent 输入端口以同步ltx audio vae 载入与卸载顺序。<br>
   - 添加可选custom_sigmas 输入端口，添加单独执行功能，方便将现有的sigma数列存储为预设<br>
-  - 新增平滑曲线模式节点 Element_SigmaGraph (Curve) 。保留直线模式节点 Element_SigmaGraph <br>
   - 鼠标点击曲线的位置增减控制点（双击添加，右键删除），增减点时，保持其它控制点不变。 解除控制点 X 轴方向移动限制<br>
 
   
-  <img width="1114" height="857" alt="image" src="https://github.com/user-attachments/assets/c771ebd8-99f3-47bd-a41c-e4c8c0b46beb" />
-
+  <img width="1021" height="797" alt="image" src="https://github.com/user-attachments/assets/c3c362a8-fdb3-47c6-b7b6-159639a3a172" />
 
 ## v1.2.3
   

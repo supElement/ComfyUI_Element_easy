@@ -26,6 +26,14 @@
 
 ## Update
 
+## v1.3.9
+  
+  添加节点 Smart merge images，两张图像有足够的共同特征时，智能合并图像。<br>
+  - 如果条件允许，最可靠的合并方案：original_image + edited_crop_B + original_crop_A。其中 original_crop_A 是从original_image中剪切的没有修改或变形的图像。
+
+  <img width="1011" height="970" alt="image" src="https://github.com/user-attachments/assets/49b79f5b-4468-4656-ba6a-f9dbdf319ac0" />
+
+
 ## v1.3.8 
 重要更新！！！
 - 合并Element_SigmaGraph 与 Element_SigmaGraph(curve)节点为Element_SigmaGraph；去除graph_data的数值显示框。

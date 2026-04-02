@@ -1,5 +1,5 @@
 # __init__.py
-__version__ = "1.3.8" 
+__version__ = "1.3.9" 
 
 from .random_chars import RandomCharacterGenerator
 from .empty_image_rgb import EmptyImageRGB
@@ -17,6 +17,7 @@ from .Element_HueSat import ElementHueSat
 from .Element_HueHue import ElementHueHue
 from .Element_HueBright import ElementHueBright
 from .Load_image_Preview import LoadImageWithPreview
+from .Smart_merge_images import SmartMergeImages
 
 WEB_DIRECTORY = "js"
 
@@ -37,6 +38,7 @@ NODE_CLASS_MAPPINGS = {
     "ElementHueHue": ElementHueHue,
     "ElementHueBright": ElementHueBright,
     "LoadImageWithPreview": LoadImageWithPreview,
+    "SmartMergeImages": SmartMergeImages,
 
 }
 
@@ -57,6 +59,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ElementHueHue": "Element HueHue",
     "ElementHueBright": "Element HueBright",
     "LoadImageWithPreview": "LoadImage_Preview",
+    "SmartMergeImages": "Smart merge images",
 
 }
 

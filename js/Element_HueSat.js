@@ -290,60 +290,78 @@ app.registerExtension({
             loadBtn.style.fontWeight = "bold";
             loadBtn.style.backgroundColor = "#4f5d6d";
             loadBtn.style.color = "#FFF";
+			
             loadBtn.onclick = async () => {
-                try {
-                    const p = await app.graphToPrompt();
+                const isImageConnected = () => {
+                    return this.inputs?.some(i => i.name === "image" && i.link !== null);
+                };
+                
+                if (isImageConnected()) {
+                    try {
+                        const p = await app.graphToPrompt();
+                        const prompt = p.output;
+                        const selectedNodeId = String(this.id);
+                        
+                        const isolatedPrompt = {};
+                        
+                        const traceDependencies = (nodeId) => {
+                            if (!prompt[nodeId] || isolatedPrompt[nodeId]) return;
+                            isolatedPrompt[nodeId] = prompt[nodeId];
+                            const inputs = prompt[nodeId].inputs;
+                            for (let key in inputs) {
+                                const val = inputs[key];
+                                if (Array.isArray(val) && val.length === 2) {
+                                    traceDependencies(String(val[0]));
+                                }
+                            }
+                        };
+                        
+                        traceDependencies(selectedNodeId);
+                        
+                        if (Object.keys(isolatedPrompt).length === 0) {
+                            console.warn("No dependencies found for node", selectedNodeId);
+                            return;
+                        }
+                        
+                        const originalGraphToPrompt = app.graphToPrompt;
+                        
+                        app.graphToPrompt = async function (...args) {
+                            const originalModes = new Map();
+                            
+                            for (const n of app.graph._nodes) {
+                                originalModes.set(n.id, n.mode);
+                                if (!isolatedPrompt[String(n.id)]) {
+                                    n.mode = 2; 
+                                } else {
+                                    n.mode = 0; 
+                                }
+                            }
+                            
+                            try {
+                                return await originalGraphToPrompt.apply(this, args);
+                            } finally {
+                                for (const n of app.graph._nodes) {
+                                    if (originalModes.has(n.id)) {
+                                        n.mode = originalModes.get(n.id);
+                                    }
+                                }
+                            }
+                        };
             
-                    const prompt = p?.output || p?.prompt || p;
-                    if (!prompt || typeof prompt !== "object") {
-                        console.error("[HueSat] graphToPrompt() returned invalid prompt:", p);
-                        return;
-                    }
-            
-                    const selectedNodeId = String(this.id);
-                    const isolatedPrompt = {};
-            
-                    const traceDependencies = (nodeId) => {
-                        if (!prompt[nodeId] || isolatedPrompt[nodeId]) return;
-                        isolatedPrompt[nodeId] = prompt[nodeId];
-            
-                        const inputs = prompt[nodeId].inputs || {};
-                        for (const key in inputs) {
-                            const val = inputs[key];
-                            if (Array.isArray(val) && val.length === 2) {
-                                traceDependencies(String(val[0]));
+                        try {
+                            await app.queuePrompt(0, 1);
+                            console.log("Successfully queued isolated node execution (Flawless Method)");
+                        } finally {
+                            if (app.graphToPrompt !== originalGraphToPrompt) {
+                                app.graphToPrompt = originalGraphToPrompt;
                             }
                         }
-                    };
-            
-                    traceDependencies(selectedNodeId);
-            
-                    if (Object.keys(isolatedPrompt).length === 0) {
-                        console.warn("[HueSat] isolatedPrompt is empty. selectedNodeId =", selectedNodeId);
-                        return;
+                        
+                    } catch (err) {
+                        console.error("Failed to execute isolated node:", err);
                     }
-            
-                    const payload = {
-                        client_id: api.clientId,
-                        prompt: isolatedPrompt,
-                    };
-            
-                    if (p?.workflow) {
-                        payload.extra_data = { extra_pnginfo: { workflow: p.workflow } };
-                    }
-            
-                    const resp = await api.fetchApi("/prompt", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify(payload),
-                    });
-            
-                    if (!resp.ok) {
-                        const txt = await resp.text().catch(() => "");
-                        console.error("[HueSat] /prompt failed:", resp.status, txt);
-                    }
-                } catch (err) {
-                    console.error("[HueSat] Failed to execute isolated node:", err);
+                } else {
+                    console.log("No image input connected, skipping preview");
                 }
             };
             modeControlArea.appendChild(loadBtn);

@@ -2,6 +2,7 @@ import os
 import glob
 import base64
 import io
+import uuid
 import torch
 import numpy as np
 from PIL import Image, ImageOps, ImageSequence
@@ -76,8 +77,12 @@ class LoadImageWithPreview:
                 "sort_method": (["name_asc", "name_desc", "newest_first", "oldest_first", "recently_modified", "oldest_modified"], {"default": "newest_first"}),
             },
             "optional": {
+                "image": ("IMAGE", ), 
                 "mask_data": ("STRING", {"default": "", "multiline": True}), 
                 "shape_data": ("STRING", {"default": "", "multiline": True}), 
+            },
+            "hidden": {
+                "unique_id": "UNIQUE_ID", 
             }
         }
 
@@ -85,51 +90,11 @@ class LoadImageWithPreview:
     RETURN_NAMES = ("image", "mask", "filename")
     FUNCTION = "load_image"
     CATEGORY = "Element_easy/image"
-    DESCRIPTION = "浏览文件夹并加载图像，内置遮罩与图像编辑功能(支持画笔、橡皮、方形、圆形)。Browse folders and load images; built-in masking and image editing functions (supports brush, eraser, square, and circle)."
+    DESCRIPTION = "Browse folders and load images; mask and image edit."
+    OUTPUT_NODE = True
 
-    def load_image(self, folder_path, selected_image, sort_method, mask_data="", shape_data=""):
+    def load_image(self, folder_path, selected_image, sort_method, mask_data="", shape_data="", image=None, unique_id=None):
 
-        if not selected_image or not selected_image.strip():
-            if not os.path.exists(folder_path) or not os.path.isdir(folder_path):
-                raise ValueError(f"Directory does not exist: {folder_path}")
-            
-            image_extensions = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff"]
-            files = []
-            for ext in image_extensions:
-                files.extend(glob.glob(os.path.join(folder_path, ext)))
-                files.extend(glob.glob(os.path.join(folder_path, ext.upper())))
-            
-
-            if sort_method == "name_asc":
-                files.sort(key=lambda x: os.path.basename(x).lower())
-            elif sort_method == "name_desc":
-                files.sort(key=lambda x: os.path.basename(x).lower(), reverse=True)
-            elif sort_method == "newest_first":
-                files.sort(key=lambda x: os.path.getctime(x), reverse=True)
-            elif sort_method == "oldest_first":
-                files.sort(key=lambda x: os.path.getctime(x))
-            elif sort_method == "recently_modified":
-                files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-            elif sort_method == "oldest_modified":
-                files.sort(key=lambda x: os.path.getmtime(x))
-            else:
-                files.sort(key=lambda x: os.path.getctime(x), reverse=True)
-            
-            if not files:
-                raise ValueError(f"目录中没有图像文件: {folder_path}")
-            
-            selected_image = os.path.basename(files[0])
-            print(f"[LoadImageWithPreview] Automatically select the first image: {selected_image}")
-            
-        image_path = os.path.join(folder_path, selected_image)
-        if not os.path.exists(image_path):
-            raise ValueError(f"Image not found: {image_path}")
-            
-        if not os.path.commonpath([folder_path, os.path.abspath(image_path)]) == folder_path:
-            raise ValueError(f"Image path out of bounds: {image_path}")
-        
-        base_img = node_helpers.pillow(Image.open, image_path)
-        
         shape_layer = None
         if shape_data and shape_data.startswith("data:image"):
             try:
@@ -138,25 +103,100 @@ class LoadImageWithPreview:
                 shape_layer = Image.open(io.BytesIO(shape_bytes)).convert("RGBA")
             except Exception as e:
                 print(f"Failed to resolve shape overlay: {e}")
-        
+
         output_images = []
-        for i in ImageSequence.Iterator(base_img):
-            i = node_helpers.pillow(ImageOps.exif_transpose, i)
-            i = i.convert("RGBA")
+
+        ui_data = None
+
+        if image is not None:
+            img_tensor = image[0]
+            i_val = 255. * img_tensor.cpu().numpy()
+            base_img = Image.fromarray(np.clip(i_val, 0, 255).astype(np.uint8))
             
-            if shape_layer is not None:
-                if shape_layer.size != i.size:
-                    current_shape_layer = shape_layer.resize(i.size, Image.LANCZOS)
-                else:
-                    current_shape_layer = shape_layer
+            temp_dir = folder_paths.get_temp_directory()
+            temp_filename = f"ee_preview_{unique_id}_{uuid.uuid4().hex[:8]}.png"
+            base_img.save(os.path.join(temp_dir, temp_filename))
+
+            ui_data = {
+                "ee_preview": [{"filename": temp_filename, "type": "temp"}]
+            }
+
+            filename = "input_image"
+
+            for img_t in image:
+                i_val = 255. * img_t.cpu().numpy()
+                i_img = Image.fromarray(np.clip(i_val, 0, 255).astype(np.uint8)).convert("RGBA")
+
+                if shape_layer is not None:
+                    if shape_layer.size != i_img.size:
+                        current_shape_layer = shape_layer.resize(i_img.size, Image.LANCZOS)
+                    else:
+                        current_shape_layer = shape_layer
+                    i_img = Image.alpha_composite(i_img, current_shape_layer)
                 
-                i = Image.alpha_composite(i, current_shape_layer)
+                out_tensor = np.array(i_img.convert("RGB")).astype(np.float32) / 255.0
+                out_tensor = torch.from_numpy(out_tensor)[None,]
+                output_images.append(out_tensor)
+
+        else:
+            if not selected_image or not selected_image.strip():
+                if not os.path.exists(folder_path) or not os.path.isdir(folder_path):
+                    raise ValueError(f"Directory does not exist: {folder_path}")
+                
+                image_extensions = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff"]
+                files = []
+                for ext in image_extensions:
+                    files.extend(glob.glob(os.path.join(folder_path, ext)))
+                    files.extend(glob.glob(os.path.join(folder_path, ext.upper())))
+                
+                if sort_method == "name_asc":
+                    files.sort(key=lambda x: os.path.basename(x).lower())
+                elif sort_method == "name_desc":
+                    files.sort(key=lambda x: os.path.basename(x).lower(), reverse=True)
+                elif sort_method == "newest_first":
+                    files.sort(key=lambda x: os.path.getctime(x), reverse=True)
+                elif sort_method == "oldest_first":
+                    files.sort(key=lambda x: os.path.getctime(x))
+                elif sort_method == "recently_modified":
+                    files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+                elif sort_method == "oldest_modified":
+                    files.sort(key=lambda x: os.path.getmtime(x))
+                else:
+                    files.sort(key=lambda x: os.path.getctime(x), reverse=True)
+                
+                if not files:
+                    raise ValueError(f"目录中没有图像文件: {folder_path}")
+                
+                selected_image = os.path.basename(files[0])
+                print(f"[LoadImageWithPreview] Automatically select the first image: {selected_image}")
+                
+            image_path = os.path.join(folder_path, selected_image)
+            if not os.path.exists(image_path):
+                raise ValueError(f"Image not found: {image_path}")
+                
+            if not os.path.commonpath([folder_path, os.path.abspath(image_path)]) == folder_path:
+                raise ValueError(f"Image path out of bounds: {image_path}")
             
-            image_tensor = i.convert("RGB")
-            image_tensor = np.array(image_tensor).astype(np.float32) / 255.0
-            image_tensor = torch.from_numpy(image_tensor)[None,]
-            output_images.append(image_tensor)
+            base_img = node_helpers.pillow(Image.open, image_path)
+            filename = os.path.basename(selected_image)
             
+            for i in ImageSequence.Iterator(base_img):
+                i = node_helpers.pillow(ImageOps.exif_transpose, i)
+                i = i.convert("RGBA")
+                
+                if shape_layer is not None:
+                    if shape_layer.size != i.size:
+                        current_shape_layer = shape_layer.resize(i.size, Image.LANCZOS)
+                    else:
+                        current_shape_layer = shape_layer
+                    
+                    i = Image.alpha_composite(i, current_shape_layer)
+                
+                image_tensor = i.convert("RGB")
+                image_tensor = np.array(image_tensor).astype(np.float32) / 255.0
+                image_tensor = torch.from_numpy(image_tensor)[None,]
+                output_images.append(image_tensor)
+                
         if len(output_images) > 1:
             output_image = torch.cat(output_images, dim=0)
         else:
@@ -181,6 +221,7 @@ class LoadImageWithPreview:
         if len(mask_tensor.shape) == 2:
             mask_tensor = mask_tensor.unsqueeze(0)
             
-        filename = os.path.basename(selected_image)
-        
+        if ui_data is not None:
+            return {"ui": ui_data, "result": (output_image, mask_tensor, filename)}
+            
         return (output_image, mask_tensor, filename)

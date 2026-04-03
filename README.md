@@ -26,6 +26,11 @@
 
 ## Update
 
+## v1.4.0
+
+  - 在 LoadImage_Preview 节点上增加可选图像输入端口，可用于桥接预览中的编辑; 优化编辑面板布局。
+  - 优化Element ImageCurve、Element HueSat、Element HueBright 和 Element HueHue 节点的载入预览逻辑。
+
 ## v1.3.9
   
   添加节点 Smart merge images，两张图像有足够的共同特征时，智能合并图像。<br>
@@ -42,7 +47,7 @@
 - 修复快速缩小Element_SigmaGraph 节点高度时卡顿阻塞的问题。
 - 修复某些情况下可能无法删除LoadImage_Preview节点的问题；优化 LoadImage_Preview 节点。
 
-## v1.3.5
+## v1.3.5 （Optimized in v1.4.0）
   
   添加 LoadImage_Preview 节点,其中浏览图像功能引用了作者Enashka的ComfyUI-nhknodes扩展image_loader_with_previews节点中的部分代码。<br>
   - 主要功能：浏览指定路径下的图像文件，选择其中一张后进入编辑面板（绘制mask或在图像上绘制方框、圆等）。
@@ -50,7 +55,8 @@
   - L-alpha：用于载入图像alpha到画布。
   - Return：返回浏览图像面板。
 
-  <img width="1364" height="1016" alt="image" src="https://github.com/user-attachments/assets/4ff0c960-3e0b-4403-ac7e-74f143e3d1b3" />
+  <img width="989" height="783" alt="image" src="https://github.com/user-attachments/assets/f5d64913-2980-493c-b70a-a60855f2ae16" />
+
 
 ## v1.3.1
   

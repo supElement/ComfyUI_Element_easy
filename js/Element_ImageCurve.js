@@ -18,14 +18,12 @@ app.registerExtension({
                 if (this.size[1] < MIN_NODE_HEIGHT) this.size[1] = MIN_NODE_HEIGHT;
 
                 const hideWidgetAndSlot = (widgetName) => {
-                    // 1. 彻底隐藏 UI 控件
                     const w = this.widgets?.find(w => w.name === widgetName);
                     if (w) {
-                        w.type = "hidden"; // 更改类型防止 Vue 渲染原生控件
+                        w.type = "hidden"; 
                         w.hidden = true;
                         w.computeSize = () => [0, 0];
                         w.draw = () => {};
-                        // 移除DOM 元素及父容器
                         if (w.inputEl) {
                             w.inputEl.style.display = "none";
                             if (w.inputEl.parentElement) {
@@ -33,7 +31,6 @@ app.registerExtension({
                             }
                         }
                     }
-                    // 去除节点隐藏的连接点 (Input Slot)
                     if (this.inputs) {
                         const idx = this.inputs.findIndex(i => i.name === widgetName);
                         if (idx !== -1) {
@@ -41,8 +38,6 @@ app.registerExtension({
                         }
                     }
                 };
-
-                // 立即隐藏 (curve_data, Output )
                 hideWidgetAndSlot("curve_data");
                 hideWidgetAndSlot("output_mode");
                 
@@ -114,14 +109,6 @@ app.registerExtension({
                 container.style.borderRadius = "6px";
                 container.style.overflow = "hidden";
                 container.style.backgroundColor = "transparent";
-				
-/*                 // Nodes 2.0？
-                const isNodes2_0 = !!document.querySelector("comfy-app") || 
-                                   !!document.querySelector(".comfy-vue") || 
-                                   (window.comfyAPI && window.comfyAPI.vue);
-
-                container.style.marginTop = isNodes2_0 ? "0px" : "10px";
-                // ========================================================== */
                 
                 const header = document.createElement("div");
                 header.style.display = "flex";
@@ -228,7 +215,6 @@ app.registerExtension({
                 container.appendChild(viewArea);
                 const ctx = canvas.getContext("2d");
 				
-				// 同步
                 const resizeObserver = new ResizeObserver((entries) => {
                     for (let entry of entries) {
                         const { width, height } = entry.contentRect;
@@ -242,7 +228,6 @@ app.registerExtension({
                     }
                 });
                 resizeObserver.observe(viewArea);
-                // ===================================================================
 
                 const widget = this.addDOMWidget("CurveUI", "div", container, { serialize: false, hideOnZoom: false });
                 
@@ -475,10 +460,9 @@ app.registerExtension({
                     get: () => satValueInternal,
                     set: (v) => {
                         const newVal = parseFloat(v);
-                        if (satValueInternal === newVal) return; // 避免重复设置相同值
+                        if (satValueInternal === newVal) return; 
                         satValueInternal = newVal;
                         
-                        // 使用 RAF 批量更新 DOM，避免强制同步布局
                         if (satUpdateRaf) return;
                         satUpdateRaf = requestAnimationFrame(() => {
                             if (satSlider) satSlider.value = satValueInternal;
@@ -501,31 +485,24 @@ app.registerExtension({
                 
                 container.appendChild(satControlArea);
              
-                // ======= 模式切换 (Load Output) ======
                 const modeControlArea = document.createElement("div");
                 modeControlArea.style.display = "flex";
                 modeControlArea.style.alignItems = "center";
                 modeControlArea.style.alignSelf = "stretch";
                 modeControlArea.style.width = "100%";
-                //modeControlArea.style.height = "32px";
                 modeControlArea.style.flexShrink = "0";
                 modeControlArea.style.backgroundColor = "transparent";
                 modeControlArea.style.padding = "0 0px";
                 modeControlArea.style.borderTop = "none";
                 modeControlArea.style.gap = "8px";
                 modeControlArea.style.boxSizing = "border-box";
-				//modeControlArea.style.marginBottom = "0px";
-				
-				// Nodes 2.0？
+
                 const isNodes2_0 = !!document.querySelector("comfy-app") || 
                                    !!document.querySelector(".comfy-vue") || 
                                    (window.comfyAPI && window.comfyAPI.vue);
 
                 modeControlArea.style.marginBottom = isNodes2_0 ? "10px" : "0px";
-                // ==========================================================
-				
-                
-                // Load 按钮
+
                 const loadBtn = document.createElement("button");
                 loadBtn.innerText = "Preview";
                 loadBtn.style.flex = "7";
@@ -543,57 +520,79 @@ app.registerExtension({
                 loadBtn.style.transition = "all 0.2s ease";
                 
                 loadBtn.onclick = async () => {
-                    try {
-                        const p = await app.graphToPrompt();
-                        const prompt = p.output;
-                        const selectedNodeId = String(this.id);
-                        
-                        const isolatedPrompt = {};
-                        
-                        const traceDependencies = (nodeId) => {
-                            if (!prompt[nodeId] || isolatedPrompt[nodeId]) return;
-                            isolatedPrompt[nodeId] = prompt[nodeId];
-                            const inputs = prompt[nodeId].inputs;
-                            for (let key in inputs) {
-                                const val = inputs[key];
-                                if (Array.isArray(val) && val.length === 2) {
-                                    traceDependencies(String(val[0]));
+                    const isImageConnected = () => {
+                        return this.inputs?.some(i => i.name === "image" && i.link !== null);
+                    };
+                    
+                    if (isImageConnected()) {
+                        try {
+                            const p = await app.graphToPrompt();
+                            const prompt = p.output;
+                            const selectedNodeId = String(this.id);
+                            
+                            const isolatedPrompt = {};
+                            
+                            const traceDependencies = (nodeId) => {
+                                if (!prompt[nodeId] || isolatedPrompt[nodeId]) return;
+                                isolatedPrompt[nodeId] = prompt[nodeId];
+                                const inputs = prompt[nodeId].inputs;
+                                for (let key in inputs) {
+                                    const val = inputs[key];
+                                    if (Array.isArray(val) && val.length === 2) {
+                                        traceDependencies(String(val[0]));
+                                    }
+                                }
+                            };
+                            
+                            traceDependencies(selectedNodeId);
+                            
+                            if (Object.keys(isolatedPrompt).length === 0) {
+                                console.warn("No dependencies found for node", selectedNodeId);
+                                return;
+                            }
+                            const originalGraphToPrompt = app.graphToPrompt;
+                            
+                            app.graphToPrompt = async function (...args) {
+                                const originalModes = new Map();
+                                for (const n of app.graph._nodes) {
+                                    originalModes.set(n.id, n.mode);
+                                    if (!isolatedPrompt[String(n.id)]) {
+                                        n.mode = 2; 
+                                    } else {
+                                        n.mode = 0; 
+                                    }
+                                }
+                                
+                                try {
+                                    return await originalGraphToPrompt.apply(this, args);
+                                } finally {
+                                    for (const n of app.graph._nodes) {
+                                        if (originalModes.has(n.id)) {
+                                            n.mode = originalModes.get(n.id);
+                                        }
+                                    }
+                                }
+                            };
+                
+                            try {
+                                await app.queuePrompt(0, 1);
+                                console.log("Successfully queued isolated node execution (Flawless Method)");
+                            } finally {
+                                if (app.graphToPrompt !== originalGraphToPrompt) {
+                                    app.graphToPrompt = originalGraphToPrompt;
                                 }
                             }
-                        };
-                        
-                        traceDependencies(selectedNodeId);
-                        
-                        if (Object.keys(isolatedPrompt).length === 0) {
-                            console.warn("No dependencies found for node", selectedNodeId);
-                            return;
+                            
+                        } catch (err) {
+                            console.error("Failed to execute isolated node:", err);
                         }
-                        
-                        const response = await api.fetchApi("/prompt", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({
-                                client_id: api.clientId,
-                                prompt: isolatedPrompt,
-                                extra_data: p.workflow ? { extra_pnginfo: { workflow: p.workflow } } : {}
-                            })
-                        });
-                        
-                        if (!response.ok) {
-                            const error = await response.json();
-                            throw new Error(error.error || "Failed to queue prompt");
-                        }
-                        
-                        console.log("Successfully queued selected node execution");
-                        
-                    } catch (err) {
-                        console.error("Failed to execute isolated node:", err);
+                    } else {
+                        console.log("No image input connected, skipping preview");
                     }
                 };
                 
                 modeControlArea.appendChild(loadBtn);
                 
-                // Output 按钮 
                 const modeBtn = document.createElement("button");
                 modeBtn.innerText = "Multi Img";
                 modeBtn.style.flex = "3";

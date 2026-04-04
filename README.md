@@ -26,6 +26,11 @@
 
 ## Update
 
+## v1.4.1
+
+  - 优化 Smart merge images 节点的融合方法，对通过编辑模型（Flux2 Klein、Qwen Edit等）编辑后产生的像素偏移，有更好的纠正。 
+  - 优化 LoadImage_Preview 节点UI界面功能注释。
+
 ## v1.4.0
 
   - 在 LoadImage_Preview 节点上增加可选图像输入端口，可用于桥接预览中的编辑; 优化编辑面板布局。

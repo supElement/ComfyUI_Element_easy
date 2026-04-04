@@ -275,7 +275,7 @@ app.registerExtension({
         const refreshPlayBtn = $el("button.ee-btn", { 
             id: "ee-btn-refresh-play",
             textContent: "⟳",
-            title: "Refresh",
+            title: " 刷新 \n Refresh",
             style: { 
                 fontSize: "20px",        
                 width: "28px",           
@@ -367,7 +367,7 @@ app.registerExtension({
 		
 		const targetToggleBtn = $el("button.ee-switch-btn", { 
             textContent: "Mask", 
-            title: "Click to switch draw target (Mask/Image)", 
+            title: " 点击切换绘制目标（蒙版/图像）\n Click to switch draw target (Mask/Image)", 
             style: { 
                 marginLeft: "4px", 
                 marginRight: "4px",
@@ -382,14 +382,14 @@ app.registerExtension({
         
         const undoBtn = $el("button.ee-btn", { 
             textContent: "↩️", 
-            title: "Undo", 
+            title: " 撤销 \n Undo", 
             style: { width: "28px", height: "28px", padding: "0", fontSize: "16px", marginLeft: "2px", lineHeight: "1px", verticalAlign: "middle" }, 
             onclick: () => undo() 
         });
         
         const clearBtn = $el("button.ee-btn", { 
             textContent: "🗑️", 
-            title: "Clear All", 
+            title: " 清空画布 \n Clear All", 
             style: { width: "28px", height: "28px", padding: "0", fontSize: "16px", marginLeft: "2px", lineHeight: "1px", verticalAlign: "middle" }, 
             onclick: () => clearAll() 
         });
@@ -397,7 +397,7 @@ app.registerExtension({
         const lmaskBtn = $el("button.ee-btn", { 
             textContent: "La",
             id: "ee-btn-lmask",
-            title: "Load image alpha channel as mask",
+            title: " 追加图像中的透明通道做为遮罩 \n Load image alpha channel as mask",
             style: { 
                 display: "none",         
                 //marginLeft: "4px",     
@@ -443,6 +443,7 @@ app.registerExtension({
             $el("button.ee-btn", { 
                 textContent: "◂Return",
                 id: "ee-btn-back", 
+				title: " 返回到选择图像面板 \n Return to the image selection panel",
                 style: { 
                     display: "none", background: "#007acc", color: "#fff",
                     fontSize: "12px", fontWeight: "bold", padding: "0px 4px 0px 0px", width: "70px", height: "28px", lineHeight: "28px", verticalAlign: "middle", marginLeft: "auto"
@@ -527,29 +528,29 @@ app.registerExtension({
         const toolsGroup = $el("div.ee-toolbar-group", {
             style: { display: "flex", alignItems: "center", gap: "6px", borderRight: "1px solid #444", paddingRight: "4px" }
         }, [
-            $el("button.ee-btn.tool-btn.active", { textContent: "🖌️ Brush", style: { width: BTN_WIDTH, height: BTN_HEIGHT, padding: "4", lineHeight: "1px", verticalAlign: "middle" }, onclick: (e) => setTool('brush', e.target) }),
-            $el("button.ee-btn.tool-btn", { textContent: "🧹 Eraser", style: { width: BTN_WIDTH, height: BTN_HEIGHT, padding: "0", lineHeight: "1px", verticalAlign: "middle" }, onclick: (e) => setTool('eraser', e.target) }),
-            $el("button.ee-btn.tool-btn", { textContent: "🔳 Box", style: { width: BTN_WIDTH, height: BTN_HEIGHT, padding: "0", lineHeight: "1px", verticalAlign: "middle" }, onclick: (e) => setTool('rect', e.target) }),
-            $el("button.ee-btn.tool-btn", { textContent: "⭕ Circle", style: { width: BTN_WIDTH, height: BTN_HEIGHT, padding: "0", lineHeight: "1px", verticalAlign: "middle" }, onclick: (e) => setTool('circle', e.target) }),
+            $el("button.ee-btn.tool-btn.active", { textContent: "🖌️ Brush", title: " 画笔(shift键画直线) \n Paintbrush (Shift key to draw straight lines)", style: { width: BTN_WIDTH, height: BTN_HEIGHT, padding: "4", lineHeight: "1px", verticalAlign: "middle" }, onclick: (e) => setTool('brush', e.target) }),
+            $el("button.ee-btn.tool-btn", { textContent: "🧹 Eraser", title: " 橡皮擦(shift键画直线) \n Eraser (use the shift key to draw a straight line)", style: { width: BTN_WIDTH, height: BTN_HEIGHT, padding: "0", lineHeight: "1px", verticalAlign: "middle" }, onclick: (e) => setTool('eraser', e.target) }),
+            $el("button.ee-btn.tool-btn", { textContent: "🔳 Box", title: " 盒子/方框 (shift键画正方形) \n Box/Rectangle (use Shift key to draw a square)", style: { width: BTN_WIDTH, height: BTN_HEIGHT, padding: "0", lineHeight: "1px", verticalAlign: "middle" }, onclick: (e) => setTool('rect', e.target) }),
+            $el("button.ee-btn.tool-btn", { textContent: "⭕ Circle", title: " 圆/椭圆 (shift键画正圆) \n Circle/Ellipse (use Shift key to draw a perfect circle)" , style: { width: BTN_WIDTH, height: BTN_HEIGHT, padding: "0", lineHeight: "1px", verticalAlign: "middle" }, onclick: (e) => setTool('circle', e.target) }),
             $el("label", { style: { color: "white", fontSize: "12px", cursor: "pointer", display: "flex", alignItems: "center", gap: "4px", height: BTN_HEIGHT, marginLeft: "6px" } }, [
-                $el("input", { type: "checkbox", style: { margin: "0" }, onchange: (e) => shapeFill = e.target.checked }), " S-fill"
+                $el("input", { type: "checkbox", title: " 填充(方形或圆) \n Fill (box or circle)", style: { margin: "0" }, onchange: (e) => shapeFill = e.target.checked }), " S-fill"
             ])
         ]);
         
         const maskControlGroup = $el("div.ee-toolbar-group", {
             style: { display: "flex", alignItems: "center", gap: "4px", borderRight: "1px solid #444", paddingRight: "0px" }
         }, [
-            $el("div.ee-color-wrapper", {}, [ $el("input", { type: "color", value: "#808080", title: "Mask color", oninput: (e) => maskColor = e.target.value }), $el("span.ee-color-overlay", { textContent: "M" }) ]),
-            $el("div.ee-slider-container", {}, [ $el("span", { textContent: "B-size:" }), $el("input", { type: "range", min: 1, max: 100, value: 20, title: "Brush size", style: { width: SLIDER_WIDTH }, oninput: (e) => { brushSize = parseInt(e.target.value); updateBrushCursor(); } }) ]),
-            $el("div.ee-slider-container", {}, [ $el("span", { textContent: "M-op:" }), $el("input", { type: "range", min: 0.1, max: 1, step: 0.1, value: 0.8, title: "Mask opacity (preview only)", style: { width: SLIDER_WIDTH }, oninput: (e) => { maskOpacity = parseFloat(e.target.value); maskCanvas.style.opacity = maskOpacity; } }) ])
+            $el("div.ee-color-wrapper", {}, [ $el("input", { type: "color", value: "#808080", title: " 遮罩颜色(不影响输出) \n Mask color(preview only)", oninput: (e) => maskColor = e.target.value }), $el("span.ee-color-overlay", { textContent: "M" }) ]),
+            $el("div.ee-slider-container", {}, [ $el("span", { textContent: "B-size:" }), $el("input", { type: "range", min: 1, max: 100, value: 20, title: " 画笔半径 \n Brush size", style: { width: SLIDER_WIDTH }, oninput: (e) => { brushSize = parseInt(e.target.value); updateBrushCursor(); } }) ]),
+            $el("div.ee-slider-container", {}, [ $el("span", { textContent: "M-op:" }), $el("input", { type: "range", min: 0.1, max: 1, step: 0.1, value: 0.8, title: " 遮罩透明度(不影响输出) \n Mask opacity (preview only)", style: { width: SLIDER_WIDTH }, oninput: (e) => { maskOpacity = parseFloat(e.target.value); maskCanvas.style.opacity = maskOpacity; } }) ])
         ]);
         
         const imageControlGroup = $el("div.ee-toolbar-group", {
             style: { display: "flex", alignItems: "center", gap: "4px", paddingRight: "0px" }
         }, [
-            $el("div.ee-color-wrapper", {}, [ $el("input", { type: "color", value: "#ff0000", title: "Image shape color", oninput: (e) => shapeColor = e.target.value }), $el("span.ee-color-overlay", { textContent: "I" }) ]),
-            $el("div.ee-slider-container", {}, [ $el("span", { textContent: "I-op:" }), $el("input", { type: "range", min: 0.1, max: 1, step: 0.1, value: 1.0, title: "Image opacity (affects output)", style: { width: SLIDER_WIDTH }, oninput: (e) => { shapeOpacity = parseFloat(e.target.value); } }) ]),
-            $el("div.ee-slider-container", {}, [ $el("span", { textContent: "S-edge:" }), $el("input", { type: "range", min: 1, max: 50, value: 5, title: "Edge width", style: { width: SLIDER_WIDTH }, oninput: (e) => shapeThickness = parseInt(e.target.value) }) ])
+            $el("div.ee-color-wrapper", {}, [ $el("input", { type: "color", value: "#ff0000", title: " 画在图像上的颜色 \n Image shape color", oninput: (e) => shapeColor = e.target.value }), $el("span.ee-color-overlay", { textContent: "I" }) ]),
+            $el("div.ee-slider-container", {}, [ $el("span", { textContent: "I-op:" }), $el("input", { type: "range", min: 0.1, max: 1, step: 0.1, value: 1.0, title: " 画在图像上的透明度 \n Image opacity (affects output)", style: { width: SLIDER_WIDTH }, oninput: (e) => { shapeOpacity = parseFloat(e.target.value); } }) ]),
+            $el("div.ee-slider-container", {}, [ $el("span", { textContent: "S-edge:" }), $el("input", { type: "range", min: 1, max: 50, value: 5, title: " 盒子/圆的外框宽度 \n Edge width", style: { width: SLIDER_WIDTH }, oninput: (e) => shapeThickness = parseInt(e.target.value) }) ])
         ]);
         
         const toolbar = $el("div.ee-toolbar");
@@ -715,7 +716,7 @@ app.registerExtension({
 
             if (connected) {
                 refreshPlayBtn.textContent = "▶";
-                refreshPlayBtn.title = "Queue Selected Node (Apply Input Image)";
+                refreshPlayBtn.title = " 运行至本节点-加载输入图像 \n Run to this node (Apply Input Image)";
                 refreshPlayBtn.style.fontSize = "13px";
                 
                 gridView.style.display = "none";
@@ -727,7 +728,7 @@ app.registerExtension({
                 clearBtn.style.display = "inline-block";
             } else {
                 refreshPlayBtn.textContent = "⟳";
-                refreshPlayBtn.title = "Refresh";
+                refreshPlayBtn.title = " 刷新 \n Refresh";
                 refreshPlayBtn.style.fontSize = "16px";
 				
 				showGrid();

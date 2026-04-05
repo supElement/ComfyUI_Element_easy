@@ -26,25 +26,21 @@
 
 ## Update
 
-## v1.4.1
-
+## v1.4.2
+  
+  添加节点 Smart merge images。
+  - 两张图像有足够的共同特征时，智能合并图像。
+  - 纠正编辑模型（Flux2 Klein、Qwen Edit等）编辑图像后产生的像素偏移和色差。这种情况下的使用方法：将原图与编辑后的图像分别连接到 original_image 和 edited_crop_B 输入端口。
+  - 合并剪切的图像到原图时，如果条件允许，最可靠的合并方案：original_image + edited_crop_B + original_crop_A。其中 original_crop_A 是从original_image中剪切的没有修改或变形的图像。
   - 优化 Smart merge images 节点的融合方法，对通过编辑模型（Flux2 Klein、Qwen Edit等）编辑后产生的像素偏移，有更好的纠正。 
-  - 优化 LoadImage_Preview 节点UI界面功能注释。
+  - 增加色彩匹配模式 Adaptive Local (strong), 可以更好的修复图像经过编辑后产生的色差。新增仅用于此模式下的三个参数：adapt_thresh（色彩差异阈值）, adapt_kernel（模糊核, 简单理解为羽化）, adapt_align (预匹配强度 - 修正某些情况下图像合并后，局部产生的色斑，值越高修正越明显，但对整体画面的色彩修正有负面影响)， 此模式下 feather_amount 参数无效。
+
+  <img width="1670" height="981" alt="image" src="https://github.com/user-attachments/assets/88a429b5-18d8-429a-994a-db9c62791cc8" />
 
 ## v1.4.0
 
   - 在 LoadImage_Preview 节点上增加可选图像输入端口，可用于桥接预览中的编辑; 优化编辑面板布局。
   - 优化Element ImageCurve、Element HueSat、Element HueBright 和 Element HueHue 节点的载入预览逻辑。
-
-## v1.3.9
-  
-  添加节点 Smart merge images。
-  - 两张图像有足够的共同特征时，智能合并图像。
-  - 纠正编辑模型（Flux2 Klein、Qwen Edit等）编辑图像后产生的像素偏移，对色彩偏移也有修正。这种情况下的使用方法：将原图与编辑后的图像分别连接到 original_image 和 edited_crop_B 输入端口。
-  - 合并剪切的图像到原图时，如果条件允许，最可靠的合并方案：original_image + edited_crop_B + original_crop_A。其中 original_crop_A 是从original_image中剪切的没有修改或变形的图像。
-
-  <img width="1011" height="970" alt="image" src="https://github.com/user-attachments/assets/49b79f5b-4468-4656-ba6a-f9dbdf319ac0" />
-
 
 ## v1.3.8 
 重要更新！！！

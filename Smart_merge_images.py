@@ -18,17 +18,37 @@ class SmartMergeImages:
                 ),
                 "color_match": (
                     [
-                        "None",
+                        "SeamlessClone (PS Auto Blend)", 
+                        "Adaptive Local (strong)", 
                         "Histogram", 
                         "LAB_Mean", 
-                        "SeamlessClone (PS Auto Blend)", 
-                        "Adaptive Local", 
-                        "Alpha Soft Blend"
+                        "Alpha Soft Blend",
+                        "None"
                     ],
                 ),
                 "feather_amount": ("INT", {"default": 20, "min": 0, "max": 256, "step": 1}),
-                "adapt_thresh": ("INT", {"default": 25, "min": 0, "max": 255, "step": 1}),
-                "adapt_kernel": ("INT", {"default": 5, "min": 3, "max": 127, "step": 2}),
+                
+                "adapt_thresh": ("INT", {
+                    "default": 25, 
+                    "min": 0, 
+                    "max": 255, 
+                    "step": 1,
+                    #"tooltip": "Only for Adaptive Local (strong) - Difference detection threshold"
+                }),
+                "adapt_kernel": ("INT", {
+                    "default": 5, 
+                    "min": 3, 
+                    "max": 127, 
+                    "step": 2,
+                    #"tooltip": "Only for Adaptive Local (strong) - Blur radius"
+                }),
+                "adapt_align": ("FLOAT", {
+                    "default": 0.0, 
+                    "min": 0.0, 
+                    "max": 1.0, 
+                    "step": 0.05,
+                    #"tooltip": "Only for Adaptive Local (strong) -  Color pre-alignment intensity"
+                }),
             },
             "optional": {
                 "original_crop_A": ("IMAGE",),  
@@ -95,7 +115,7 @@ class SmartMergeImages:
             return H
         return None
 
-    def smart_merge(self, original_image, edited_crop_B, alignment_mode, color_match, feather_amount, adapt_thresh, adapt_kernel, original_crop_A=None):
+    def smart_merge(self, original_image, edited_crop_B, alignment_mode, color_match, feather_amount, adapt_thresh, adapt_kernel, adapt_align, original_crop_A=None):
         batch_size = min(original_image.shape[0], edited_crop_B.shape[0])
         result_images = []
 
@@ -128,14 +148,14 @@ class SmartMergeImages:
                             scale_y = h_A / float(h_fg)
                             H_FG_to_A = np.array([[scale_x, 0, 0], [0, scale_y, 0], [0, 0, 1]], dtype=np.float64)
                             H_Total = np.dot(H_A_to_BG, H_FG_to_A)
-                            warped_fg = cv2.warpPerspective(img_fg, H_Total, (w_bg, h_bg), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REFLECT101)
+                            warped_fg = cv2.warpPerspective(img_fg, H_Total, (w_bg, h_bg), flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT101)
                             warped_mask = cv2.warpPerspective(base_mask, H_Total, (w_bg, h_bg), flags=cv2.INTER_LINEAR)
                             success_align = True
 
                 if not success_align:
                     H_FG_to_BG = self.perform_sift_alignment(img_fg, img_bg)
                     if H_FG_to_BG is not None:
-                        warped_fg = cv2.warpPerspective(img_fg, H_FG_to_BG, (w_bg, h_bg), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REFLECT101)
+                        warped_fg = cv2.warpPerspective(img_fg, H_FG_to_BG, (w_bg, h_bg), flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT101)
                         warped_mask = cv2.warpPerspective(base_mask, H_FG_to_BG, (w_bg, h_bg), flags=cv2.INTER_LINEAR)
                         success_align = True
 
@@ -167,23 +187,36 @@ class SmartMergeImages:
                     mask_3d = bounds_mask_float[:, :, np.newaxis]
                     warped_fg = (matched_fg * mask_3d + warped_fg * (1 - mask_3d)).astype(np.uint8)
                     
-                elif color_match == "Adaptive Local":
+                elif color_match == "Adaptive Local (strong)":
+
+                    fg_float = warped_fg.astype(np.float32)
+                    bg_float = img_bg.astype(np.float32)
+                    bounds_mask_8u = (bounds_mask_float * 255).astype(np.uint8)
                     
-                    temp_fg = warped_fg.astype(np.float32)
-                    mean_bg = cv2.mean(img_bg, mask=bounds_mask_8u)[:3]
-                    mean_fg = cv2.mean(warped_fg, mask=bounds_mask_8u)[:3]
+                    if adapt_align > 0.0:
+                        mean_bg = np.array(cv2.mean(img_bg, mask=bounds_mask_8u)[:3], dtype=np.float32)
+                        mean_fg = np.array(cv2.mean(warped_fg, mask=bounds_mask_8u)[:3], dtype=np.float32)
+                        
+                        aligned_mean = (1.0 - adapt_align) * mean_fg + adapt_align * mean_bg
+                        diff_offset = aligned_mean - mean_fg
+                        
+                        aligned_fg = np.clip(fg_float + diff_offset, 0, 255).astype(np.uint8)
+                    else:
+                        aligned_fg = warped_fg.copy()
                     
-                    diff_offset = np.array(mean_bg) - np.array(mean_fg)
-                    temp_fg[:, :, 0] += diff_offset[0]
-                    temp_fg[:, :, 1] += diff_offset[1]
-                    temp_fg[:, :, 2] += diff_offset[2]
-                    temp_fg_aligned = np.clip(temp_fg, 0, 255).astype(np.uint8)
+                    lab_bg = cv2.cvtColor(img_bg, cv2.COLOR_RGB2LAB).astype(np.float32)
+                    lab_fg = cv2.cvtColor(aligned_fg, cv2.COLOR_RGB2LAB).astype(np.float32)
+                    diff_lab = np.sqrt(np.sum((lab_bg - lab_fg) ** 2, axis=2))
                     
-                    diff_rgb = cv2.absdiff(img_bg, temp_fg_aligned)
-                    diff_max = np.max(diff_rgb, axis=2).astype(np.float32)
-                    diff_blur = cv2.GaussianBlur(diff_max, (5, 5), 0)
+                    diff_rgb = np.max(np.abs(bg_float - aligned_fg.astype(np.float32)), axis=2)
                     
-                    _, thresh = cv2.threshold(diff_blur, float(adapt_thresh), 255.0, cv2.THRESH_BINARY)
+                    diff_combined = np.maximum(diff_lab, diff_rgb)
+                    
+                    diff_blur = cv2.GaussianBlur(diff_combined, (5, 5), 0)
+                    
+                    threshold_value = float(adapt_thresh)
+                    
+                    _, thresh = cv2.threshold(diff_blur, threshold_value, 255.0, cv2.THRESH_BINARY)
                     thresh_8u = thresh.astype(np.uint8)
                     
                     k_size = int(adapt_kernel) | 1 
@@ -198,8 +231,6 @@ class SmartMergeImages:
                     final_diff_mask = cv2.GaussianBlur(dilated_mask.astype(np.float32) / 255.0, (blur_size, blur_size), 0)
                     diff_mask_3d = final_diff_mask[:, :, np.newaxis] * bounds_mask_float[:, :, np.newaxis]
                     
-                    fg_float = warped_fg.astype(np.float32)
-                    bg_float = img_bg.astype(np.float32)
                     adaptive_fg = (fg_float * diff_mask_3d) + (bg_float * (1.0 - diff_mask_3d))
                     warped_fg = np.clip(adaptive_fg, 0, 255).astype(np.uint8)
 

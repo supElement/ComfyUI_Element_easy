@@ -26,7 +26,7 @@ class SmartMergeImages:
                         "None"
                     ],
                 ),
-                "feather_amount": ("INT", {"default": 20, "min": 0, "max": 256, "step": 1}),
+                "feather_kernel": ("INT", {"default": 20, "min": 0, "max": 256, "step": 1}),
                 
                 "adapt_thresh": ("INT", {
                     "default": 25, 
@@ -35,13 +35,6 @@ class SmartMergeImages:
                     "step": 1,
                     #"tooltip": "Only for Adaptive Local (strong) - Difference detection threshold"
                 }),
-                "adapt_kernel": ("INT", {
-                    "default": 5, 
-                    "min": 3, 
-                    "max": 127, 
-                    "step": 2,
-                    #"tooltip": "Only for Adaptive Local (strong) - Blur radius"
-                }),
                 "adapt_align": ("FLOAT", {
                     "default": 0.0, 
                     "min": 0.0, 
@@ -49,6 +42,15 @@ class SmartMergeImages:
                     "step": 0.05,
                     #"tooltip": "Only for Adaptive Local (strong) -  Color pre-alignment intensity"
                 }),
+                "adapt_local_match": (
+                    [
+                        "Histogram", 
+                        "LAB_Mean", 
+                        "Reinhard",
+                        "Adaptive Histogram", 
+                        "None"
+                    ],
+                ),
             },
             "optional": {
                 "original_crop_A": ("IMAGE",),  
@@ -115,7 +117,7 @@ class SmartMergeImages:
             return H
         return None
 
-    def smart_merge(self, original_image, edited_crop_B, alignment_mode, color_match, feather_amount, adapt_thresh, adapt_kernel, adapt_align, original_crop_A=None):
+    def smart_merge(self, original_image, edited_crop_B, alignment_mode, color_match, feather_kernel, adapt_thresh, adapt_align, adapt_local_match, original_crop_A=None):
         batch_size = min(original_image.shape[0], edited_crop_B.shape[0])
         result_images = []
 
@@ -219,7 +221,7 @@ class SmartMergeImages:
                     _, thresh = cv2.threshold(diff_blur, threshold_value, 255.0, cv2.THRESH_BINARY)
                     thresh_8u = thresh.astype(np.uint8)
                     
-                    k_size = int(adapt_kernel) | 1 
+                    k_size = int(feather_kernel) | 1 
                     kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_size, k_size))
                     closed_mask = cv2.morphologyEx(thresh_8u, cv2.MORPH_CLOSE, kernel_close)
                     
@@ -231,9 +233,73 @@ class SmartMergeImages:
                     final_diff_mask = cv2.GaussianBlur(dilated_mask.astype(np.float32) / 255.0, (blur_size, blur_size), 0)
                     diff_mask_3d = final_diff_mask[:, :, np.newaxis] * bounds_mask_float[:, :, np.newaxis]
                     
-                    adaptive_fg = (fg_float * diff_mask_3d) + (bg_float * (1.0 - diff_mask_3d))
-                    warped_fg = np.clip(adaptive_fg, 0, 255).astype(np.uint8)
+                    # ==================== 色彩匹配部分 adapt_local_match） ====================
+                    matched_fg = warped_fg.copy() 
 
+                    match_mode = adapt_local_match
+
+                    if match_mode == "LAB_Mean":
+                        lab_bg = cv2.cvtColor(img_bg, cv2.COLOR_RGB2LAB).astype(np.float32)
+                        lab_fg = cv2.cvtColor(warped_fg, cv2.COLOR_RGB2LAB).astype(np.float32)
+                        
+                        mean_bg_lab = cv2.mean(lab_bg, mask=bounds_mask_8u)[:3]
+                        mean_fg_lab = cv2.mean(lab_fg, mask=bounds_mask_8u)[:3]
+                        
+                        lab_matched = lab_fg - np.array(mean_fg_lab) + np.array(mean_bg_lab)
+                        lab_matched = np.clip(lab_matched, 0, 255).astype(np.uint8)
+                        matched_fg = cv2.cvtColor(lab_matched, cv2.COLOR_LAB2RGB)
+
+                    elif match_mode == "Histogram":
+                        matched_fg = self.exact_histogram_match(warped_fg, img_bg, bounds_mask_float)
+
+                    elif match_mode == "Reinhard":
+                        lab_bg = cv2.cvtColor(img_bg, cv2.COLOR_RGB2LAB).astype(np.float32)
+                        lab_fg = cv2.cvtColor(warped_fg, cv2.COLOR_RGB2LAB).astype(np.float32)
+                        
+                        mean_bg, std_bg = cv2.meanStdDev(lab_bg, mask=bounds_mask_8u)
+                        mean_fg, std_fg = cv2.meanStdDev(lab_fg, mask=bounds_mask_8u)
+                        
+                        mean_bg = mean_bg.flatten()
+                        std_bg = std_bg.flatten()
+                        mean_fg = mean_fg.flatten()
+                        std_fg = std_fg.flatten()
+                        
+                        std_fg = np.maximum(std_fg, 1.0)
+                        std_bg = np.maximum(std_bg, 1.0)
+                        
+                        if np.mean(std_fg) < 8.0:
+                            lab_matched = lab_fg - mean_fg + mean_bg
+                        else:
+                            lab_matched = (lab_fg - mean_fg) * (std_bg / std_fg) + mean_bg
+                        
+                        lab_matched = np.clip(lab_matched, 0, 255).astype(np.uint8)
+                        matched_fg = cv2.cvtColor(lab_matched, cv2.COLOR_LAB2RGB)
+
+                    elif match_mode == "Adaptive Histogram":
+                        lab_bg = cv2.cvtColor(img_bg, cv2.COLOR_RGB2LAB).astype(np.float32)
+                        lab_fg = cv2.cvtColor(warped_fg, cv2.COLOR_RGB2LAB).astype(np.float32)
+                        
+                        lab_matched = lab_fg.copy()  
+                        
+                        for c in [1, 2]:
+                            fg_ch = lab_fg[:, :, c].astype(np.uint8)
+                            bg_ch = lab_bg[:, :, c].astype(np.uint8)
+                            
+                            temp = self.exact_histogram_match(
+                                np.expand_dims(fg_ch, axis=2),
+                                np.expand_dims(bg_ch, axis=2),
+                                bounds_mask_float
+                            )
+                            lab_matched[:, :, c] = temp[:, :, 0]
+                        
+                        matched_fg = cv2.cvtColor(lab_matched.astype(np.uint8), cv2.COLOR_LAB2RGB)
+
+                    matched_fg_float = matched_fg.astype(np.float32)
+
+                    adaptive_fg = (matched_fg_float * diff_mask_3d) + (bg_float * (1.0 - diff_mask_3d))
+                    warped_fg = np.clip(adaptive_fg, 0, 255).astype(np.uint8)
+                    # ===========================================================================
+                    
                 if color_match == "SeamlessClone (PS Auto Blend)":
                     shrink_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
                     clone_mask_8u = cv2.erode(bounds_mask_8u, shrink_kernel, iterations=1)
@@ -256,11 +322,11 @@ class SmartMergeImages:
                         color_match = "Alpha Soft Blend"
 
                 if color_match != "SeamlessClone (PS Auto Blend)":
-                    if feather_amount > 0:
-                        erode_size = max(3, feather_amount)
+                    if feather_kernel > 0:
+                        erode_size = max(3, feather_kernel)
                         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (erode_size, erode_size))
                         eroded_mask_8u = cv2.erode(bounds_mask_8u, kernel, iterations=1)
-                        blur_size = (feather_amount * 2) | 1
+                        blur_size = (feather_kernel * 2) | 1
                         soft_mask = cv2.GaussianBlur(eroded_mask_8u.astype(np.float32) / 255.0, (blur_size, blur_size), 0)
                         soft_mask = soft_mask * bounds_mask_float
                     else:

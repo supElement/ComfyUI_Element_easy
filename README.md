@@ -26,16 +26,18 @@
 
 ## Update
 
-## v1.4.2
+## v1.4.3
   
   添加节点 Smart merge images。
   - 两张图像有足够的共同特征时，智能合并图像。
   - 纠正编辑模型（Flux2 Klein、Qwen Edit等）编辑图像后产生的像素偏移和色差。这种情况下的使用方法：将原图与编辑后的图像分别连接到 original_image 和 edited_crop_B 输入端口。
   - 合并剪切的图像到原图时，如果条件允许，最可靠的合并方案：original_image + edited_crop_B + original_crop_A。其中 original_crop_A 是从original_image中剪切的没有修改或变形的图像。
   - 优化 Smart merge images 节点的融合方法，对通过编辑模型（Flux2 Klein、Qwen Edit等）编辑后产生的像素偏移，有更好的纠正。 
-  - 增加色彩匹配模式 Adaptive Local (strong), 可以更好的修复图像经过编辑后产生的色差。新增仅用于此模式下的三个参数：adapt_thresh（色彩差异阈值）, adapt_kernel（模糊核, 简单理解为羽化）, adapt_align (预匹配强度 - 修正某些情况下图像合并后，局部产生的色斑，值越高修正越明显，但对整体画面的色彩修正有负面影响)， 此模式下 feather_amount 参数无效。
+  - 增加色彩匹配模式 Adaptive Local (strong), 可以更好的修复图像经过编辑后产生的色差。新增仅用于此模式下的两个参数：adapt_thresh（色彩差异阈值）, adapt_align (预匹配强度 - 修正某些情况下图像合并后，局部产生的色斑，值越高修正越明显，但对整体画面的色彩修正可能有负面影响)。
+  - 增加 adapt_local_match 参数，为色彩匹配模式 Adaptive Local (strong) 的掩码融合提供更多选择，原来节点只有None模式。将feature_amount 与 adapt_kernel 合并为一个参数feather_kernel。
 
-  <img width="1670" height="981" alt="image" src="https://github.com/user-attachments/assets/88a429b5-18d8-429a-994a-db9c62791cc8" />
+  <img width="1670" height="981" alt="Untitled-2" src="https://github.com/user-attachments/assets/8b5f4167-9529-4cdc-8df8-9b26f5355688" />
+
 
 ## v1.4.0
 

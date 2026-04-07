@@ -38,7 +38,14 @@ app.registerExtension({
                 .ee-btn.active { background: #007acc; }
                 .ee-btn-lmask:active { background: #007acc !important; }  
 				
-                .ee-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; overflow-y: auto; flex: 1; padding: 2px; }
+                .ee-grid { 
+                    display: grid; 
+                    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); 
+                    gap: 6px; 
+                    overflow-y: auto; 
+                    flex: 1; 
+                    padding: 6px; 
+                }
                 .ee-grid-item { aspect-ratio: 1; background: #222; cursor: pointer; border: 2px solid transparent; }
                 .ee-grid-item:hover { border-color: #555; }
                 .ee-grid-item.selected { border-color: #007acc; }

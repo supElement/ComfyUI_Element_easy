@@ -21,7 +21,7 @@ const LS_KEY = "sigma_graph_saveSlots";
 const UNDO_LIMIT = 1;
 const MIN_NODE_WIDTH = 240;
 const MIN_NODE_HEIGHT = 280;
-const NON_WIDGET_HEIGHT = 90;
+const NON_WIDGET_HEIGHT = 110;
 const MIN_WIDGET_HEIGHT = 100;
 const GRAB_THRESHOLD = 0.08;
 const POINT_RADIUS = 4;
@@ -179,7 +179,12 @@ function formatValue(val) {
 
 function strToPts(str) {
     try {
-        const arr = JSON.parse(str);
+        const parsed = JSON.parse(str);
+        let arr = parsed;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && parsed.points) {
+            arr = parsed.points;
+        }
+        
         if (
             Array.isArray(arr) &&
             arr.every((o) => typeof o.x === "number" && typeof o.y === "number")
@@ -272,6 +277,11 @@ function setup(node) {
     let initialPts = null;
     if (gw.value && gw.value.trim() !== "") {
         try {
+            const parsed = JSON.parse(gw.value);
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && parsed.mode) {
+                isCurveMode = (parsed.mode === "curve");
+                node.properties._curveMode = isCurveMode;
+            }
             initialPts = strToPts(gw.value);
         } catch {
             initialPts = null;
@@ -445,7 +455,7 @@ function setup(node) {
         isCurveMode = !isCurveMode;
         node.properties._curveMode = isCurveMode;
         updateModeButtonVisual();
-        draw();
+        applyPoints(strToPts(gw.value));
     };
 
 
@@ -604,7 +614,13 @@ function setup(node) {
             x: Math.round(p.x * 100000) / 100000,
             y: formatValue(p.y)
         }));
-        const jsonStr = JSON.stringify(clean);
+        
+        const payload = {
+            points: clean,
+            mode: isCurveMode ? "curve" : "linear"
+        };
+        const jsonStr = JSON.stringify(payload);
+        
         gw.value = jsonStr;
         ta.value = jsonStr;
         draw(clean);
@@ -677,11 +693,12 @@ function setup(node) {
         }
 
         const stepsW = node.widgets.find((w) => w.name === STEPS_NAME).value | 0;
+        const maxValueW = node.widgets.find((w) => w.name === "max_value")?.value ?? 1.0;
         const sigmaValues = isCurveMode 
             ? calcSmoothSigmas(pts, stepsW) 
             : calcLinearSigmas(pts, stepsW);
         preview.value = sigmaValues
-            .map((v) => parseFloat(v.toFixed(5)))
+            .map((v) => parseFloat((v * maxValueW).toFixed(5)))
             .join(", ");
     }
     
@@ -831,7 +848,15 @@ function setup(node) {
     canvas.oncontextmenu = (e) => e.preventDefault();
 
     const sw = node.widgets.find((w) => w.name === STEPS_NAME);
+    const maxValueWidget = node.widgets.find((w) => w.name === "max_value");
+    
     if (sw) sw.callback = () => applyPoints(strToPts(ta.value));
+    if (maxValueWidget) {
+        maxValueWidget.callback = () => {
+            node.properties._maxValue = maxValueWidget.value;
+            draw();
+        };
+    }
 
     const origSerialize = node.onSerialize;
     node.onSerialize = function(o) {
@@ -839,6 +864,8 @@ function setup(node) {
         this.properties = this.properties || {};
         this.properties._ui_size = [this.size?.[0] || MIN_NODE_WIDTH, this.size?.[1] || MIN_NODE_HEIGHT];
         this.properties._curveMode = isCurveMode;
+        const maxV = node.widgets.find((w) => w.name === "max_value")?.value ?? 1.0;
+        this.properties._maxValue = maxV;
     };
     
     const origConfigure = node.onConfigure;
@@ -856,6 +883,9 @@ function setup(node) {
         if (this.properties?._curveMode !== undefined) {
             isCurveMode = this.properties._curveMode;
             updateModeButtonVisual();
+        }
+        if (this.properties?._maxValue !== undefined && maxValueWidget) {
+            maxValueWidget.value = this.properties._maxValue;
         }
 		this.minSize = [MIN_NODE_WIDTH, MIN_NODE_HEIGHT];
     };

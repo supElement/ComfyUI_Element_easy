@@ -39,11 +39,11 @@ class Element_SigmaGraph_Curve:
                     "multiline": True,
                 }),
                 "max_value": ("FLOAT", {  
-                    "default": 1.0,
-                    "min": 0.01,
+                    "default": 1.0000,
+                    "min": 0.0001,
                     "max": 1000.0,
-                    "step": 0.1,
-                    "round": 0.01,
+                    "step": 0.0001,
+                    "round": 0.0001,
                 }),
             },
             "optional": {

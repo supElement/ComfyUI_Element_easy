@@ -25,10 +25,10 @@ class Element_SigmaGraph_Curve:
 
     @classmethod
     def INPUT_TYPES(cls):
-        default_points = json.dumps([
-            {"x": 0.0, "y": 1.0},
-            {"x": 1.0, "y": 0.0}
-        ])
+        default_points = json.dumps({
+            "points": [{"x": 0.0, "y": 1.0}, {"x": 1.0, "y": 0.0}],
+            "mode": "curve"
+        })
         return {
             "required": {
                 "steps": ("INT", {
@@ -37,6 +37,13 @@ class Element_SigmaGraph_Curve:
                 "graph_data": ("STRING", {
                     "default": default_points,
                     "multiline": True,
+                }),
+                "max_value": ("FLOAT", {  
+                    "default": 1.0,
+                    "min": 0.01,
+                    "max": 1000.0,
+                    "step": 0.1,
+                    "round": 0.01,
                 }),
             },
             "optional": {
@@ -59,11 +66,15 @@ class Element_SigmaGraph_Curve:
         """ Parses, validates, and cleans the points data. """
         points = []
         default_points_list = [{"x": 0.0, "y": 1.0}, {"x": 1.0, "y": 0.0}]
+        is_curve = True 
         
         try:
             points_data = json.loads(points_data_str)
-            if not isinstance(points_data, list):
-                raise ValueError("Graph data is not a list.")
+            if isinstance(points_data, dict) and 'points' in points_data:
+                is_curve = (points_data.get('mode', 'curve') == 'curve')
+                points_data = points_data['points']
+            elif not isinstance(points_data, list):
+                raise ValueError("Graph data is not a list or valid dict.")
         except json.JSONDecodeError:
             try:
                 nums_str = re.findall(r'-?\d+\.?\d*', points_data_str)
@@ -87,7 +98,6 @@ class Element_SigmaGraph_Curve:
                 if isinstance(p, dict) and 'x' in p and 'y' in p and \
                    isinstance(p['x'], (int, float)) and not math.isnan(p['x']) and not math.isinf(p['x']) and \
                    isinstance(p['y'], (int, float)) and not math.isnan(p['y']) and not math.isinf(p['y']):
-                    # 限制 y 在 [0, 1] 范围内
                     y_clamped = max(0.0, min(1.0, float(p['y'])))
                     valid_points.append({"x": float(p['x']), "y": y_clamped})
                 else:
@@ -109,12 +119,10 @@ class Element_SigmaGraph_Curve:
 
         if not has_start:
             start_y = min(points, key=lambda p: abs(p['x'] - 0.0))['y'] if points else 1.0
-            # 确保边界点也被限制
             start_y = max(0.0, min(1.0, start_y))
             points.append({"x": 0.0, "y": start_y})
         if not has_end:
             end_y = min(points, key=lambda p: abs(p['x'] - 1.0))['y'] if points else 0.0
-            # 确保边界点也被限制
             end_y = max(0.0, min(1.0, end_y))
             points.append({"x": 1.0, "y": end_y})
 
@@ -130,28 +138,38 @@ class Element_SigmaGraph_Curve:
                     last_x = points[i]['x']
 
         if len(unique_points) < 2:
-             return default_points_list
+             return default_points_list, is_curve
 
-        return unique_points
+        return unique_points, is_curve
+    
+    def _linear_interpolate(self, x_query, points):
+        if not points:
+            return 0.0
+        if x_query <= points[0]['x']:
+            return max(0.0, min(1.0, points[0]['y']))
+        if x_query >= points[-1]['x']:
+            return max(0.0, min(1.0, points[-1]['y']))
+            
+        for i in range(len(points) - 1):
+            p0 = points[i]
+            p1 = points[i+1]
+            if p0['x'] <= x_query <= p1['x']:
+                t = (x_query - p0['x']) / (p1['x'] - p0['x'])
+                y = p0['y'] + t * (p1['y'] - p0['y'])
+                return max(0.0, min(1.0, y))
+        return max(0.0, min(1.0, points[-1]['y']))
 
     def _cubic_spline_coefficients(self, points):
-        """
-        计算三次样条插值的系数
-        使用自然边界条件（二阶导数为0）
-        返回每个区间的系数 a, b, c, d
-        """
-        n = len(points) - 1  # 区间数量
+
+        n = len(points) - 1  
         if n < 1:
             return []
         
         x = [p['x'] for p in points]
         y = [p['y'] for p in points]
         
-        # 计算步长 h
         h = [x[i+1] - x[i] for i in range(n)]
         
-        # 构建三对角矩阵求解二阶导数 M
-        # 自然边界条件: M[0] = M[n] = 0
         A = [[0.0] * (n+1) for _ in range(n+1)]
         b = [0.0] * (n+1)
         
@@ -164,11 +182,8 @@ class Element_SigmaGraph_Curve:
             A[i][i+1] = h[i]
             b[i] = 3.0 * ((y[i+1] - y[i]) / h[i] - (y[i] - y[i-1]) / h[i-1])
         
-        # 解三对角线性方程组 (Thomas算法)
         M = self._solve_tridiagonal(A, b)
         
-        # 计算每个区间的系数
-        # S_i(x) = a_i + b_i*(x-x_i) + c_i*(x-x_i)^2 + d_i*(x-x_i)^3
         coeffs = []
         for i in range(n):
             a = y[i]
@@ -205,40 +220,29 @@ class Element_SigmaGraph_Curve:
         return x
 
     def _evaluate_spline(self, x_query, coeffs, points):
-        """在指定x位置评估样条函数值"""
         if not coeffs:
             return 0.0
         
-        # 找到对应的区间
         for coeff in coeffs:
             if coeff['x0'] <= x_query <= coeff['x1'] or \
                abs(x_query - coeff['x0']) < self.EPSILON or \
                abs(x_query - coeff['x1']) < self.EPSILON:
                 dx = x_query - coeff['x0']
-                # S(x) = a + b*dx + c*dx^2 + d*dx^3
                 y = coeff['a'] + coeff['b']*dx + coeff['c']*dx*dx + coeff['d']*dx*dx*dx
-                # 限制在 [0, 1]
                 return max(0.0, min(1.0, y))
         
-        # 边界外使用端点值（已被限制在[0,1]）
         if x_query < coeffs[0]['x0']:
             return max(0.0, min(1.0, points[0]['y']))
         else:
             return max(0.0, min(1.0, points[-1]['y']))
 
     def _format_sigma_value(self, val):
-        """
-        格式化 sigma 值，避免科学计数法，并处理浮点精度误差
-        """
-        # 处理极小的浮点误差（如 8.326672684688674e-17）
         if abs(val) < 1e-10:
             val = 0.0
-        # 限制范围
         val = max(0.0, min(1.0, val))
-        # 格式化为固定小数位，避免科学计数法
         return round(val, 10)
 
-    def calculate_sigmas(self, steps, graph_data, custom_sigmas=None, latent=None, unique_id=None):
+    def calculate_sigmas(self, steps, graph_data, max_value=1.0, custom_sigmas=None, latent=None, unique_id=None):
     
         if custom_sigmas is not None:
             
@@ -255,8 +259,7 @@ class Element_SigmaGraph_Curve:
             num_sigmas = len(sig_list)
             if num_sigmas >= 2:
                 new_steps = num_sigmas - 1
-                # 格式化传入的值
-                points = [{"x": float(i) / new_steps, "y": self._format_sigma_value(float(v))} for i, v in enumerate(sig_list)]
+                points = [{"x": float(i) / new_steps, "y": self._format_sigma_value(float(v) / max_value)} for i, v in enumerate(sig_list)]
                 node_id_str = unique_id[0] if isinstance(unique_id, list) else str(unique_id)
                 
                 if unique_id is not None:
@@ -269,8 +272,7 @@ class Element_SigmaGraph_Curve:
                 if isinstance(custom_sigmas, torch.Tensor):
                     sigmas_tensor = custom_sigmas.clone().detach().to("cpu", dtype=torch.float32)
                 else:
-                    # 格式化所有值
-                    formatted_list = [self._format_sigma_value(v) for v in sig_list]
+                    formatted_list = [self._format_sigma_value(v / max_value) * max_value for v in sig_list]
                     sigmas_tensor = torch.tensor(formatted_list, dtype=torch.float32, device="cpu")
                     
                 return (sigmas_tensor, new_steps,)
@@ -278,21 +280,37 @@ class Element_SigmaGraph_Curve:
                 print("[Element_SigmaGraph_Curve Warning] custom_sigmas 输入的数据过短，已回退至界面曲线数据。")
 
         steps = max(1, int(steps))
-        points = self._validate_and_clean_points(graph_data)
+        points, is_curve = self._validate_and_clean_points(graph_data)
         num_sigmas_to_generate = steps + 1
 
-        # 使用三次样条插值替代线性插值
-        coeffs = self._cubic_spline_coefficients(points)
+        coeffs = []
+        if is_curve:
+            coeffs = self._cubic_spline_coefficients(points)
         
         sigma_values = []
         for i in range(num_sigmas_to_generate):
             step_progress = i / steps
             step_progress = min(1.0, max(0.0, step_progress))
             
-            sigma = self._evaluate_spline(step_progress, coeffs, points)
-            # 格式化值，避免科学计数法
-            sigma_formatted = self._format_sigma_value(sigma)
+            if is_curve:
+                sigma = self._evaluate_spline(step_progress, coeffs, points)
+            else:
+                sigma = self._linear_interpolate(step_progress, points)
+            sigma_formatted = self._format_sigma_value(sigma) * max_value
             sigma_values.append(sigma_formatted)
+            
+        sigma_values.sort(reverse=True)
+        
+        for i in range(len(sigma_values) - 2, -1, -1):
+            if sigma_values[i] <= sigma_values[i+1]:
+                sigma_values[i] = sigma_values[i+1] + 1e-5
+                
+        current_max = sigma_values[0]
+        if current_max > max_value:
+            scale_factor = float(max_value) / current_max
+            for i in range(len(sigma_values)):
+                sigma_values[i] = sigma_values[i] * scale_factor
+        # ==========================================
             
         sigmas_tensor = torch.tensor(sigma_values, dtype=torch.float32, device="cpu")
         return (sigmas_tensor, steps,)

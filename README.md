@@ -25,6 +25,9 @@
 
 
 ## Update
+## v1.4.4
+  
+修复Element_SigmaGraph 节点 线性模式“L”的输出bug，，添加输出最大值 max value 参数，添加输出强制纠正。
 
 ## v1.4.3
   

@@ -630,32 +630,38 @@ app.registerExtension({
                 return [Math.max(0, Math.min(1, x)), Math.max(0, Math.min(1, y))];
             };
 
-            canvas.addEventListener("dblclick", (e) => {
-                const [x, y] = getPos(e);
-                curvePoints.push([x, y]);
-                curvePoints.sort((a, b) => a[0] - b[0]);
-                updateBackend();
-                draw();
-                updateLivePreview(false);
-            });
-
             canvas.addEventListener("mousedown", (e) => {
                 const [x, y] = getPos(e);
                 let closestIdx = -1, minDist = 0.05;
+                
                 for (let i = 0; i < curvePoints.length; i++) {
                     const dxRaw = Math.abs(curvePoints[i][0] - x);
-                    const dx = Math.min(dxRaw, 1 - dxRaw); // hue环形距离
+                    const dx = Math.min(dxRaw, 1 - dxRaw); // 考虑Hue环形距离
                     const dy = Math.abs(curvePoints[i][1] - y);
                     const dist = Math.hypot(dx, dy);
-                    if (dist < minDist) { minDist = dist; closestIdx = i; }
+                    if (dist < minDist) { 
+                        minDist = dist; 
+                        closestIdx = i; 
+                    }
                 }
 
-                if (e.button === 0) {
+                if (e.button === 0) { 
                     if (closestIdx !== -1) {
                         isDragging = true;
                         dragIndex = closestIdx;
+                    } else {
+                        const newPt = [x, y];
+                        curvePoints.push(newPt);
+                        curvePoints.sort((a, b) => a[0] - b[0]); 
+                        
+                        dragIndex = curvePoints.indexOf(newPt);
+                        isDragging = true;
+
+                        updateBackend();
+                        draw();
+                        updateLivePreview(false);
                     }
-                } else if (e.button === 2) {
+                } else if (e.button === 2) { 
                     e.preventDefault();
                     if (closestIdx !== -1) {
                         curvePoints.splice(closestIdx, 1);

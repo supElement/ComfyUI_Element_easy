@@ -136,24 +136,30 @@ def compute_HueBright_logic(image, curve_data_str=None, lut_tensor=None, preview
     idx0 = torch.floor(h_pos).long()
     idx1 = (idx0 + 1) % lut_len
     w = h_pos - idx0.to(h_pos.dtype)
-
     w = w * w * (3.0 - 2.0 * w)
     
-    bright_val = lut_tensor[idx0] * (1.0 - w) + lut_tensor[idx1] * w
-    bright_val = torch.clamp(bright_val, min=1e-5)
+    raw_bright = lut_tensor[idx0] * (1.0 - w) + lut_tensor[idx1] * w
+  
+    MAX_GAIN = 5.0  # 最大亮度
     
-    is_dark = bright_val < 1.0
+    is_brightening = raw_bright >= 1.0
+    
+    bright_strength = 1.0 + (raw_bright - 1.0) * (MAX_GAIN - 1.0)
+    
+    dark_strength = torch.pow(raw_bright, 3) # 最小亮度 1.5
+    
+    final_strength = torch.where(is_brightening, bright_strength, dark_strength)
+    final_strength = torch.clamp(final_strength, min=1e-5)
 
-    v_dark = v * bright_val
+    v_dark = v * final_strength
     
-    gamma_power = 1.0 / bright_val
+    gamma_power = 1.0 / final_strength
     v_bright = torch.pow(v + 1e-7, gamma_power)
     
-    adjusted_v = torch.where(is_dark, v_dark, v_bright)
+    adjusted_v = torch.where(is_brightening, v_bright, v_dark)
     
-    # 引入饱和度 (S) 权重遮罩
-    # 灰度图的 s=0，所以调整强度必须为 0；色彩越纯，调整越强。
-    new_v = v + s * (adjusted_v - v)
+    s_influence = torch.pow(s, 0.3) #低饱和影响0.3 数值越小影响越大
+    new_v = v + s_influence * (adjusted_v - v)
     
     new_v = torch.clamp(new_v, 0.0, 1.0)
     

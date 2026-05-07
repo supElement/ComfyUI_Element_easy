@@ -290,6 +290,7 @@ app.registerExtension({
             loadBtn.style.fontWeight = "bold";
             loadBtn.style.backgroundColor = "#4f5d6d";
             loadBtn.style.color = "#FFF";
+			
             loadBtn.onclick = async () => {
                 const isImageConnected = () => {
                     return this.inputs?.some(i => i.name === "image" && i.link !== null);
@@ -317,20 +318,24 @@ app.registerExtension({
                         
                         traceDependencies(selectedNodeId);
                         
-                        if (Object.keys(isolatedPrompt).length === 0) {
-                            console.warn("No dependencies found for node", selectedNodeId);
-                            return;
-                        }
-                        
                         const originalGraphToPrompt = app.graphToPrompt;
                         
+                        // “虚拟连接”节点类型（KJNodes）
+                        const virtualNodeTypes = [
+                            "SetNode", "GetNode", 
+                            "SetNodeAny", "GetNodeAny", 
+                            "SetImage", "GetImage",
+                            "SetLatent", "GetLatent"
+                        ];
+            
                         app.graphToPrompt = async function (...args) {
                             const originalModes = new Map();
-                            
                             for (const n of app.graph._nodes) {
                                 originalModes.set(n.id, n.mode);
-                                if (!isolatedPrompt[String(n.id)]) {
-                                    n.mode = 2; 
+                                const isVirtualNode = virtualNodeTypes.some(type => n.type?.includes(type));
+                                
+                                if (!isolatedPrompt[String(n.id)] && !isVirtualNode) {
+                                    n.mode = 2; // Mute 无关节点
                                 } else {
                                     n.mode = 0; 
                                 }
@@ -349,7 +354,7 @@ app.registerExtension({
             
                         try {
                             await app.queuePrompt(0, 1);
-                            console.log("Successfully queued isolated node execution (Flawless Method)");
+                            console.log("Successfully queued isolated node execution with Virtual Link support");
                         } finally {
                             if (app.graphToPrompt !== originalGraphToPrompt) {
                                 app.graphToPrompt = originalGraphToPrompt;
@@ -363,6 +368,7 @@ app.registerExtension({
                     console.log("No image input connected, skipping preview");
                 }
             };
+			
             modeControlArea.appendChild(loadBtn);
 
             const modeBtn = document.createElement("button");

@@ -25,6 +25,10 @@
 
 
 ## Update
+## v1.4.6
+  
+添加Element ImageCurve、Element HueSat、Element HueBright 和 Element HueHue 节点的preview按钮对KJnode的GetNode节点的支持；修改Element ImageCurve节点的曲线类型。
+
 ## v1.4.5
   
 修改Element_SigmaGraph、Element ImageCurve、Element HueSat、Element HueBright 和 Element HueHue 节点的交互逻辑，改为单击鼠标左键加点，并可直接拖动新增加的点；增强Element HueBright节点对低饱和度色彩的影响程度，提高亮度调整范围。

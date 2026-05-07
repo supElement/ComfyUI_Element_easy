@@ -675,22 +675,20 @@ app.registerExtension({
                     }
 
                     if (e.button === 0) { 
-                        const now = Date.now();
-                        if (now - lastClickTime < 300) {
-                            if (closestIdx === -1) {
-                                pts.push([x, y]);
-                                pts.sort((a, b) => a[0] - b[0]);
-                                updateBackend();
-                                draw();
-                                updateLivePreview(false);
-                            }
-                            lastClickTime = 0; 
+                        if (closestIdx === -1) {
+                            const newPt = [x, y];
+                            pts.push(newPt);
+                            pts.sort((a, b) => a[0] - b[0]);
+                            
+                            dragIndex = pts.indexOf(newPt);
+                            isDragging = true; 
+
+                            updateBackend();
+                            draw();
+                            updateLivePreview(false);
                         } else {
-                            if (closestIdx !== -1) {
-                                isDragging = true;
-                                dragIndex = closestIdx;
-                            }
-                            lastClickTime = now;
+                            isDragging = true;
+                            dragIndex = closestIdx;
                         }
                     } else if (e.button === 2) { 
                         e.preventDefault();

@@ -25,6 +25,10 @@
 
 
 ## Update
+## v1.4.5
+  
+修改Element_SigmaGraph、Element ImageCurve、Element HueSat、Element HueBright 和 Element HueHue 节点的交互逻辑，改为单击鼠标左键加点，并可直接拖动新增加的点；增强Element HueBright节点对低饱和度色彩的影响程度，提高亮度调整范围。
+
 ## v1.4.4
   
 修复Element_SigmaGraph 节点 线性模式“L”的输出bug，，添加输出最大值 max value 参数，添加输出强制纠正。
@@ -66,30 +70,30 @@
   <img width="989" height="783" alt="image" src="https://github.com/user-attachments/assets/f5d64913-2980-493c-b70a-a60855f2ae16" />
 
 
-## v1.3.1
+## v1.3.1 （Optimized in V1.4.5）
   
-  添加 Element HueBright（色相 VS 亮度）和 Element HueHue（色相 VS 色相）节点, 曲线调整，实时预览支持单张和序列帧图像。双击加点，右键减点。
+  添加 Element HueBright（色相 VS 亮度）和 Element HueHue（色相 VS 色相）节点, 曲线调整，实时预览支持单张和序列帧图像。单击加点，右键减点。
 
-## v1.3.0
+## v1.3.0 （Optimized in V1.4.5）
   
-  添加 Element HueSat 节点, 曲线调整（色相 VS 饱和度），实时预览支持单张和序列帧图像。双击加点，右键减点。<br>
+  添加 Element HueSat 节点, 曲线调整（色相 VS 饱和度），实时预览支持单张和序列帧图像。单击加点，右键减点。<br>
   - 注意：不要在曲线两端同时加点，虽然不会发生错误，但会使另一个点无效，实时上端点有一个就能完成调色了,因为两端的曲线是闭环的。
 
   <img width="1695" height="891" alt="Image" src="https://github.com/user-attachments/assets/627e1951-244b-4b13-937c-23c8d98748e8" />
 
-## v1.2.7
+## v1.2.7 （Optimized in V1.4.5）
   
-  添加 Element ImageCurve 节点, 曲线调色，实时预览支持单张和序列帧图像。双击加点，右键减点。
+  添加 Element ImageCurve 节点, 曲线调色，实时预览支持单张和序列帧图像。单击加点，右键减点。
 
   <img width="1767" height="1008" alt="Image" src="https://github.com/user-attachments/assets/f3bcfd71-eaba-4933-aa97-01ee6eefad62" />
 
-## v1.2.4 （fix in V1.4.4）
+## v1.2.4 （fix in V1.4.4，Optimized in V1.4.5）
   
   添加自定义sigma，Element_SigmaGraph 节点, 原始代码来自作者Temult 的 TWanSigmaGraph节点https://github.com/Temult/TWanSigmaGraph , 修改、优化、添加了很多内容。
 
   - 添加可选latent 输入端口以同步ltx audio vae 载入与卸载顺序。<br>
   - 添加可选custom_sigmas 输入端口，添加单独执行功能，方便将现有的sigma数列存储为预设<br>
-  - 鼠标点击曲线的位置增减控制点（双击添加，右键删除），增减点时，保持其它控制点不变。 解除控制点 X 轴方向移动限制
+  - 鼠标点击曲线的位置增减控制点（单击加点，右键删除），增减点时，保持其它控制点不变。 解除控制点 X 轴方向移动限制
   - 添加输出最大值 max value 参数，添加输出强制纠正。
 
   <img width="922" height="714" alt="image" src="https://github.com/user-attachments/assets/dce72d55-41a6-4a2e-9f6c-4350ef229dcd" />

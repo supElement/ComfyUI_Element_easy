@@ -546,18 +546,24 @@ app.registerExtension({
                             
                             traceDependencies(selectedNodeId);
                             
-                            if (Object.keys(isolatedPrompt).length === 0) {
-                                console.warn("No dependencies found for node", selectedNodeId);
-                                return;
-                            }
                             const originalGraphToPrompt = app.graphToPrompt;
                             
+                            // “虚拟连接”节点类型（KJNodes）
+                            const virtualNodeTypes = [
+                                "SetNode", "GetNode", 
+                                "SetNodeAny", "GetNodeAny", 
+                                "SetImage", "GetImage",
+                                "SetLatent", "GetLatent"
+                            ];
+                
                             app.graphToPrompt = async function (...args) {
                                 const originalModes = new Map();
                                 for (const n of app.graph._nodes) {
                                     originalModes.set(n.id, n.mode);
-                                    if (!isolatedPrompt[String(n.id)]) {
-                                        n.mode = 2; 
+                                    const isVirtualNode = virtualNodeTypes.some(type => n.type?.includes(type));
+                                    
+                                    if (!isolatedPrompt[String(n.id)] && !isVirtualNode) {
+                                        n.mode = 2; // Mute 无关节点
                                     } else {
                                         n.mode = 0; 
                                     }
@@ -576,7 +582,7 @@ app.registerExtension({
                 
                             try {
                                 await app.queuePrompt(0, 1);
-                                console.log("Successfully queued isolated node execution (Flawless Method)");
+                                console.log("Successfully queued isolated node execution with Virtual Link support");
                             } finally {
                                 if (app.graphToPrompt !== originalGraphToPrompt) {
                                     app.graphToPrompt = originalGraphToPrompt;
@@ -782,50 +788,69 @@ app.registerExtension({
 
                 const drawCurve = (points, color, alpha) => {
                     if (points.length < 2) return;
+                
+                    let pts = [...points].sort((a, b) => a[0] - b[0]);
+                    if (pts[0][0] > 0) pts.unshift([0, pts[0][1]]);
+                    if (pts[pts.length - 1][0] < 1) pts.push([1, pts[pts.length - 1][1]]);
+                
+                    const n = pts.length;
+                    const x = pts.map(p => p[0]);
+                    const y = pts.map(p => p[1]);
+                
+                    // (Natural Cubic Spline)
+                    const h = new Array(n - 1);
+                    for (let i = 0; i < n - 1; i++) h[i] = x[i+1] - x[i];
+                
+                    const alphaArr = new Array(n - 1);
+                    for (let i = 1; i < n - 1; i++) {
+                        alphaArr[i] = (3 / h[i]) * (y[i+1] - y[i]) - (3 / h[i-1]) * (y[i] - y[i-1]);
+                    }
+                
+                    const l = new Array(n).fill(1);
+                    const mu = new Array(n).fill(0);
+                    const z = new Array(n).fill(0);
+                    
+                    for (let i = 1; i < n - 1; i++) {
+                        l[i] = 2 * (x[i+1] - x[i-1]) - h[i-1] * mu[i-1];
+                        mu[i] = h[i] / l[i];
+                        z[i] = (alphaArr[i] - h[i-1] * z[i-1]) / l[i];
+                    }
+                
+                    const b = new Array(n).fill(0);
+                    const c = new Array(n).fill(0);
+                    const d = new Array(n).fill(0);
+                
+                    for (let j = n - 2; j >= 0; j--) {
+                        c[j] = z[j] - mu[j] * c[j+1];
+                        b[j] = (y[j+1] - y[j]) / h[j] - h[j] * (c[j+1] + 2 * c[j]) / 3;
+                        d[j] = (c[j+1] - c[j]) / (3 * h[j]);
+                    }
+                
                     ctx.strokeStyle = color;
                     ctx.globalAlpha = alpha;
-                    ctx.lineWidth = 1.25;
+                    ctx.lineWidth = 1.5;
                     ctx.beginPath();
-                    
+                
                     const w = canvas.width;
-                    const h = canvas.height;
+                    const h_canvas = canvas.height;
                     const innerW = w - PADDING * 2;
-                    const innerH = h - PADDING * 2;
+                    const innerH = h_canvas - PADDING * 2;
                     const toPx = (val) => PADDING + val * innerW;
                     const toPy = (val) => PADDING + (1 - val) * innerH;
-
-                    if (points[0][0] > 0) {
-                        ctx.moveTo(toPx(0), toPy(points[0][1]));
-                        ctx.lineTo(toPx(points[0][0]), toPy(points[0][1]));
-                    } else {
-                        ctx.moveTo(toPx(points[0][0]), toPy(points[0][1]));
-                    }
-
-                    for (let i = 0; i < points.length - 1; i++) {
-                        let p0 = points[i === 0 ? 0 : i - 1];
-                        let p1 = points[i];
-                        let p2 = points[i + 1];
-                        let p3 = points[i + 2 >= points.length ? i + 1 : i + 2];
-
-                        for (let t = 0; t <= 1; t += 0.05) {
-                            let t2 = t * t;
-                            let t3 = t2 * t;
-                            let cx = 0.5 * ((2 * p1[0]) + (-p0[0] + p2[0]) * t + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3);
-                            let cy = 0.5 * ((2 * p1[1]) + (-p0[1] + p2[1]) * t + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3);
-                            
-                            cx = Math.max(p1[0], Math.min(p2[0], cx)); 
-                            cy = Math.max(0, Math.min(1, cy)); 
-                            
-                            ctx.lineTo(toPx(cx), toPy(cy));
+                
+                    ctx.moveTo(toPx(x[0]), toPy(y[0]));
+                
+                    for (let i = 0; i < n - 1; i++) {
+                        const steps = 100; // 采样率越高越平滑
+                        for (let j = 1; j <= steps; j++) {
+                            const deltaX = (h[i] * j) / steps;
+                            const curX = x[i] + deltaX;
+                            // 三次多项式公式: y = a + b*dx + c*dx^2 + d*dx^3
+                            const curY = y[i] + b[i] * deltaX + c[i] * Math.pow(deltaX, 2) + d[i] * Math.pow(deltaX, 3);
+                            ctx.lineTo(toPx(curX), toPy(Math.max(0, Math.min(1, curY))));
                         }
-                        ctx.lineTo(toPx(p2[0]), toPy(p2[1]));
                     }
-                    
-                    const lastP = points[points.length - 1];
-                    if (lastP[0] < 1) {
-                        ctx.lineTo(toPx(1), toPy(lastP[1]));
-                    }
-                    
+                
                     ctx.stroke();
                     ctx.globalAlpha = 1.0;
                 };

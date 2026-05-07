@@ -3,7 +3,7 @@ import torch
 import torch.nn.functional as F
 import json
 import numpy as np
-from scipy.interpolate import PchipInterpolator
+from scipy.interpolate import CubicSpline
 import folder_paths
 import os
 import random
@@ -66,12 +66,10 @@ def _get_lut(points, x_eval):
         if pts.ndim != 2 or pts.shape[1] != 2 or len(pts) < 2:
             return x_eval
 
-        # 按 x 排序
         pts = pts[pts[:, 0].argsort()]
         x = pts[:, 0]
         y = pts[:, 1]
 
-        # 去重（PCHIP 要求 x 严格递增）
         x_unique, idx = np.unique(x, return_index=True)
         x = x_unique
         y = y[idx]
@@ -79,7 +77,6 @@ def _get_lut(points, x_eval):
         if len(x) < 2:
             return x_eval
 
-        # 补齐端点
         if x[0] > 0:
             x = np.insert(x, 0, 0.0)
             y = np.insert(y, 0, y[0])
@@ -87,10 +84,13 @@ def _get_lut(points, x_eval):
             x = np.append(x, 1.0)
             y = np.append(y, y[-1])
 
-        interpolator = PchipInterpolator(x, y)
+        # bc_type='natural' 
+        interpolator = CubicSpline(x, y, bc_type='natural')
+        
         y_eval = interpolator(x_eval)
         return np.clip(y_eval, 0.0, 1.0).astype(np.float32)
-    except Exception:
+    except Exception as e:
+        print(f"Curve Interpolation Error: {e}")
         return x_eval
 
 
@@ -303,7 +303,7 @@ if PromptServer is not None and getattr(PromptServer, "instance", None) is not N
         temp_dir = folder_paths.get_temp_directory()
         os.makedirs(temp_dir, exist_ok=True)
 
-        # 关键：每次唯一文件名，避免前端缓存导致首帧黑图
+        # 每次唯一文件名，避免前端缓存导致首帧黑图
         filename = f"curve_live_{unique_id}_{int(time.time()*1000)}_{uuid.uuid4().hex[:8]}.png"
         filepath = os.path.join(temp_dir, filename)
 

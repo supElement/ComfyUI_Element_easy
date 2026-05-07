@@ -742,8 +742,7 @@ function setup(node) {
         const x = (e.clientX - rect.left) / rect.width;
         const y = 1 - (e.clientY - rect.top) / rect.height;
         let pts = strToPts(gw.value);
-        const currentTime = Date.now();
-    
+
         if (e.button === 2) {
             const idx = pts.findIndex(p => Math.hypot(p.x - x, p.y - y) < GRAB_THRESHOLD);
             if (idx > 0 && idx < pts.length - 1 && pts.length > MIN_POINTS) {
@@ -754,62 +753,49 @@ function setup(node) {
             e.preventDefault();
             return;
         }
-    
-        const timeDiff = currentTime - lastClickTime;
-        const distDiff = Math.hypot(x - lastClickX, y - lastClickY);
-    
-        if (timeDiff < DOUBLE_CLICK_DELAY && distDiff < 0.05 && e.button === 0) {
-            e.preventDefault();
-            lastClickTime = 0;
-            
-            pts = pts.slice();
-            
-            const existingIdx = pts.findIndex(p => Math.hypot(p.x - x, p.y - y) < GRAB_THRESHOLD);
-            if (existingIdx >= 0) return;
-            
-            pushUndo(gw.value);
-            
-            pts.sort((a, b) => a.x - b.x);
-            let insertIdx = pts.findIndex(p => p.x > x);
-            if (insertIdx === -1) insertIdx = pts.length;
-            
-            const leftPt = pts[insertIdx - 1] || pts[0];
-            const rightPt = pts[insertIdx] || pts[pts.length - 1];
-            
-            if (Math.abs(rightPt.x - leftPt.x) < 0.05) {
-                return;
-            }
-            
-            let newY;
-            if (isCurveMode) {
-                const coeffs = computeSplineCoefficients(pts);
-                newY = evaluateSpline(x, coeffs);
-            } else {
-                const t = (x - leftPt.x) / (rightPt.x - leftPt.x);
-                newY = leftPt.y + t * (rightPt.y - leftPt.y);
-            }
-            
-            const newX = Math.max(leftPt.x + 0.005, Math.min(rightPt.x - 0.005, x));
-            
-            const newPoint = { 
-                x: newX,
-                y: formatValue(newY)
-            };
-            
-            pts.splice(insertIdx, 0, newPoint);
-            applyPoints(pts);
-            return;
-        }
-    
-        lastClickTime = currentTime;
-        lastClickX = x;
-        lastClickY = y;
-    
+
         if (e.button === 0) {
-            dragIdx = pts.findIndex(p => Math.hypot(p.x - x, p.y - y) < GRAB_THRESHOLD);
+            let existingIdx = pts.findIndex(p => Math.hypot(p.x - x, p.y - y) < GRAB_THRESHOLD);
+
+            if (existingIdx >= 0) {
+                dragIdx = existingIdx;
+            } else {
+                pushUndo(gw.value); 
+                
+                let insertIdx = pts.findIndex(p => p.x > x);
+                if (insertIdx === -1) insertIdx = pts.length;
+                
+                const leftPt = pts[insertIdx - 1] || pts[0];
+                const rightPt = pts[insertIdx] || pts[pts.length - 1];
+                
+                if (Math.abs(rightPt.x - leftPt.x) < 0.01) return; 
+
+                let newY;
+                if (isCurveMode) {
+                    const coeffs = computeSplineCoefficients(pts);
+                    newY = evaluateSpline(x, coeffs);
+                } else {
+                    const t = (x - leftPt.x) / (rightPt.x - leftPt.x);
+                    newY = leftPt.y + t * (rightPt.y - leftPt.y);
+                }
+                
+                const newX = Math.max(leftPt.x + 0.005, Math.min(rightPt.x - 0.005, x));
+                
+                const newPoint = { 
+                    x: newX,
+                    y: formatValue(Math.min(1, Math.max(0, newY))) 
+                };
+                
+                pts.splice(insertIdx, 0, newPoint);
+                applyPoints(pts);
+                
+                dragIdx = insertIdx;
+            }
+
             if (dragIdx >= 0) {
                 e.target.setPointerCapture(e.pointerId);
             }
+            e.preventDefault();
         }
     };
 
@@ -826,8 +812,8 @@ function setup(node) {
             } else if (dragIdx === pts.length - 1) {
                 pts[dragIdx] = { x: 1, y: ny };
             } else {
-                const minX = pts[dragIdx - 1].x + 0.01;
-                const maxX = pts[dragIdx + 1].x - 0.01;
+                const minX = pts[dragIdx - 1].x + 0.005;
+                const maxX = pts[dragIdx + 1].x - 0.005;
                 const nx = Math.min(maxX, Math.max(minX, x));
                 pts[dragIdx] = { x: nx, y: ny };
             }

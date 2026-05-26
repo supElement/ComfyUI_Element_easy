@@ -5,6 +5,7 @@ import io
 import uuid
 import torch
 import numpy as np
+import json
 from PIL import Image, ImageOps, ImageSequence
 import folder_paths
 from server import PromptServer
@@ -27,41 +28,29 @@ async def get_images(request):
         files.extend(glob.glob(os.path.join(folder_path, ext)))
         files.extend(glob.glob(os.path.join(folder_path, ext.upper())))
 
-    if sort_method == "name_asc":
-        files.sort(key=lambda x: os.path.basename(x).lower())
-    elif sort_method == "name_desc":
-        files.sort(key=lambda x: os.path.basename(x).lower(), reverse=True)
-    elif sort_method == "newest_first":
-        files.sort(key=lambda x: os.path.getctime(x), reverse=True)
-    elif sort_method == "oldest_first":
-        files.sort(key=lambda x: os.path.getctime(x))
-    elif sort_method == "recently_modified":
-        files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-    elif sort_method == "oldest_modified":
-        files.sort(key=lambda x: os.path.getmtime(x))
-    else:
-        files.sort(key=lambda x: os.path.getctime(x), reverse=True)
+    if sort_method == "name_asc": files.sort(key=lambda x: os.path.basename(x).lower())
+    elif sort_method == "name_desc": files.sort(key=lambda x: os.path.basename(x).lower(), reverse=True)
+    elif sort_method == "newest_first": files.sort(key=lambda x: os.path.getctime(x), reverse=True)
+    elif sort_method == "oldest_first": files.sort(key=lambda x: os.path.getctime(x))
+    elif sort_method == "recently_modified": files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+    elif sort_method == "oldest_modified": files.sort(key=lambda x: os.path.getmtime(x))
+    else: files.sort(key=lambda x: os.path.getctime(x), reverse=True)
 
     images = {}
     for file_path in files:
         item_name = os.path.basename(file_path)
         images[item_name] = item_name
-
     return web.json_response(images)
 
 @PromptServer.instance.routes.get("/element_easy/view")
 async def view_image(request):
     folder_path = request.query.get("folder_path", folder_paths.get_output_directory())
     filename = request.query.get("filename")
-    
     if not filename or not os.path.exists(folder_path) or not os.path.isdir(folder_path):
         return web.Response(status=404)
-        
     image_path = os.path.join(folder_path, filename)
-    
     if not os.path.exists(image_path) or not os.path.commonpath([folder_path, os.path.abspath(image_path)]) == folder_path:
         return web.Response(status=404)
-
     return web.FileResponse(image_path, headers={"Content-Disposition": f"filename=\"{filename}\""})
 
 
@@ -86,11 +75,11 @@ class LoadImageWithPreview:
             }
         }
 
-    RETURN_TYPES = ("IMAGE", "MASK", "STRING")
-    RETURN_NAMES = ("image", "mask", "filename")
+    RETURN_TYPES = ("IMAGE", "MASK", "STRING", "STRING")
+    RETURN_NAMES = ("image", "mask", "filename", "JSON_info")
     FUNCTION = "load_image"
     CATEGORY = "Element_easy/image"
-    DESCRIPTION = "Browse folders and load images; mask and image edit."
+    DESCRIPTION = "Browse folders and load images with auto-formatted metadata."
     OUTPUT_NODE = True
 
     def load_image(self, folder_path, selected_image, sort_method, mask_data="", shape_data="", image=None, unique_id=None):
@@ -105,93 +94,85 @@ class LoadImageWithPreview:
                 print(f"Failed to resolve shape overlay: {e}")
 
         output_images = []
-
         ui_data = None
+        final_text = "" 
 
         if image is not None:
             img_tensor = image[0]
             i_val = 255. * img_tensor.cpu().numpy()
             base_img = Image.fromarray(np.clip(i_val, 0, 255).astype(np.uint8))
-            
             temp_dir = folder_paths.get_temp_directory()
             temp_filename = f"ee_preview_{unique_id}_{uuid.uuid4().hex[:8]}.png"
             base_img.save(os.path.join(temp_dir, temp_filename))
-
-            ui_data = {
-                "ee_preview": [{"filename": temp_filename, "type": "temp"}]
-            }
-
+            ui_data = {"ee_preview": [{"filename": temp_filename, "type": "temp"}]}
             filename = "input_image"
-
             for img_t in image:
                 i_val = 255. * img_t.cpu().numpy()
                 i_img = Image.fromarray(np.clip(i_val, 0, 255).astype(np.uint8)).convert("RGBA")
-
                 if shape_layer is not None:
                     if shape_layer.size != i_img.size:
                         current_shape_layer = shape_layer.resize(i_img.size, Image.LANCZOS)
                     else:
                         current_shape_layer = shape_layer
                     i_img = Image.alpha_composite(i_img, current_shape_layer)
-                
                 out_tensor = np.array(i_img.convert("RGB")).astype(np.float32) / 255.0
                 out_tensor = torch.from_numpy(out_tensor)[None,]
                 output_images.append(out_tensor)
-
         else:
             if not selected_image or not selected_image.strip():
                 if not os.path.exists(folder_path) or not os.path.isdir(folder_path):
                     raise ValueError(f"Directory does not exist: {folder_path}")
-                
                 image_extensions = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff"]
                 files = []
                 for ext in image_extensions:
                     files.extend(glob.glob(os.path.join(folder_path, ext)))
                     files.extend(glob.glob(os.path.join(folder_path, ext.upper())))
-                
-                if sort_method == "name_asc":
-                    files.sort(key=lambda x: os.path.basename(x).lower())
-                elif sort_method == "name_desc":
-                    files.sort(key=lambda x: os.path.basename(x).lower(), reverse=True)
-                elif sort_method == "newest_first":
-                    files.sort(key=lambda x: os.path.getctime(x), reverse=True)
-                elif sort_method == "oldest_first":
-                    files.sort(key=lambda x: os.path.getctime(x))
-                elif sort_method == "recently_modified":
-                    files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-                elif sort_method == "oldest_modified":
-                    files.sort(key=lambda x: os.path.getmtime(x))
-                else:
-                    files.sort(key=lambda x: os.path.getctime(x), reverse=True)
-                
-                if not files:
-                    raise ValueError(f"目录中没有图像文件: {folder_path}")
-                
+                if sort_method == "name_asc": files.sort(key=lambda x: os.path.basename(x).lower())
+                elif sort_method == "name_desc": files.sort(key=lambda x: os.path.basename(x).lower(), reverse=True)
+                elif sort_method == "newest_first": files.sort(key=lambda x: os.path.getctime(x), reverse=True)
+                elif sort_method == "oldest_first": files.sort(key=lambda x: os.path.getctime(x))
+                elif sort_method == "recently_modified": files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+                elif sort_method == "oldest_modified": files.sort(key=lambda x: os.path.getmtime(x))
+                else: files.sort(key=lambda x: os.path.getctime(x), reverse=True)
+                if not files: raise ValueError(f"No images in {folder_path}")
                 selected_image = os.path.basename(files[0])
-                print(f"[LoadImageWithPreview] Automatically select the first image: {selected_image}")
                 
             image_path = os.path.join(folder_path, selected_image)
-            if not os.path.exists(image_path):
-                raise ValueError(f"Image not found: {image_path}")
-                
-            if not os.path.commonpath([folder_path, os.path.abspath(image_path)]) == folder_path:
-                raise ValueError(f"Image path out of bounds: {image_path}")
             
+            try:
+                img_for_meta = Image.open(image_path)
+                if img_for_meta.info:
+                    processed_parts = []
+                    for k, v in img_for_meta.info.items():
+                        content = str(v)
+                       
+                        content = content.replace("\\n", "\n")
+                        
+                        if k in ["prompt", "workflow"]:
+                            try:
+                                json_data = json.loads(v)
+                                content = json.dumps(json_data, indent=2, ensure_ascii=False)
+                            except:
+                                pass
+                        
+                        processed_parts.append(f"[{k.upper()}]\n{content}")
+                    
+                    final_text = "\n\n".join(processed_parts)
+                img_for_meta.close()
+            except Exception as e:
+                final_text = f"Error reading metadata: {e}"
+
             base_img = node_helpers.pillow(Image.open, image_path)
             filename = os.path.basename(selected_image)
-            
             for i in ImageSequence.Iterator(base_img):
                 i = node_helpers.pillow(ImageOps.exif_transpose, i)
                 i = i.convert("RGBA")
-                
                 if shape_layer is not None:
                     if shape_layer.size != i.size:
                         current_shape_layer = shape_layer.resize(i.size, Image.LANCZOS)
                     else:
                         current_shape_layer = shape_layer
-                    
                     i = Image.alpha_composite(i, current_shape_layer)
-                
                 image_tensor = i.convert("RGB")
                 image_tensor = np.array(image_tensor).astype(np.float32) / 255.0
                 image_tensor = torch.from_numpy(image_tensor)[None,]
@@ -207,13 +188,10 @@ class LoadImageWithPreview:
                 header, encoded = mask_data.split(",", 1)
                 mask_bytes = base64.b64decode(encoded)
                 mask_img = Image.open(io.BytesIO(mask_bytes)).convert("L")
-                
                 if mask_img.size != base_img.size:
                     mask_img = mask_img.resize(base_img.size, Image.LANCZOS)
-                
                 mask_tensor = torch.from_numpy(np.array(mask_img).astype(np.float32) / 255.0)
-            except Exception as e:
-                print(f"Mask parsing failed: {e}")
+            except:
                 mask_tensor = torch.zeros((base_img.height, base_img.width), dtype=torch.float32)
         else:
             mask_tensor = torch.zeros((base_img.height, base_img.width), dtype=torch.float32)
@@ -222,6 +200,6 @@ class LoadImageWithPreview:
             mask_tensor = mask_tensor.unsqueeze(0)
             
         if ui_data is not None:
-            return {"ui": ui_data, "result": (output_image, mask_tensor, filename)}
+            return {"ui": ui_data, "result": (output_image, mask_tensor, filename, final_text)}
             
-        return (output_image, mask_tensor, filename)
+        return (output_image, mask_tensor, filename, final_text)

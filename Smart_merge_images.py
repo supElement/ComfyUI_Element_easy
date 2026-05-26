@@ -118,228 +118,244 @@ class SmartMergeImages:
         return None
 
     def smart_merge(self, original_image, edited_crop_B, alignment_mode, color_match, feather_kernel, adapt_thresh, adapt_align, adapt_local_match, original_crop_A=None):
-        batch_size = min(original_image.shape[0], edited_crop_B.shape[0])
+        B_orig = original_image.shape[0]
+        B_crop = edited_crop_B.shape[0]
+        
+        if B_orig == 0 or B_crop == 0:
+            return (original_image,)
+
+        if B_crop % B_orig == 0:
+            crops_per_bg = B_crop // B_orig
+        else:
+            crops_per_bg = max(1, B_crop // B_orig)
+
         result_images = []
 
-        for i in range(batch_size):
+        for i in range(B_orig):
             try:
                 img_bg = (original_image[i].numpy() * 255).astype(np.uint8)  
-                img_fg = (edited_crop_B[i].numpy() * 255).astype(np.uint8)   
                 
-                h_bg, w_bg = img_bg.shape[:2]
-                h_fg, w_fg = img_fg.shape[:2]
+                start_idx = i * crops_per_bg
+                end_idx = min(start_idx + crops_per_bg, B_crop)
                 
-                if h_bg == 0 or w_bg == 0 or h_fg == 0 or w_fg == 0:
-                    result_images.append(original_image[i])
+                if start_idx >= B_crop:
+                    out_tensor = torch.from_numpy(img_bg.astype(np.float32) / 255.0)
+                    result_images.append(out_tensor)
                     continue
 
-                img_result = img_bg.copy()
-                warped_fg = np.zeros_like(img_bg)
-                warped_mask = np.zeros((h_bg, w_bg), dtype=np.float32)
+                for crop_idx in range(start_idx, end_idx):
+                    img_fg = (edited_crop_B[crop_idx].numpy() * 255).astype(np.uint8)   
+                    
+                    h_bg, w_bg = img_bg.shape[:2]
+                    h_fg, w_fg = img_fg.shape[:2]
+                    
+                    if h_bg == 0 or w_bg == 0 or h_fg == 0 or w_fg == 0:
+                        continue
 
-                success_align = False
-                base_mask = np.ones((h_fg, w_fg), dtype=np.float32)
+                    img_result = img_bg.copy()
+                    warped_fg = np.zeros_like(img_bg)
+                    warped_mask = np.zeros((h_bg, w_bg), dtype=np.float32)
 
-                if alignment_mode in ["Force Bridge(Ref A & B)", "Auto"] and original_crop_A is not None:
-                    img_bridge_A = (original_crop_A[i].numpy() * 255).astype(np.uint8)
-                    h_A, w_A = img_bridge_A.shape[:2]
-                    if h_A > 0 and w_A > 0:
-                        H_A_to_BG = self.perform_sift_alignment(img_bridge_A, img_bg)
-                        if H_A_to_BG is not None:
-                            scale_x = w_A / float(w_fg)
-                            scale_y = h_A / float(h_fg)
-                            H_FG_to_A = np.array([[scale_x, 0, 0], [0, scale_y, 0], [0, 0, 1]], dtype=np.float64)
-                            H_Total = np.dot(H_A_to_BG, H_FG_to_A)
-                            warped_fg = cv2.warpPerspective(img_fg, H_Total, (w_bg, h_bg), flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT101)
-                            warped_mask = cv2.warpPerspective(base_mask, H_Total, (w_bg, h_bg), flags=cv2.INTER_LINEAR)
+                    success_align = False
+                    base_mask = np.ones((h_fg, w_fg), dtype=np.float32)
+
+                    if alignment_mode in ["Force Bridge(Ref A & B)", "Auto"] and original_crop_A is not None:
+                        if crop_idx < original_crop_A.shape[0]:
+                            img_bridge_A = (original_crop_A[crop_idx].numpy() * 255).astype(np.uint8)
+                            h_A, w_A = img_bridge_A.shape[:2]
+                            if h_A > 0 and w_A > 0:
+                                H_A_to_BG = self.perform_sift_alignment(img_bridge_A, img_bg)
+                                if H_A_to_BG is not None:
+                                    scale_x = w_A / float(w_fg)
+                                    scale_y = h_A / float(h_fg)
+                                    H_FG_to_A = np.array([[scale_x, 0, 0], [0, scale_y, 0], [0, 0, 1]], dtype=np.float64)
+                                    H_Total = np.dot(H_A_to_BG, H_FG_to_A)
+                                    warped_fg = cv2.warpPerspective(img_fg, H_Total, (w_bg, h_bg), flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT101)
+                                    warped_mask = cv2.warpPerspective(base_mask, H_Total, (w_bg, h_bg), flags=cv2.INTER_LINEAR)
+                                    success_align = True
+
+                    if not success_align:
+                        H_FG_to_BG = self.perform_sift_alignment(img_fg, img_bg)
+                        if H_FG_to_BG is not None:
+                            warped_fg = cv2.warpPerspective(img_fg, H_FG_to_BG, (w_bg, h_bg), flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT101)
+                            warped_mask = cv2.warpPerspective(base_mask, H_FG_to_BG, (w_bg, h_bg), flags=cv2.INTER_LINEAR)
                             success_align = True
 
-                if not success_align:
-                    H_FG_to_BG = self.perform_sift_alignment(img_fg, img_bg)
-                    if H_FG_to_BG is not None:
-                        warped_fg = cv2.warpPerspective(img_fg, H_FG_to_BG, (w_bg, h_bg), flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT101)
-                        warped_mask = cv2.warpPerspective(base_mask, H_FG_to_BG, (w_bg, h_bg), flags=cv2.INTER_LINEAR)
-                        success_align = True
+                    if not success_align:
+                        y_off = max(0, (h_bg - h_fg) // 2)
+                        x_off = max(0, (w_bg - w_fg) // 2)
+                        y1, y2 = y_off, min(y_off + h_fg, h_bg)
+                        x1, x2 = x_off, min(x_off + w_fg, w_bg)
+                        crop_h, crop_w = y2 - y1, x2 - x1
+                        if crop_h > 0 and crop_w > 0:
+                            warped_fg[y1:y2, x1:x2] = img_fg[:crop_h, :crop_w]
+                            warped_mask[y1:y2, x1:x2] = base_mask[:crop_h, :crop_w]
 
-                if not success_align:
-                    y_off = max(0, (h_bg - h_fg) // 2)
-                    x_off = max(0, (w_bg - w_fg) // 2)
-                    y1, y2 = y_off, min(y_off + h_fg, h_bg)
-                    x1, x2 = x_off, min(x_off + w_fg, w_bg)
-                    crop_h, crop_w = y2 - y1, x2 - x1
-                    if crop_h > 0 and crop_w > 0:
-                        warped_fg[y1:y2, x1:x2] = img_fg[:crop_h, :crop_w]
-                        warped_mask[y1:y2, x1:x2] = base_mask[:crop_h, :crop_w]
-
-                bounds_mask_float = warped_mask.copy()
-                bounds_mask_8u = (bounds_mask_float * 255).astype(np.uint8)
-
-                if color_match == "Histogram":
-                    warped_fg = self.exact_histogram_match(warped_fg, img_bg, bounds_mask_float)
-                    
-                elif color_match == "LAB_Mean":
-                    lab_bg = cv2.cvtColor(img_bg, cv2.COLOR_RGB2LAB).astype(np.float32)
-                    lab_fg = cv2.cvtColor(warped_fg, cv2.COLOR_RGB2LAB).astype(np.float32)
-                    mean_bg, std_bg = cv2.meanStdDev(lab_bg, mask=bounds_mask_8u)
-                    mean_fg, std_fg = cv2.meanStdDev(lab_fg, mask=bounds_mask_8u)
-                    std_fg[std_fg == 0] = 1.0
-                    lab_fg = (lab_fg - mean_fg.flatten()) * (std_bg.flatten() / std_fg.flatten()) + mean_bg.flatten()
-                    lab_fg = np.clip(lab_fg, 0, 255).astype(np.uint8)
-                    matched_fg = cv2.cvtColor(lab_fg, cv2.COLOR_LAB2RGB)
-                    mask_3d = bounds_mask_float[:, :, np.newaxis]
-                    warped_fg = (matched_fg * mask_3d + warped_fg * (1 - mask_3d)).astype(np.uint8)
-                    
-                elif color_match == "Adaptive Local (strong)":
-
-                    fg_float = warped_fg.astype(np.float32)
-                    bg_float = img_bg.astype(np.float32)
+                    bounds_mask_float = warped_mask.copy()
                     bounds_mask_8u = (bounds_mask_float * 255).astype(np.uint8)
-                    
-                    if adapt_align > 0.0:
-                        mean_bg = np.array(cv2.mean(img_bg, mask=bounds_mask_8u)[:3], dtype=np.float32)
-                        mean_fg = np.array(cv2.mean(warped_fg, mask=bounds_mask_8u)[:3], dtype=np.float32)
-                        
-                        aligned_mean = (1.0 - adapt_align) * mean_fg + adapt_align * mean_bg
-                        diff_offset = aligned_mean - mean_fg
-                        
-                        aligned_fg = np.clip(fg_float + diff_offset, 0, 255).astype(np.uint8)
-                    else:
-                        aligned_fg = warped_fg.copy()
-                    
-                    lab_bg = cv2.cvtColor(img_bg, cv2.COLOR_RGB2LAB).astype(np.float32)
-                    lab_fg = cv2.cvtColor(aligned_fg, cv2.COLOR_RGB2LAB).astype(np.float32)
-                    diff_lab = np.sqrt(np.sum((lab_bg - lab_fg) ** 2, axis=2))
-                    
-                    diff_rgb = np.max(np.abs(bg_float - aligned_fg.astype(np.float32)), axis=2)
-                    
-                    diff_combined = np.maximum(diff_lab, diff_rgb)
-                    
-                    diff_blur = cv2.GaussianBlur(diff_combined, (5, 5), 0)
-                    
-                    threshold_value = float(adapt_thresh)
-                    
-                    _, thresh = cv2.threshold(diff_blur, threshold_value, 255.0, cv2.THRESH_BINARY)
-                    thresh_8u = thresh.astype(np.uint8)
-                    
-                    k_size = int(feather_kernel) | 1 
-                    kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_size, k_size))
-                    closed_mask = cv2.morphologyEx(thresh_8u, cv2.MORPH_CLOSE, kernel_close)
-                    
-                    dilate_size = max(3, (k_size // 2) | 1)
-                    kernel_dilate = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dilate_size, dilate_size))
-                    dilated_mask = cv2.dilate(closed_mask, kernel_dilate, iterations=1)
-                    
-                    blur_size = max(3, (k_size // 2) | 1) * 2 - 1
-                    final_diff_mask = cv2.GaussianBlur(dilated_mask.astype(np.float32) / 255.0, (blur_size, blur_size), 0)
-                    diff_mask_3d = final_diff_mask[:, :, np.newaxis] * bounds_mask_float[:, :, np.newaxis]
-                    
-                    # ==================== 色彩匹配部分 adapt_local_match） ====================
-                    matched_fg = warped_fg.copy() 
 
-                    match_mode = adapt_local_match
+                    current_color_match = color_match
 
-                    if match_mode == "LAB_Mean":
+                    if current_color_match == "Histogram":
+                        warped_fg = self.exact_histogram_match(warped_fg, img_bg, bounds_mask_float)
+                        
+                    elif current_color_match == "LAB_Mean":
                         lab_bg = cv2.cvtColor(img_bg, cv2.COLOR_RGB2LAB).astype(np.float32)
                         lab_fg = cv2.cvtColor(warped_fg, cv2.COLOR_RGB2LAB).astype(np.float32)
-                        
-                        mean_bg_lab = cv2.mean(lab_bg, mask=bounds_mask_8u)[:3]
-                        mean_fg_lab = cv2.mean(lab_fg, mask=bounds_mask_8u)[:3]
-                        
-                        lab_matched = lab_fg - np.array(mean_fg_lab) + np.array(mean_bg_lab)
-                        lab_matched = np.clip(lab_matched, 0, 255).astype(np.uint8)
-                        matched_fg = cv2.cvtColor(lab_matched, cv2.COLOR_LAB2RGB)
-
-                    elif match_mode == "Histogram":
-                        matched_fg = self.exact_histogram_match(warped_fg, img_bg, bounds_mask_float)
-
-                    elif match_mode == "Reinhard":
-                        lab_bg = cv2.cvtColor(img_bg, cv2.COLOR_RGB2LAB).astype(np.float32)
-                        lab_fg = cv2.cvtColor(warped_fg, cv2.COLOR_RGB2LAB).astype(np.float32)
-                        
                         mean_bg, std_bg = cv2.meanStdDev(lab_bg, mask=bounds_mask_8u)
                         mean_fg, std_fg = cv2.meanStdDev(lab_fg, mask=bounds_mask_8u)
+                        std_fg[std_fg == 0] = 1.0
+                        lab_fg = (lab_fg - mean_fg.flatten()) * (std_bg.flatten() / std_fg.flatten()) + mean_bg.flatten()
+                        lab_fg = np.clip(lab_fg, 0, 255).astype(np.uint8)
+                        matched_fg = cv2.cvtColor(lab_fg, cv2.COLOR_LAB2RGB)
+                        mask_3d = bounds_mask_float[:, :, np.newaxis]
+                        warped_fg = (matched_fg * mask_3d + warped_fg * (1 - mask_3d)).astype(np.uint8)
                         
-                        mean_bg = mean_bg.flatten()
-                        std_bg = std_bg.flatten()
-                        mean_fg = mean_fg.flatten()
-                        std_fg = std_fg.flatten()
+                    elif current_color_match == "Adaptive Local (strong)":
+                        fg_float = warped_fg.astype(np.float32)
+                        bg_float = img_bg.astype(np.float32)
+                        bounds_mask_8u = (bounds_mask_float * 255).astype(np.uint8)
                         
-                        std_fg = np.maximum(std_fg, 1.0)
-                        std_bg = np.maximum(std_bg, 1.0)
-                        
-                        if np.mean(std_fg) < 8.0:
-                            lab_matched = lab_fg - mean_fg + mean_bg
-                        else:
-                            lab_matched = (lab_fg - mean_fg) * (std_bg / std_fg) + mean_bg
-                        
-                        lab_matched = np.clip(lab_matched, 0, 255).astype(np.uint8)
-                        matched_fg = cv2.cvtColor(lab_matched, cv2.COLOR_LAB2RGB)
-
-                    elif match_mode == "Adaptive Histogram":
-                        lab_bg = cv2.cvtColor(img_bg, cv2.COLOR_RGB2LAB).astype(np.float32)
-                        lab_fg = cv2.cvtColor(warped_fg, cv2.COLOR_RGB2LAB).astype(np.float32)
-                        
-                        lab_matched = lab_fg.copy()  
-                        
-                        for c in [1, 2]:
-                            fg_ch = lab_fg[:, :, c].astype(np.uint8)
-                            bg_ch = lab_bg[:, :, c].astype(np.uint8)
+                        if adapt_align > 0.0:
+                            mean_bg = np.array(cv2.mean(img_bg, mask=bounds_mask_8u)[:3], dtype=np.float32)
+                            mean_fg = np.array(cv2.mean(warped_fg, mask=bounds_mask_8u)[:3], dtype=np.float32)
                             
-                            temp = self.exact_histogram_match(
-                                np.expand_dims(fg_ch, axis=2),
-                                np.expand_dims(bg_ch, axis=2),
-                                bounds_mask_float
-                            )
-                            lab_matched[:, :, c] = temp[:, :, 0]
+                            aligned_mean = (1.0 - adapt_align) * mean_fg + adapt_align * mean_bg
+                            diff_offset = aligned_mean - mean_fg
+                            
+                            aligned_fg = np.clip(fg_float + diff_offset, 0, 255).astype(np.uint8)
+                        else:
+                            aligned_fg = warped_fg.copy()
                         
-                        matched_fg = cv2.cvtColor(lab_matched.astype(np.uint8), cv2.COLOR_LAB2RGB)
-
-                    matched_fg_float = matched_fg.astype(np.float32)
-
-                    adaptive_fg = (matched_fg_float * diff_mask_3d) + (bg_float * (1.0 - diff_mask_3d))
-                    warped_fg = np.clip(adaptive_fg, 0, 255).astype(np.uint8)
-                    # ===========================================================================
-                    
-                if color_match == "SeamlessClone (PS Auto Blend)":
-                    shrink_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-                    clone_mask_8u = cv2.erode(bounds_mask_8u, shrink_kernel, iterations=1)
-                    x, y, w, h = cv2.boundingRect(clone_mask_8u)
-                    safe_pad = 5
-                    if w > 10 and h > 10 and x > safe_pad and y > safe_pad and (x + w) < (w_bg - safe_pad) and (y + h) < (h_bg - safe_pad):
-                        x1, y1 = x - safe_pad, y - safe_pad
-                        x2, y2 = x + w + safe_pad, y + h + safe_pad
-                        src_crop = warped_fg[y1:y2, x1:x2]
-                        dst_crop = img_bg[y1:y2, x1:x2]
-                        mask_crop = clone_mask_8u[y1:y2, x1:x2]
-                        center = ((x2 - x1) // 2, (y2 - y1) // 2)
-                        try:
-                            cloned_crop = cv2.seamlessClone(src_crop, dst_crop, mask_crop, center, cv2.NORMAL_CLONE)
-                            img_result[y1:y2, x1:x2] = cloned_crop
-                        except Exception as e:
-                            print(f"[Smart Merge] 泊松融合失败: {e}")
-                            color_match = "Alpha Soft Blend" 
-                    else:
-                        color_match = "Alpha Soft Blend"
-
-                if color_match != "SeamlessClone (PS Auto Blend)":
-                    if feather_kernel > 0:
-                        erode_size = max(3, feather_kernel)
-                        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (erode_size, erode_size))
-                        eroded_mask_8u = cv2.erode(bounds_mask_8u, kernel, iterations=1)
-                        blur_size = (feather_kernel * 2) | 1
-                        soft_mask = cv2.GaussianBlur(eroded_mask_8u.astype(np.float32) / 255.0, (blur_size, blur_size), 0)
-                        soft_mask = soft_mask * bounds_mask_float
-                    else:
-                        soft_mask = bounds_mask_float
+                        lab_bg = cv2.cvtColor(img_bg, cv2.COLOR_RGB2LAB).astype(np.float32)
+                        lab_fg = cv2.cvtColor(aligned_fg, cv2.COLOR_RGB2LAB).astype(np.float32)
+                        diff_lab = np.sqrt(np.sum((lab_bg - lab_fg) ** 2, axis=2))
                         
-                    soft_mask_3d = soft_mask[:, :, np.newaxis]
-                    fg_float = warped_fg.astype(np.float32)
-                    bg_float = img_bg.astype(np.float32)
-                    
-                    blended = (fg_float * soft_mask_3d) + (bg_float * (1.0 - soft_mask_3d))
-                    img_result = np.clip(blended, 0, 255).astype(np.uint8)
+                        diff_rgb = np.max(np.abs(bg_float - aligned_fg.astype(np.float32)), axis=2)
+                        diff_combined = np.maximum(diff_lab, diff_rgb)
+                        diff_blur = cv2.GaussianBlur(diff_combined, (5, 5), 0)
+                        
+                        threshold_value = float(adapt_thresh)
+                        _, thresh = cv2.threshold(diff_blur, threshold_value, 255.0, cv2.THRESH_BINARY)
+                        thresh_8u = thresh.astype(np.uint8)
+                        
+                        k_size = int(feather_kernel) | 1 
+                        kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_size, k_size))
+                        closed_mask = cv2.morphologyEx(thresh_8u, cv2.MORPH_CLOSE, kernel_close)
+                        
+                        dilate_size = max(3, (k_size // 2) | 1)
+                        kernel_dilate = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dilate_size, dilate_size))
+                        dilated_mask = cv2.dilate(closed_mask, kernel_dilate, iterations=1)
+                        
+                        blur_size = max(3, (k_size // 2) | 1) * 2 - 1
+                        final_diff_mask = cv2.GaussianBlur(dilated_mask.astype(np.float32) / 255.0, (blur_size, blur_size), 0)
+                        diff_mask_3d = final_diff_mask[:, :, np.newaxis] * bounds_mask_float[:, :, np.newaxis]
+                        
+                        # ==================== 色彩匹配部分 adapt_local_match ====================
+                        matched_fg = warped_fg.copy() 
+                        match_mode = adapt_local_match
 
-                out_tensor = torch.from_numpy(img_result.astype(np.float32) / 255.0)
+                        if match_mode == "LAB_Mean":
+                            lab_bg = cv2.cvtColor(img_bg, cv2.COLOR_RGB2LAB).astype(np.float32)
+                            lab_fg = cv2.cvtColor(warped_fg, cv2.COLOR_RGB2LAB).astype(np.float32)
+                            
+                            mean_bg_lab = cv2.mean(lab_bg, mask=bounds_mask_8u)[:3]
+                            mean_fg_lab = cv2.mean(lab_fg, mask=bounds_mask_8u)[:3]
+                            
+                            lab_matched = lab_fg - np.array(mean_fg_lab) + np.array(mean_bg_lab)
+                            lab_matched = np.clip(lab_matched, 0, 255).astype(np.uint8)
+                            matched_fg = cv2.cvtColor(lab_matched, cv2.COLOR_LAB2RGB)
+
+                        elif match_mode == "Histogram":
+                            matched_fg = self.exact_histogram_match(warped_fg, img_bg, bounds_mask_float)
+
+                        elif match_mode == "Reinhard":
+                            lab_bg = cv2.cvtColor(img_bg, cv2.COLOR_RGB2LAB).astype(np.float32)
+                            lab_fg = cv2.cvtColor(warped_fg, cv2.COLOR_RGB2LAB).astype(np.float32)
+                            
+                            mean_bg, std_bg = cv2.meanStdDev(lab_bg, mask=bounds_mask_8u)
+                            mean_fg, std_fg = cv2.meanStdDev(lab_fg, mask=bounds_mask_8u)
+                            
+                            mean_bg = mean_bg.flatten()
+                            std_bg = std_bg.flatten()
+                            mean_fg = mean_fg.flatten()
+                            std_fg = std_fg.flatten()
+                            
+                            std_fg = np.maximum(std_fg, 1.0)
+                            std_bg = np.maximum(std_bg, 1.0)
+                            
+                            if np.mean(std_fg) < 8.0:
+                                lab_matched = lab_fg - mean_fg + mean_bg
+                            else:
+                                lab_matched = (lab_fg - mean_fg) * (std_bg / std_fg) + mean_bg
+                            
+                            lab_matched = np.clip(lab_matched, 0, 255).astype(np.uint8)
+                            matched_fg = cv2.cvtColor(lab_matched, cv2.COLOR_LAB2RGB)
+
+                        elif match_mode == "Adaptive Histogram":
+                            lab_bg = cv2.cvtColor(img_bg, cv2.COLOR_RGB2LAB).astype(np.float32)
+                            lab_fg = cv2.cvtColor(warped_fg, cv2.COLOR_RGB2LAB).astype(np.float32)
+                            
+                            lab_matched = lab_fg.copy()  
+                            for c in [1, 2]:
+                                fg_ch = lab_fg[:, :, c].astype(np.uint8)
+                                bg_ch = lab_bg[:, :, c].astype(np.uint8)
+                                
+                                temp = self.exact_histogram_match(
+                                    np.expand_dims(fg_ch, axis=2),
+                                    np.expand_dims(bg_ch, axis=2),
+                                    bounds_mask_float
+                                )
+                                lab_matched[:, :, c] = temp[:, :, 0]
+                            
+                            matched_fg = cv2.cvtColor(lab_matched.astype(np.uint8), cv2.COLOR_LAB2RGB)
+
+                        matched_fg_float = matched_fg.astype(np.float32)
+                        adaptive_fg = (matched_fg_float * diff_mask_3d) + (bg_float * (1.0 - diff_mask_3d))
+                        warped_fg = np.clip(adaptive_fg, 0, 255).astype(np.uint8)
+                        
+                    if current_color_match == "SeamlessClone (PS Auto Blend)":
+                        shrink_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+                        clone_mask_8u = cv2.erode(bounds_mask_8u, shrink_kernel, iterations=1)
+                        x, y, w, h = cv2.boundingRect(clone_mask_8u)
+                        safe_pad = 5
+                        if w > 10 and h > 10 and x > safe_pad and y > safe_pad and (x + w) < (w_bg - safe_pad) and (y + h) < (h_bg - safe_pad):
+                            x1, y1 = x - safe_pad, y - safe_pad
+                            x2, y2 = x + w + safe_pad, y + h + safe_pad
+                            src_crop = warped_fg[y1:y2, x1:x2]
+                            dst_crop = img_bg[y1:y2, x1:x2]
+                            mask_crop = clone_mask_8u[y1:y2, x1:x2]
+                            center = ((x2 - x1) // 2, (y2 - y1) // 2)
+                            try:
+                                cloned_crop = cv2.seamlessClone(src_crop, dst_crop, mask_crop, center, cv2.NORMAL_CLONE)
+                                img_result[y1:y2, x1:x2] = cloned_crop
+                            except Exception as e:
+                                print(f"[Smart Merge] 泊松融合失败: {e}")
+                                current_color_match = "Alpha Soft Blend" 
+                        else:
+                            current_color_match = "Alpha Soft Blend"
+
+                    if current_color_match != "SeamlessClone (PS Auto Blend)":
+                        if feather_kernel > 0:
+                            erode_size = max(3, feather_kernel)
+                            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (erode_size, erode_size))
+                            eroded_mask_8u = cv2.erode(bounds_mask_8u, kernel, iterations=1)
+                            blur_size = (feather_kernel * 2) | 1
+                            soft_mask = cv2.GaussianBlur(eroded_mask_8u.astype(np.float32) / 255.0, (blur_size, blur_size), 0)
+                            soft_mask = soft_mask * bounds_mask_float
+                        else:
+                            soft_mask = bounds_mask_float
+                            
+                        soft_mask_3d = soft_mask[:, :, np.newaxis]
+                        fg_float = warped_fg.astype(np.float32)
+                        bg_float = img_bg.astype(np.float32)
+                        
+                        blended = (fg_float * soft_mask_3d) + (bg_float * (1.0 - soft_mask_3d))
+                        img_result = np.clip(blended, 0, 255).astype(np.uint8)
+
+                    img_bg = img_result.copy()
+
+                out_tensor = torch.from_numpy(img_bg.astype(np.float32) / 255.0)
                 result_images.append(out_tensor)
 
             except Exception as e:

@@ -1,0 +1,4 @@
+kornia>=0.7.0
+opencv-contrib-python>=4.9.0.80
+
+# numpy>=1.26.4

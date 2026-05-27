@@ -25,6 +25,11 @@
 
 
 ## Update
+## v1.4.8
+  
+增强 Smart merge images 节点的对图像的轻微畸变矫正及色彩匹配的算法。
+  - 其中用到的模型不是必须的。如果选择了相关选项，在运行节点时会自动下载模型到 \ComfyUI\models\elementEasy 目录下。
+
 ## v1.4.7
   
 增加 Smart merge images 节点对分块合并的支持。即edited_crop_B端口输入多张图像时，输出为最终合并后的单张图像。
@@ -41,7 +46,7 @@
   
 修复Element_SigmaGraph 节点 线性模式“L”的输出bug，，添加输出最大值 max value 参数，添加输出强制纠正。
 
-## v1.4.3（Optimized in V1.4.7）
+## v1.4.3（Optimized in V1.4.8）
   
   添加节点 Smart merge images。
   - 两张图像有足够的共同特征时，智能合并图像。

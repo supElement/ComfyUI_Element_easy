@@ -5,6 +5,13 @@ import os
 import kornia as K
 import kornia.feature as KF
 
+# ComfyUI 进度条支持
+try:
+    from comfy.utils import ProgressBar
+    HAS_PROGRESS_BAR = True
+except ImportError:
+    HAS_PROGRESS_BAR = False
+
 # 重定向缓存目录到 ComfyUI/models/elementEasy
 try:
     import folder_paths
@@ -61,6 +68,20 @@ class SmartMergeImages:
     
     
     @staticmethod
+    def _send_progress(value, total, node_id=None):
+        """发送进度条更新到 ComfyUI 前端"""
+        if not HAS_PROMPT_SERVER:
+            return
+        try:
+            PromptServer.instance.send_sync("progress", {
+                "value": int(value),
+                "max": int(total),
+                "node_id": node_id,
+            })
+        except Exception:
+            pass
+    
+    @staticmethod
     def _tensor_fingerprint(t):
         if t is None:
             return "none"
@@ -77,12 +98,12 @@ class SmartMergeImages:
     
     @classmethod
     def _make_align_key(cls, original_image, edited_crop_B, original_crop_A,
-                        match_method, warp_method, merge_mode, use_gpu):
+                        match_method, warp_method, optical_flow, merge_mode, use_gpu):
         return "|".join([
             cls._tensor_fingerprint(original_image),
             cls._tensor_fingerprint(edited_crop_B),
             cls._tensor_fingerprint(original_crop_A),
-            str(match_method), str(warp_method),
+            str(match_method), str(warp_method), str(optical_flow),
             str(merge_mode), str(bool(use_gpu)),
         ])
     
@@ -159,12 +180,12 @@ class SmartMergeImages:
                         "Optical Flow "
                     ],
                 ),
-                 "optical_flow": (  
+                "optical_flow": (  
                     [
-                        "RAFT-Small",
-                        "RAFT-Large",
+                        "Farneback",
                         "DIS",
-                        "Farneback"
+                        "RAFT-Small",
+                        "RAFT-Large"
                     ],
                 ),
                 
@@ -351,7 +372,7 @@ class SmartMergeImages:
         result = lab_fg + correction_field
         result = np.clip(result, 0, 255).astype(np.uint8)
         
-        print(f"[Patch Sync] 完成，有效 patch: {valid_patches}")
+        #print(f"[Patch Sync] 完成，有效 patch: {valid_patches}")
         
         return cv2.cvtColor(result, cv2.COLOR_LAB2RGB)
 
@@ -563,7 +584,7 @@ class SmartMergeImages:
         
         flow_mean = float(np.mean(flow_mag))
         model_name = "RAFT-large" if use_large else "RAFT-small"
-        print(f"[Smart Merge] {model_name} 光流完成 (平均位移: {flow_mean:.2f}px)")
+        #print(f"[Smart Merge] {model_name} 光流完成 (平均位移: {flow_mean:.2f}px)")
         return refined_fg, warped_mask.copy()
 
     def _refine_with_dis(self, gray_warped, gray_target, warped_fg, warped_mask, train_img):
@@ -594,7 +615,7 @@ class SmartMergeImages:
             interpolation=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REPLICATE)
         
         flow_mean = float(np.mean(flow_mag))
-        print(f"[Smart Merge] DIS 光流完成 (平均位移: {flow_mean:.2f}px)")
+        #print(f"[Smart Merge] DIS 光流完成 (平均位移: {flow_mean:.2f}px)")
         return refined_fg, warped_mask.copy()
     
     def _refine_with_farneback(self, gray_warped, gray_target, warped_fg, warped_mask, train_img):
@@ -652,20 +673,20 @@ class SmartMergeImages:
         mean_flow = np.mean(flow_mag)
         
         if mean_flow < 0.5:
-            print(f"[Smart Merge] 位移过小 ({mean_flow:.2f}px)，跳过光流修正")
+            #print(f"[Smart Merge] 位移过小 ({mean_flow:.2f}px)，跳过光流修正")
             return warped_fg, warped_mask
         elif mean_flow < 1.5:
-            print(f"[Smart Merge] 小位移 ({mean_flow:.2f}px)，双边滤波平滑")
+            #print(f"[Smart Merge] 小位移 ({mean_flow:.2f}px)，双边滤波平滑")
             flow[:, :, 0] = cv2.bilateralFilter(flow[:, :, 0].astype(np.float32), 9, 5, 5)
             flow[:, :, 1] = cv2.bilateralFilter(flow[:, :, 1].astype(np.float32), 9, 5, 5)
         elif mean_flow < 3.0:
-            print(f"[Smart Merge] 中等位移 ({mean_flow:.2f}px)，7x7高斯+弱双边")
+            #print(f"[Smart Merge] 中等位移 ({mean_flow:.2f}px)，7x7高斯+弱双边")
             flow[:, :, 0] = cv2.GaussianBlur(flow[:, :, 0], (7, 7), 0)
             flow[:, :, 1] = cv2.GaussianBlur(flow[:, :, 1], (7, 7), 0)
             flow[:, :, 0] = cv2.bilateralFilter(flow[:, :, 0].astype(np.float32), 5, 3, 3)
             flow[:, :, 1] = cv2.bilateralFilter(flow[:, :, 1].astype(np.float32), 5, 3, 3)
         else:
-            print(f"[Smart Merge] 大位移 ({mean_flow:.2f}px)，21x21高斯")
+            #print(f"[Smart Merge] 大位移 ({mean_flow:.2f}px)，21x21高斯")
             flow[:, :, 0] = cv2.GaussianBlur(flow[:, :, 0], (21, 21), 0)
             flow[:, :, 1] = cv2.GaussianBlur(flow[:, :, 1], (21, 21), 0)
 
@@ -676,7 +697,7 @@ class SmartMergeImages:
             interpolation=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REPLICATE)
     
         affected = float(np.mean(reliability))
-        print(f"[Smart Merge] Farneback 光流完成 (有效比例: {affected:.2%}, 位移: {mean_flow:.2f}px)")
+        #print(f"[Smart Merge] Farneback 光流完成 (有效比例: {affected:.2%}, 位移: {mean_flow:.2f}px)")
         return refined_fg, warped_mask.copy()
 
     def optical_flow_only_align(self, query_img, train_img, 
@@ -717,7 +738,7 @@ class SmartMergeImages:
                     refined_fg, refined_mask = self.refine_with_optical_flow(
                         warped, warped_mask, train_img, optical_flow, device
                     )
-                    print(f"[Smart Merge] SIFT粗对齐 + {optical_flow} 完成")
+                    #print(f"[Smart Merge] SIFT粗对齐 + {optical_flow} 完成")
                     return refined_fg, refined_mask, True
                 else:
                     print("[Smart Merge] SIFT 粗对齐失败，回退直接光流")
@@ -868,11 +889,11 @@ class SmartMergeImages:
                 warped_fg, warped_mask, train_img, optical_flow, device
             )
             inlier_count = int(np.sum(inliers))
-            print(f"[Smart Merge] Homography + 光流细化对齐完成 (内点: {inlier_count})")
+            #print(f"[Smart Merge] Homography + 光流细化对齐完成 (内点: {inlier_count})")
             return refined_fg, refined_mask, True
 
         inlier_count = int(np.sum(inliers))
-        print(f"[Smart Merge] 纯 Homography 对齐完成 (内点: {inlier_count})")
+        #print(f"[Smart Merge] 纯 Homography 对齐完成 (内点: {inlier_count})")
         return warped_fg, warped_mask, True
         
     def make_edge_safe_soft_mask(self, mask_float, feather_kernel):
@@ -971,7 +992,7 @@ class SmartMergeImages:
     def smart_merge(self, original_image, edited_crop_B, match_method, warp_method, color_match, optical_flow,
                 feather_kernel, adapt_thresh, adapt_local_match,
                 merge_mode="All to One", use_gpu=False, force_recompute=False,
-                original_crop_A=None):
+                original_crop_A=None, unique_id=None, prompt=None, extra_pnginfo=None):
         B_orig = original_image.shape[0]
         B_crop = edited_crop_B.shape[0]
         if B_orig == 0 or B_crop == 0:
@@ -984,6 +1005,11 @@ class SmartMergeImages:
             B_orig_loop = B_orig
             crops_per_bg = max(1, B_crop // B_orig) if B_crop % B_orig == 0 else max(1, B_crop // B_orig)
         
+        # 总进度 = 背景图数量 × 每背景的 crop 数量
+        total_steps = B_orig_loop * crops_per_bg
+        # 初始化进度条
+        pbar = ProgressBar(total_steps) if HAS_PROGRESS_BAR else None
+        
         device = torch.device("cuda" if torch.cuda.is_available() and use_gpu else "cpu")
         
         # === 缓存查询 ===
@@ -993,7 +1019,7 @@ class SmartMergeImages:
         
         align_key = self._make_align_key(
             original_image, edited_crop_B, original_crop_A,
-            match_method, warp_method, merge_mode, use_gpu
+            match_method, warp_method, optical_flow, merge_mode, use_gpu
         )
         cached_aligns = self._cache_get(align_key) if not force_recompute else None
         align_cache_hit = cached_aligns is not None
@@ -1023,6 +1049,11 @@ class SmartMergeImages:
                 img_result = img_bg.copy()  # img_bg --------------------
                 
                 for crop_idx in range(start_idx, end_idx):
+                    
+                    # 更新进度条
+                    if pbar is not None:
+                        pbar.update(1)
+                    
                     align_idx = global_crop_counter
                     global_crop_counter += 1
         
@@ -1309,6 +1340,10 @@ class SmartMergeImages:
                 print(f"[Smart Merge 致命错误] {e}")
                 traceback.print_exc()
                 result_images.append(original_image[i])
+                
+        # 强制完成进度条
+        if pbar is not None:
+            pbar.update_absolute(total_steps, total_steps)
         
         if new_aligns_to_save is not None and len(new_aligns_to_save) > 0:
             self._cache_put(align_key, new_aligns_to_save)

@@ -28,7 +28,7 @@
 ## v1.4.8
   
 增强 Smart merge images 节点的对图像的轻微畸变矫正及色彩匹配的算法。
-  - 其中用到的模型不是必须的。如果选择了相关选项，在运行节点时会自动下载模型到 \ComfyUI\models\elementEasy 目录下。
+  - 其中用到的模型不是必须的。如果选择了相关选项，在运行节点时会自动下载模型到 \ComfyUI\models\elementEasy 目录下。 也可以提前将本仓库models文件夹下的elementEasy文件夹拷贝到 \ComfyUI\models\elementEasy 目录下，则无需再次下载模型。
 
 ## v1.4.7
   

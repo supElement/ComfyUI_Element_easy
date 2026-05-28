@@ -27,10 +27,7 @@ except Exception as e:
 
 
 def _parse_lightglue_output(match_res):
-    """
-    统一解析 Kornia LightGlueMatcher 在不同版本下的返回值。
-    返回 shape 为 (M, 2) 的索引 tensor，若无法解析则返回 None。
-    """
+
     if match_res is None:
         return None
 
@@ -175,9 +172,9 @@ class SmartMergeImages:
                 ),
                 "warp_method": (
                     [
-                        "Homography ",
-                        "Homography + Optical Flow ",
-                        "Optical Flow "
+                        "Homography",
+                        "Homography + Optical Flow",
+                        "Optical Flow"
                     ],
                 ),
                 "optical_flow": (  
@@ -435,6 +432,7 @@ class SmartMergeImages:
         return cv2.cvtColor(lab_corrected, cv2.COLOR_LAB2RGB)
 
     def perform_sift_alignment(self, query_img, train_img):
+
         h_q, w_q = query_img.shape[:2]
         h_t, w_t = train_img.shape[:2]
 
@@ -444,8 +442,8 @@ class SmartMergeImages:
             scale = 1536.0 / float(max_bg_dim)
 
         if scale < 1.0:
-            query_sift_img = cv2.resize(query_img, (0, 0), fx=scale, fy=scale, interpolation=cv2.INTER_LANCZOS4)
-            train_sift_img = cv2.resize(train_img, (0, 0), fx=scale, fy=scale, interpolation=cv2.INTER_LANCZOS4)
+            query_sift_img = cv2.resize(query_img, None, fx=scale, fy=scale, interpolation=cv2.INTER_LANCZOS4)
+            train_sift_img = cv2.resize(train_img, None, fx=scale, fy=scale, interpolation=cv2.INTER_LANCZOS4)
         else:
             query_sift_img = query_img
             train_sift_img = train_img
@@ -454,39 +452,38 @@ class SmartMergeImages:
         gray_train = cv2.cvtColor(train_sift_img, cv2.COLOR_RGB2GRAY)
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
 
-        sift = cv2.SIFT_create()
+        sift = cv2.SIFT_create(nfeatures=5000)
         kp_q, des_q = sift.detectAndCompute(clahe.apply(gray_query), None)
         kp_t, des_t = sift.detectAndCompute(clahe.apply(gray_train), None)
 
-        if des_q is None or des_t is None or len(des_q) < 4 or len(des_t) < 4:
+        if des_q is None or des_t is None or len(des_q) < 10 or len(des_t) < 10:
             return None
 
-        flann = cv2.FlannBasedMatcher(dict(algorithm=1, trees=5), dict(checks=50))
-        matches = flann.knnMatch(des_q, des_t, k=2)
+        bf = cv2.BFMatcher(cv2.NORM_L2)
+        matches = bf.knnMatch(des_q, des_t, k=2)
 
         good_matches = []
-        for match_pair in matches:
-            if len(match_pair) == 2:
-                m, n = match_pair
-                if m.distance < 0.75 * n.distance:
-                    good_matches.append(m)
+        for m, n in matches:
+            if m.distance < 0.7 * n.distance:
+                good_matches.append(m)
 
-        if len(good_matches) >= 6:
-            src_pts = np.float32([kp_q[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
-            dst_pts = np.float32([kp_t[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+        if len(good_matches) < 10:
+            return None
 
-            magsac_flag = getattr(cv2, 'USAC_MAGSAC', cv2.RANSAC)
-            res = cv2.findHomography(src_pts, dst_pts, magsac_flag, 5.0)
-            if res is not None and res[0] is not None:
-                H_low = res[0]
-                if scale < 1.0:
-                    S_t = np.array([[1.0 / scale, 0, 0], [0, 1.0 / scale, 0], [0, 0, 1.0]], dtype=np.float64)
-                    S_q = np.array([[scale, 0, 0], [0, scale, 0], [0, 0, 1.0]], dtype=np.float64)
-                    H_orig = np.dot(S_t, np.dot(H_low, S_q))
-                else:
-                    H_orig = H_low
-                return H_orig
-        return None
+        src_pts = np.float32([kp_q[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+        dst_pts = np.float32([kp_t[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+
+        H, mask = cv2.findHomography(src_pts, dst_pts, cv2.USAC_MAGSAC, 3.0)
+
+        if H is None or mask is None or np.sum(mask) < 8:
+            return None
+
+        if scale < 1.0:
+            S = np.array([[scale, 0, 0], [0, scale, 0], [0, 0, 1]], dtype=np.float64)
+            S_inv = np.array([[1.0/scale, 0, 0], [0, 1.0/scale, 0], [0, 0, 1]], dtype=np.float64)
+            H = S_inv @ H @ S
+
+        return H
 
     def laf_from_opencv_kpts(self, kpts, device):
         N = len(kpts)
@@ -588,7 +585,7 @@ class SmartMergeImages:
         return refined_fg, warped_mask.copy()
 
     def _refine_with_dis(self, gray_warped, gray_target, warped_fg, warped_mask, train_img):
-        """DIS 光流：OpenCV 4.x 版本"""
+
         h_t, w_t = train_img.shape[:2]
         
         try:
@@ -673,20 +670,16 @@ class SmartMergeImages:
         mean_flow = np.mean(flow_mag)
         
         if mean_flow < 0.5:
-            #print(f"[Smart Merge] 位移过小 ({mean_flow:.2f}px)，跳过光流修正")
             return warped_fg, warped_mask
         elif mean_flow < 1.5:
-            #print(f"[Smart Merge] 小位移 ({mean_flow:.2f}px)，双边滤波平滑")
             flow[:, :, 0] = cv2.bilateralFilter(flow[:, :, 0].astype(np.float32), 9, 5, 5)
             flow[:, :, 1] = cv2.bilateralFilter(flow[:, :, 1].astype(np.float32), 9, 5, 5)
         elif mean_flow < 3.0:
-            #print(f"[Smart Merge] 中等位移 ({mean_flow:.2f}px)，7x7高斯+弱双边")
             flow[:, :, 0] = cv2.GaussianBlur(flow[:, :, 0], (7, 7), 0)
             flow[:, :, 1] = cv2.GaussianBlur(flow[:, :, 1], (7, 7), 0)
             flow[:, :, 0] = cv2.bilateralFilter(flow[:, :, 0].astype(np.float32), 5, 3, 3)
             flow[:, :, 1] = cv2.bilateralFilter(flow[:, :, 1].astype(np.float32), 5, 3, 3)
         else:
-            #print(f"[Smart Merge] 大位移 ({mean_flow:.2f}px)，21x21高斯")
             flow[:, :, 0] = cv2.GaussianBlur(flow[:, :, 0], (21, 21), 0)
             flow[:, :, 1] = cv2.GaussianBlur(flow[:, :, 1], (21, 21), 0)
 
@@ -697,7 +690,6 @@ class SmartMergeImages:
             interpolation=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REPLICATE)
     
         affected = float(np.mean(reliability))
-        #print(f"[Smart Merge] Farneback 光流完成 (有效比例: {affected:.2%}, 位移: {mean_flow:.2f}px)")
         return refined_fg, warped_mask.copy()
 
     def optical_flow_only_align(self, query_img, train_img, 
@@ -715,65 +707,20 @@ class SmartMergeImages:
         full_mask[:, :border] = 0; full_mask[:, -border:] = 0
         full_mask = cv2.GaussianBlur(full_mask, (21, 21), 0)
         return self.refine_with_optical_flow(query_resized, full_mask, train_img, optical_flow, device)
-
-    def perform_kornia_alignment(self, query_img, train_img,
-                                 method="DISK + LightGlue",
-                                 warp_method="Homography + Optical Flow ",
-                                 optical_flow="RAFT-Small",
-                                 device="cpu"):
+        
+    def estimate_homography(self, query_img, train_img,
+                            method="DISK + LightGlue",
+                            device="cpu"):
         h_q, w_q = query_img.shape[:2]
         h_t, w_t = train_img.shape[:2]
-
-        if warp_method == "Optical Flow ":
-            try:
-                H = self.perform_sift_alignment(query_img, train_img)
-                if H is not None:
-                    h_t, w_t = train_img.shape[:2]
-                    warped = cv2.warpPerspective(query_img, H, (w_t, h_t),
-                        flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT101)
-                    base_mask = np.ones((query_img.shape[0], query_img.shape[1]), dtype=np.float32)
-                    warped_mask = cv2.warpPerspective(base_mask, H, (w_t, h_t),
-                        flags=cv2.INTER_LINEAR)
-                    
-                    refined_fg, refined_mask = self.refine_with_optical_flow(
-                        warped, warped_mask, train_img, optical_flow, device
-                    )
-                    #print(f"[Smart Merge] SIFT粗对齐 + {optical_flow} 完成")
-                    return refined_fg, refined_mask, True
-                else:
-                    print("[Smart Merge] SIFT 粗对齐失败，回退直接光流")
-                    return self.optical_flow_only_align(query_img, train_img, optical_flow, device)
-                    
-            except Exception as e:
-                print(f"[Smart Merge] 纯光流对齐失败: {e}")
-                return None, None, False
+        pts_q, pts_t = None, None
+        method_used = None
 
         img_q_tensor = torch.from_numpy(query_img).permute(2, 0, 1).float().to(device)[None] / 255.0
         img_t_tensor = torch.from_numpy(train_img).permute(2, 0, 1).float().to(device)[None] / 255.0
 
-        pts_q, pts_t = None, None
-
-        if method == "SIFT (OpenCV)":
-            gray_q = cv2.cvtColor(query_img, cv2.COLOR_RGB2GRAY)
-            gray_t = cv2.cvtColor(train_img, cv2.COLOR_RGB2GRAY)
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-            sift = cv2.SIFT_create()
-            kp_q, des_q = sift.detectAndCompute(clahe.apply(gray_q), None)
-            kp_t, des_t = sift.detectAndCompute(clahe.apply(gray_t), None)
-            if des_q is not None and des_t is not None and len(des_q) >= 4 and len(des_t) >= 4:
-                flann = cv2.FlannBasedMatcher(dict(algorithm=1, trees=5), dict(checks=50))
-                matches = flann.knnMatch(des_q, des_t, k=2)
-                good_matches = []
-                for match_pair in matches:
-                    if len(match_pair) == 2:
-                        m, n = match_pair
-                        if m.distance < 0.75 * n.distance:
-                            good_matches.append(m)
-                if len(good_matches) >= 6:
-                    pts_q = np.float32([kp_q[m.queryIdx].pt for m in good_matches])
-                    pts_t = np.float32([kp_t[m.trainIdx].pt for m in good_matches])
-
-        elif method == "DISK + LightGlue":
+        # ========== DISK + LightGlue ==========
+        if method == "DISK + LightGlue":
             try:
                 disk, lg_matcher = self.get_kornia_models(device, "DISK")
                 if disk is not None and lg_matcher is not None:
@@ -817,6 +764,7 @@ class SmartMergeImages:
                 print(f"[Smart Merge] DISK + LightGlue 匹配运行失败: {e}，将尝试降级")
                 pts_q, pts_t = None, None
 
+        # ========== SIFT + LightGlue ==========
         if method == "SIFT + LightGlue" or (pts_q is None and method != "SIFT (OpenCV)"):
             try:
                 gray_q = cv2.cvtColor(query_img, cv2.COLOR_RGB2GRAY)
@@ -863,13 +811,72 @@ class SmartMergeImages:
                 print(f"[Smart Merge] SIFT + LightGlue 匹配失败: {e}")
                 pts_q, pts_t = None, None
 
+        # ========== OpenCV SIFT (保底) ==========
+        if pts_q is None and method == "SIFT (OpenCV)":
+            try:
+                gray_q = cv2.cvtColor(query_img, cv2.COLOR_RGB2GRAY)
+                gray_t = cv2.cvtColor(train_img, cv2.COLOR_RGB2GRAY)
+                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+                sift = cv2.SIFT_create()
+
+                kp_q, des_q = sift.detectAndCompute(clahe.apply(gray_q), None)
+                kp_t, des_t = sift.detectAndCompute(clahe.apply(gray_t), None)
+
+                if des_q is not None and des_t is not None and len(des_q) >= 4 and len(des_t) >= 4:
+                    flann = cv2.FlannBasedMatcher(dict(algorithm=1, trees=5), dict(checks=50))
+                    matches = flann.knnMatch(des_q, des_t, k=2)
+
+                    good_matches = []
+                    for match_pair in matches:
+                        if len(match_pair) == 2:
+                            m, n = match_pair
+                            if m.distance < 0.75 * n.distance:
+                                good_matches.append(m)
+
+                    if len(good_matches) >= 6:
+                        pts_q = np.float32([kp_q[m.queryIdx].pt for m in good_matches])
+                        pts_t = np.float32([kp_t[m.trainIdx].pt for m in good_matches])
+            except Exception as e:
+                print(f"[Smart Merge] OpenCV SIFT 匹配失败: {e}")
+
+        # ========== Homography ==========
         if pts_q is None or pts_t is None or len(pts_q) < 4:
-            return None, None, False
+            return None, None, 0, None
 
         magsac_flag = getattr(cv2, 'USAC_MAGSAC', cv2.RANSAC)
         H, inliers = cv2.findHomography(pts_q, pts_t, magsac_flag, 4.0)
 
         if H is None or inliers is None or np.sum(inliers) < 4:
+            return None, None, 0, None
+
+        num_inliers = int(np.sum(inliers))
+        
+        if method == "DISK + LightGlue" and pts_q is not None:
+            method_used = "DISK" if pts_q is not None else "SIFT-LightGlue"
+        elif method == "SIFT + LightGlue":
+            method_used = "SIFT-LightGlue"
+        else:
+            method_used = "SIFT-OpenCV"
+            
+        return H, inliers, num_inliers, method_used
+        
+    def perform_kornia_alignment(self, query_img, train_img,
+                                 method="DISK + LightGlue",
+                                 warp_method="Homography + Optical Flow",
+                                 optical_flow="RAFT-Small",
+                                 device="cpu"):
+        h_q, w_q = query_img.shape[:2]
+        h_t, w_t = train_img.shape[:2]
+
+        # ========== estimate_homography 粗对齐 ==========
+        H, inliers, num_inliers, method_used = self.estimate_homography(
+            query_img, train_img, method=method, device=device
+        )
+
+        if H is None:
+            if warp_method == "Optical Flow":
+                print("[Smart Merge] 粗对齐失败，回退到直接光流")
+                return self.optical_flow_only_align(query_img, train_img, optical_flow, device)
             return None, None, False
 
         base_mask = np.ones((h_q, w_q), dtype=np.float32)
@@ -884,16 +891,18 @@ class SmartMergeImages:
             flags=cv2.INTER_LINEAR
         )
 
-        if warp_method == "Homography + Optical Flow ":
+        if warp_method == "Optical Flow":
             refined_fg, refined_mask = self.refine_with_optical_flow(
                 warped_fg, warped_mask, train_img, optical_flow, device
             )
-            inlier_count = int(np.sum(inliers))
-            #print(f"[Smart Merge] Homography + 光流细化对齐完成 (内点: {inlier_count})")
             return refined_fg, refined_mask, True
 
-        inlier_count = int(np.sum(inliers))
-        #print(f"[Smart Merge] 纯 Homography 对齐完成 (内点: {inlier_count})")
+        if warp_method == "Homography + Optical Flow":
+            refined_fg, refined_mask = self.refine_with_optical_flow(
+                warped_fg, warped_mask, train_img, optical_flow, device
+            )
+            return refined_fg, refined_mask, True
+
         return warped_fg, warped_mask, True
         
     def make_edge_safe_soft_mask(self, mask_float, feather_kernel):
@@ -915,7 +924,7 @@ class SmartMergeImages:
         blurred = cv2.GaussianBlur(eroded.astype(np.float32) / 255.0, (blur_size, blur_size), 0)
         
         soft = blurred[pad:pad + h, pad:pad + w]
-        soft = np.minimum(soft, mask_float.astype(np.float32))  # 不超过原 mask
+        soft = np.minimum(soft, mask_float.astype(np.float32))  
         return soft
     
     
@@ -1045,8 +1054,8 @@ class SmartMergeImages:
                     result_images.append(torch.from_numpy(img_bg.astype(np.float32) / 255.0))
                     continue
                 
-                original_bg = img_bg.copy() # 保存原背景---------------
-                img_result = img_bg.copy()  # img_bg --------------------
+                original_bg = img_bg.copy() 
+                img_result = img_bg.copy()  
                 
                 for crop_idx in range(start_idx, end_idx):
                     
@@ -1062,7 +1071,7 @@ class SmartMergeImages:
                         img_fg = img_fg[:, :, :3]
                     h_fg, w_fg = img_fg.shape[:2]
         
-                    # ===== Step 1: 对齐(优先读缓存) =====
+                    # ===== 对齐 =====
                     if align_cache_hit and align_idx < len(cached_aligns):
                         cached = cached_aligns[align_idx]
                         warped_fg = cached["warped_fg"].copy()
@@ -1078,34 +1087,62 @@ class SmartMergeImages:
                         warped_fg = None
                         warped_mask = None
         
+                        # 桥接对齐:B → A → BG 直接比例缩放
+                        # if img_bridge_A is not None:
+                            # h_A, w_A = img_bridge_A.shape[:2]
+                            # if h_A > 0 and w_A > 0:
+                                # H_A_to_BG = self.perform_sift_alignment(img_bridge_A, original_bg)
+                                
+                                # if H_A_to_BG is not None:
+                                    # warped_fg_A, warped_mask_A, ok = self.perform_kornia_alignment(
+                                        # img_fg, img_bridge_A,
+                                        # method=match_method, warp_method=warp_method, 
+                                        # optical_flow=optical_flow, device=device
+                                    # )
+                                    # h_bg, w_bg = img_bg.shape[:2]
+                                    # if ok:
+                                        # warped_fg = cv2.warpPerspective(warped_fg_A, H_A_to_BG, (w_bg, h_bg),
+                                            # flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT101)
+                                        # warped_mask = cv2.warpPerspective(warped_mask_A, H_A_to_BG, (w_bg, h_bg),
+                                            # flags=cv2.INTER_LINEAR)
+                                        # success_align = True
+                                        # #print(f"[Smart Merge] 桥接对齐: B→A (kornia) → BG ({method_used}, 内点: {num_inliers})")
+                                    # else:
+                                        # print("[Smart Merge] B→A 对齐失败,使用等比映射保底")
+                                        # sx, sy = w_A / float(w_fg), h_A / float(h_fg)
+                                        # H_FG_to_A = np.array([[sx, 0, 0], [0, sy, 0], [0, 0, 1]], dtype=np.float64)
+                                        # H_Total = np.dot(H_A_to_BG, H_FG_to_A)
+                                        # warped_fg = cv2.warpPerspective(img_fg, H_Total, (w_bg, h_bg),
+                                            # flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT101)
+                                        # base_mask = np.ones((h_fg, w_fg), dtype=np.float32)
+                                        # warped_mask = cv2.warpPerspective(base_mask, H_Total, (w_bg, h_bg),
+                                            # flags=cv2.INTER_LINEAR)
+                                        # success_align = True
                         # 桥接对齐:B → A → BG
                         if img_bridge_A is not None:
                             h_A, w_A = img_bridge_A.shape[:2]
                             if h_A > 0 and w_A > 0:
-                                H_A_to_BG = self.perform_sift_alignment(img_bridge_A, original_bg) # img_bg --------------------
+                                # A→BG: 用 SIFT 做粗对齐
+                                H_A_to_BG = self.perform_sift_alignment(img_bridge_A, original_bg)
+                                
                                 if H_A_to_BG is not None:
-                                    warped_fg_A, warped_mask_A, ok = self.perform_kornia_alignment(
-                                        img_fg, img_bridge_A,
-                                        method=match_method, warp_method=warp_method, optical_flow=optical_flow, device=device
-                                    )
                                     h_bg, w_bg = img_bg.shape[:2]
-                                    if ok:
-                                        warped_fg = cv2.warpPerspective(warped_fg_A, H_A_to_BG, (w_bg, h_bg),
-                                            flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT101)
-                                        warped_mask = cv2.warpPerspective(warped_mask_A, H_A_to_BG, (w_bg, h_bg),
-                                            flags=cv2.INTER_LINEAR)
-                                        success_align = True
-                                    else:
-                                        print("[Smart Merge] B→A 对齐失败,使用等比映射保底")
-                                        sx, sy = w_A / float(w_fg), h_A / float(h_fg)
-                                        H_FG_to_A = np.array([[sx, 0, 0], [0, sy, 0], [0, 0, 1]], dtype=np.float64)
-                                        H_Total = np.dot(H_A_to_BG, H_FG_to_A)
-                                        warped_fg = cv2.warpPerspective(img_fg, H_Total, (w_bg, h_bg),
-                                            flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT101)
-                                        base_mask = np.ones((h_fg, w_fg), dtype=np.float32)
-                                        warped_mask = cv2.warpPerspective(base_mask, H_Total, (w_bg, h_bg),
-                                            flags=cv2.INTER_LINEAR)
-                                        success_align = True
+                                    
+                                    sx, sy = w_A / float(w_fg), h_A / float(h_fg)
+                                    H_FG_to_A = np.array([
+                                        [sx, 0, 0],
+                                        [0, sy, 0],
+                                        [0, 0, 1]
+                                    ], dtype=np.float64)
+                                    
+                                    H_Total = np.dot(H_A_to_BG, H_FG_to_A)
+                                    
+                                    warped_fg = cv2.warpPerspective(img_fg, H_Total, (w_bg, h_bg),
+                                        flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT101)
+                                    base_mask = np.ones((h_fg, w_fg), dtype=np.float32)
+                                    warped_mask = cv2.warpPerspective(base_mask, H_Total, (w_bg, h_bg),
+                                        flags=cv2.INTER_LINEAR)
+                                    success_align = True
         
                         # 直接对齐
                         if not success_align:
@@ -1135,7 +1172,7 @@ class SmartMergeImages:
                                 "warped_mask": warped_mask.copy(),
                             })
         
-                    # ===== Step 2: bbox 裁切 =====
+                    # ===== bbox 裁切 =====
                     h_bg, w_bg = img_bg.shape[:2]
                     bounds_mask_float = warped_mask.copy()
                     bounds_mask_8u = (bounds_mask_float * 255).astype(np.uint8)
@@ -1160,7 +1197,7 @@ class SmartMergeImages:
                     crop_result = crop_bg.copy()
                     current_color_match = color_match
         
-                    # ===== Step 3: 色彩迁移(以 crop_bg 为参考) =====
+                    # ===== 色彩迁移(以 crop_bg 为参考) =====
 
                     if current_color_match in ["Patch_based_color", "Boundary-Aware Color"]:
                         band_width = max(15, int(feather_kernel))
@@ -1250,7 +1287,7 @@ class SmartMergeImages:
                         adaptive_fg = (matched_fg.astype(np.float32) * diff_mask_3d) + (bg_float * (1.0 - diff_mask_3d))
                         crop_fg = np.clip(adaptive_fg, 0, 255).astype(np.uint8)
         
-                    # ===== Step 4: 融合 =====
+                    # ===== 融合 =====
                     if current_color_match == "Laplacian Pyramid Blend":
                         try:
                             num_levels = 4
@@ -1325,7 +1362,6 @@ class SmartMergeImages:
                     
                     if edge_blend.max() > 0.01:
                         eb3 = edge_blend[:, :, np.newaxis]
-                        # 渐变过渡：边缘用 fg，向内渐变到 crop_result
                         crop_result = (crop_fg.astype(np.float32) * eb3 
                                        + crop_result.astype(np.float32) * (1.0 - eb3))
                         crop_result = np.clip(crop_result, 0, 255).astype(np.uint8)
@@ -1341,12 +1377,12 @@ class SmartMergeImages:
                 traceback.print_exc()
                 result_images.append(original_image[i])
                 
-        # 强制完成进度条
+        # 完成进度条
         if pbar is not None:
             pbar.update_absolute(total_steps, total_steps)
         
         if new_aligns_to_save is not None and len(new_aligns_to_save) > 0:
             self._cache_put(align_key, new_aligns_to_save)
-            print(f"[Smart Merge] 💾 已缓存 {len(new_aligns_to_save)} 个对齐结果 (上限 {self._align_cache_max})")
+            print(f"[Smart Merge] 💾 已缓存 {len(new_aligns_to_save)} 个对齐结果")
         
         return (torch.stack(result_images),)

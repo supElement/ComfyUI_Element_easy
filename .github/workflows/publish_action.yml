@@ -6,7 +6,6 @@ on:
       - main
     paths:
       - "pyproject.toml"
-      - "README.md"
 
 jobs:
   publish-node:

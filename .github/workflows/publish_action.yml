@@ -2,11 +2,11 @@ name: Publish to Comfy registry
 on:
   workflow_dispatch:
   push:
-      - 'README.md'
     branches:
       - main
     paths:
       - "pyproject.toml"
+      - "README.md"
 
 jobs:
   publish-node:

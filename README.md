@@ -20,7 +20,7 @@
 
 - 在manager管理器中安装（Install using Manager）<br>
 
-  在comfyUI manager 中搜索 ComfyUI_Element_easy, 然后install。
+  在comfyUI manager 中搜索 ComfyUI_Element_easy, -然后install。
  
 
 

@@ -192,6 +192,8 @@ app.registerExtension({
     async nodeCreated(node) {
         if (node.comfyClass !== NODE_NAME) return;
 		
+		//const storageKey = (type) => `${type}_${node.id}_${currentPath}`;
+		
         const isNewNode = typeof node.id !== 'number' || node.id < 0;
 		let lastScrollTop = 0;
         
@@ -829,8 +831,8 @@ app.registerExtension({
                 const item = $el("div.ee-grid-item", {
                     onclick: () => {
                         lastScrollTop = gridView.scrollTop; 
-						localStorage.setItem('ee_scroll_' + currentPath, lastScrollTop.toString()); 
-						localStorage.setItem('ee_image_' + currentPath, filename);
+						localStorage.setItem('ee_scroll_' + node.id + '_' + currentPath, lastScrollTop.toString()); 
+						localStorage.setItem('ee_image_' + node.id + '_' + currentPath, filename);
                         openEditor(filename);
                     }
                 }, [ $el("img", { src: `/element_easy/view?folder_path=${encodeURIComponent(currentPath)}&filename=${encodeURIComponent(filename)}` }) ]);
@@ -847,7 +849,7 @@ app.registerExtension({
 			targetToggleBtn.style.display = "none";
             undoBtn.style.display = "none";
             clearBtn.style.display = "none";
-			const savedScroll = localStorage.getItem('ee_scroll_' + currentPath);
+			const savedScroll = localStorage.getItem('ee_scroll_' + node.id + '_' + currentPath);
             loadImages(savedScroll ? parseInt(savedScroll, 10) : 0);
         };
 
@@ -881,11 +883,12 @@ app.registerExtension({
         };
 
         const openEditor = (filename) => {
-			const savedScroll = localStorage.getItem('ee_scroll_' + currentPath);
-			lastScrollTop = savedScroll ? parseInt(savedScroll, 10) : 0;
-			const isSwitchingImage = imageWidget && imageWidget.value !== filename;
+			
+            const savedScroll = localStorage.getItem('ee_scroll_' + node.id + '_' + currentPath);
+            lastScrollTop = savedScroll ? parseInt(savedScroll, 10) : 0;
+            const isSwitchingImage = imageWidget && imageWidget.value !== filename;
             if (imageWidget) imageWidget.value = filename;
-            localStorage.setItem('ee_image_' + currentPath, filename);
+            localStorage.setItem('ee_image_' + node.id + '_' + currentPath, filename);
             
             if (isSwitchingImage) {
                 maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
@@ -1151,11 +1154,11 @@ app.registerExtension({
             
             if (!isImageConnected()) {
                 currentPath = pathWidget.value;
-                const lastSelectedImage = localStorage.getItem('ee_image_' + currentPath);
+                const lastSelectedImage = localStorage.getItem('ee_image_' + node.id + '_' + currentPath);
                 const targetImage = lastSelectedImage || (imageWidget ? imageWidget.value : null);
                 
                 if (targetImage) {
-                    const savedScroll = localStorage.getItem('ee_scroll_' + currentPath);
+                    const savedScroll = localStorage.getItem('ee_scroll_' + node.id + '_' + currentPath);
                     lastScrollTop = savedScroll ? parseInt(savedScroll, 10) : 0;
                     openEditor(targetImage);
                 } else {
@@ -1171,9 +1174,11 @@ app.registerExtension({
         node.onRemoved = function() {
             try {
                 const keysToRemove = [];
+				const prefix1 = 'ee_scroll_' + node.id + '_';
+                const prefix2 = 'ee_image_' + node.id + '_';
                 for (let i = 0; i < localStorage.length; i++) {
                     const key = localStorage.key(i);
-                    if (key && (key.startsWith('ee_scroll_') || key.startsWith('ee_image_'))) keysToRemove.push(key);
+                    if (key && (key.startsWith(prefix1) || key.startsWith(prefix2))) keysToRemove.push(key);
                 }
                 keysToRemove.forEach(key => localStorage.removeItem(key));
             } catch (e) {}

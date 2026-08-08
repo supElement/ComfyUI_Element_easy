@@ -1,5 +1,5 @@
 # __init__.py
-__version__ = "1.3.9" 
+__version__ = "1.4.0" 
 
 from .random_chars import RandomCharacterGenerator
 from .empty_image_rgb import EmptyImageRGB
@@ -62,5 +62,19 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "SmartMergeImages": "Smart merge images",
 
 }
+
+# ---- 动态注册----
+
+def _register_module(module):
+    NODE_CLASS_MAPPINGS.update(getattr(module, "NODE_CLASS_MAPPINGS", {}))
+    NODE_DISPLAY_NAME_MAPPINGS.update(getattr(module, "NODE_DISPLAY_NAME_MAPPINGS", {}))
+
+try:
+    from . import MinimaxH3LatentUpscaler
+    _register_module(MinimaxH3LatentUpscaler)
+except ImportError as e:
+    print(f"[Element_easy] Failed to import MinimaxH3LatentUpscaler: {e}")
+    
+#-----------------
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]

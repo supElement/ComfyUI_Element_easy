@@ -8,7 +8,7 @@
 # ComfyUI_Element_easy
 
 
-一些方便使用的小节点。因为太懒没有合并代码。 包括：black_white_color, chessboard, empty_image_rgb, image_pad_blur, mask_noise_element, mask_stroke, random_chars, text_line_break. Element_SigmaGraph,Element ImageCurve,Element HueSat,Element HueBright,Element HueHue,LoadImage_Preview,Frame Calculator,ImageSize Div,Smart merge images
+一些方便使用的小节点。因为太懒没有合并代码。 包括：Minimax_H3-LatentUpscaler, Smart merge images,LoadImage_Preview,Element_SigmaGraph,Element ImageCurve,Element HueSat,Element HueBright,Element HueHue,Frame Calculator,ImageSize Div,black_white_color, chessboard, empty_image_rgb, image_pad_blur, mask_noise_element, mask_stroke, random_chars, text_line_break.
 
 
 ## Installation
@@ -25,6 +25,11 @@
 
 
 ## Update
+## v1.4.9
+  
+添加 Minimax_H3-LatentUpscaler 潜空间放大节点，只放大视频的潜空间，没有对音频做任何处理，输出端口为Minimax H3 latent。
+
+
 ## v1.4.8
   
 增强 Smart merge images 节点的对图像的轻微畸变矫正及色彩匹配的算法。

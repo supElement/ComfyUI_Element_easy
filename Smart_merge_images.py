@@ -703,8 +703,10 @@ class SmartMergeImages:
         
         full_mask = np.ones((h_t, w_t), dtype=np.float32)
         border = 10
-        full_mask[:border, :] = 0; full_mask[-border:, :] = 0
-        full_mask[:, :border] = 0; full_mask[:, -border:] = 0
+        full_mask[:border, :] = 0
+        full_mask[-border:, :] = 0
+        full_mask[:, :border] = 0
+        full_mask[:, -border:] = 0
         full_mask = cv2.GaussianBlur(full_mask, (21, 21), 0)
         return self.refine_with_optical_flow(query_resized, full_mask, train_img, optical_flow, device)
         
@@ -1186,8 +1188,10 @@ class SmartMergeImages:
                     ymin, ymax = y_idx.min(), y_idx.max()
                     xmin, xmax = x_idx.min(), x_idx.max()
                     pad = max(100, int(feather_kernel) * 2)
-                    ymin = max(0, ymin - pad); ymax = min(h_bg, ymax + pad)
-                    xmin = max(0, xmin - pad); xmax = min(w_bg, xmax + pad)
+                    ymin = max(0, ymin - pad)
+                    ymax = min(h_bg, ymax + pad)
+                    xmin = max(0, xmin - pad)
+                    xmax = min(w_bg, xmax + pad)
         
                     crop_bg = img_bg[ymin:ymax, xmin:xmax]                     # img_bg --------------------
                     crop_fg = warped_fg[ymin:ymax, xmin:xmax].copy()
@@ -1264,8 +1268,13 @@ class SmartMergeImages:
                         elif adapt_local_match == "Reinhard":
                             mean_bg_v, std_bg_v = cv2.meanStdDev(lab_bg, mask=crop_mask_8u)
                             mean_fg_v, std_fg_v = cv2.meanStdDev(lab_fg, mask=crop_mask_8u)
-                            mean_bg_v = mean_bg_v.flatten(); std_bg_v = np.maximum(std_bg_v.flatten(), 1.0)
-                            mean_fg_v = mean_fg_v.flatten(); std_fg_v = np.maximum(std_fg_v.flatten(), 1.0)
+                            
+                            mean_bg_v = mean_bg_v.flatten()
+                            std_bg_v = np.maximum(std_bg_v.flatten(), 1.0)
+                            
+                            mean_fg_v = mean_fg_v.flatten()
+                            std_fg_v = np.maximum(std_fg_v.flatten(), 1.0)
+                            
                             if np.mean(std_fg_v) < 8.0:
                                 lab_matched = lab_fg - mean_fg_v + mean_bg_v
                             else:

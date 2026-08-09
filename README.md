@@ -26,6 +26,10 @@
 
 ## Update
 
+## v1.5.2
+
+  - Minimax_H3-LatentUpscaler_Adv 节点引入条件缩放模式，可选择忽略（pass_through）、只对齐不缩放（NO_refs）、缩放(refs)三种模式，质量最好的是缩放(refs)模式。
+
 ## v1.5.0
   
 添加 Minimax_H3-LatentUpscaler 潜空间缩放节点，只缩放视频的潜空间，没有对音频做任何处理，输出端口为Minimax H3 latent。

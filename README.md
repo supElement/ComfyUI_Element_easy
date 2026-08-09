@@ -27,7 +27,7 @@
 ## Update
 ## v1.5.0
   
-添加 Minimax_H3-LatentUpscaler 潜空间放大节点，只放大视频的潜空间，没有对音频做任何处理，输出端口为Minimax H3 latent。
+添加 Minimax_H3-LatentUpscaler 潜空间缩放节点，只缩放视频的潜空间，没有对音频做任何处理，输出端口为Minimax H3 latent。
 修复部分bug。
 
 

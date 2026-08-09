@@ -1,5 +1,5 @@
 # __init__.py
-__version__ = "1.4.0" 
+__version__ = "1.4.1" 
 
 from .random_chars import RandomCharacterGenerator
 from .empty_image_rgb import EmptyImageRGB
@@ -74,6 +74,12 @@ try:
     _register_module(MinimaxH3LatentUpscaler)
 except ImportError as e:
     print(f"[Element_easy] Failed to import MinimaxH3LatentUpscaler: {e}")
+    
+try:
+    from . import MinimaxH3LatentUpscaler_Adv
+    _register_module(MinimaxH3LatentUpscaler_Adv)
+except ImportError as e:
+    print(f"[Element_easy] Failed to import MinimaxH3LatentUpscaler_Adv: {e}")
     
 #-----------------
 

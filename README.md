@@ -26,6 +26,12 @@
 
 ## Update
 
+## v1.5.3
+
+- 为Element_SigmaGraph 节点添加“P” 按钮。
+- P 按钮行为：当点数少于 steps+1 时，前 n-1 个点的 x 重排为 0, 1/steps, 2/steps, ..., (n-2)/steps，y 不变；最后一个点（x, y）原样保留。当点数不少于 steps+1 时，取前 steps+1 个点，x 均匀分布为 0, 1/steps, ..., 1，y 不变。撤销支持：操作会压入撤销栈，可 Ctrl+Z 撤回。
+- PS：有什么用？在不改变前面步数的步幅时，为后面增加采样步数（增加细节）。
+
 ## v1.5.2
 
   - Minimax_H3-LatentUpscaler_Adv 节点引入条件缩放模式，可选择忽略（pass_through）、只对齐不缩放（NO_refs）、缩放(refs)三种模式，质量最好的是缩放(refs)模式。
@@ -113,7 +119,7 @@
 
   <img width="1767" height="1008" alt="Image" src="https://github.com/user-attachments/assets/f3bcfd71-eaba-4933-aa97-01ee6eefad62" />
 
-## v1.2.4 （fix in V1.4.4，Optimized in V1.4.5）
+## v1.2.4 （fix in V1.4.4，Optimized in V1.4.5，add "P" button in V1.5.3）
   
   添加自定义sigma，Element_SigmaGraph 节点, 原始代码来自作者Temult 的 TWanSigmaGraph节点https://github.com/Temult/TWanSigmaGraph , 修改、优化、添加了很多内容。
 
@@ -121,8 +127,11 @@
   - 添加可选custom_sigmas 输入端口，添加单独执行功能，方便将现有的sigma数列存储为预设<br>
   - 鼠标点击曲线的位置增减控制点（单击加点，右键删除），增减点时，保持其它控制点不变。 解除控制点 X 轴方向移动限制
   - 添加输出最大值 max value 参数，添加输出强制纠正。
+  - P 按钮行为：当点数少于 steps+1 时，前 n-1 个点的 x 重排为 0, 1/steps, 2/steps, ..., (n-2)/steps，y 不变；最后一个点（x, y）原样保留。当点数不少于 steps+1 时，取前 steps+1 个点，x 均匀分布为 0, 1/steps, ..., 1，y 不变。撤销支持：操作会压入撤销栈，可 Ctrl+Z 撤回。
 
-  <img width="922" height="714" alt="image" src="https://github.com/user-attachments/assets/dce72d55-41a6-4a2e-9f6c-4350ef229dcd" />
+  <img width="1176" height="794" alt="image" src="https://github.com/user-attachments/assets/a8741609-cbe7-4ec8-a88d-5cae79b031a8" />
+  上图显示的是点击“P”按钮的前后对比。PS：有什么用？在不改变前面步数的步幅时，为后面增加采样步数（增加细节）。
+
 
 ## v1.2.3
   

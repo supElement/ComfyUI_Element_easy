@@ -3,8 +3,8 @@
 # 原作者: Temult
 # 许可证: MIT License
 # 修改者: [supElement]
-# 添加、修改、优化了太多内容，不一一描述了。
 # 修改日期: 2026-02-28
+# 【新增】P按钮：按 steps 均匀排列前面的点，最后一个点保持不变（x和y均不变）
 */
 
 import { app } from "/../scripts/app.js";
@@ -218,7 +218,7 @@ function setup(node) {
     const isNodes2_0 = !!document.querySelector("comfy-app") ||
                        !!document.querySelector(".comfy-vue") ||
                        (window.comfyAPI && window.comfyAPI.vue);
-					   
+                       
     const savedSize = node.properties?._ui_size;
     if (savedSize && Array.isArray(savedSize) && savedSize.length === 2) {
         node.size = [
@@ -228,8 +228,8 @@ function setup(node) {
     } else if (!node.size || node.size[0] < MIN_NODE_WIDTH || node.size[1] < MIN_NODE_HEIGHT) {
         node.size = [MIN_NODE_WIDTH, MIN_NODE_HEIGHT];
     }
-					   
-	node.minSize = [MIN_NODE_WIDTH, MIN_NODE_HEIGHT]; 
+                       
+    node.minSize = [MIN_NODE_WIDTH, MIN_NODE_HEIGHT]; 
     
     if (node.properties === undefined) node.properties = {};
     if (node.properties._curveMode === undefined) {
@@ -403,7 +403,7 @@ function setup(node) {
         style: {
             position: "absolute",
             top: "4px",
-            right: "32px",
+            right: "64px",
             width: "24px",
             height: "24px",
             borderRadius: "50%",
@@ -417,6 +417,29 @@ function setup(node) {
         }
     });
     wrap.appendChild(modeBtn);
+
+    // ===== P 按钮：前面的点均匀分布，最后一个点保持不变 =====
+    const alignBtn = $el("button", {
+        textContent: "P",
+        title: "Align first N-1 points uniformly, keep the last point unchanged (x and y).",
+        style: {
+            position: "absolute",
+            top: "4px",
+            right: "32px",
+            width: "24px",
+            height: "24px",
+            borderRadius: "50%",
+            border: "1px solid #555",
+            background: "#505050",
+            color: "#fff",
+            cursor: "pointer",
+            zIndex: "10",
+            fontWeight: "bold",
+            fontSize: "12px"
+        }
+    });
+    wrap.appendChild(alignBtn);
+    // ========================================================
 
     const resetBtn = $el("button", {
         textContent: "R",
@@ -458,6 +481,37 @@ function setup(node) {
         applyPoints(strToPts(gw.value));
     };
 
+    // ===== 修正后的 P 按钮逻辑 =====
+    alignBtn.onclick = () => {
+        const stepsW = node.widgets.find((w) => w.name === STEPS_NAME).value | 0;
+        if (stepsW < 1) return;
+        let pts = strToPts(gw.value);
+        pts.sort((a, b) => a.x - b.x);
+        
+        let newPts;
+        if (pts.length < stepsW + 1) {
+            // 点数不足：前面的点均匀分布，最后一个点保持不变（x和y都不变）
+            newPts = [];
+            const last = pts[pts.length - 1]; // 最后一个点
+            for (let i = 0; i < pts.length - 1; i++) {
+                newPts.push({
+                    x: i / stepsW,
+                    y: pts[i].y
+                });
+            }
+            // 原样保留最后一个点
+            newPts.push({ x: last.x, y: last.y });
+        } else {
+            // 点数足够：取前 steps+1 个，均匀分布，y保持不变
+            const truncated = pts.slice(0, stepsW + 1);
+            newPts = truncated.map((p, i) => ({
+                x: i / stepsW,
+                y: p.y
+            }));
+        }
+        applyPoints(newPts);
+    };
+    // ==================================
 
     const slotBar = $el("div", {
         style: { display: "flex", gap: "4px", marginTop: "4px", alignItems: "center", flexShrink: 0 }
@@ -862,7 +916,6 @@ function setup(node) {
         if (Array.isArray(savedSize) && savedSize.length === 2) {
             const w = Math.max(MIN_NODE_WIDTH, Number(savedSize[0]) || MIN_NODE_WIDTH);
             const h = Math.max(MIN_NODE_HEIGHT, Number(savedSize[1]) || MIN_NODE_HEIGHT);
-            //let h = Number(savedSize[1]) || MIN_NODE_HEIGHT; 
             this.size = [w, h];
         }
         
@@ -873,7 +926,7 @@ function setup(node) {
         if (this.properties?._maxValue !== undefined && maxValueWidget) {
             maxValueWidget.value = this.properties._maxValue;
         }
-		this.minSize = [MIN_NODE_WIDTH, MIN_NODE_HEIGHT];
+        this.minSize = [MIN_NODE_WIDTH, MIN_NODE_HEIGHT];
     };
 
     updateModeButtonVisual();

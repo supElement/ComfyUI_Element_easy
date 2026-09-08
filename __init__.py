@@ -1,5 +1,5 @@
 # __init__.py
-__version__ = "1.4.1" 
+__version__ = "1.5.0" 
 
 from .random_chars import RandomCharacterGenerator
 from .empty_image_rgb import EmptyImageRGB
@@ -80,7 +80,14 @@ try:
     _register_module(MinimaxH3LatentUpscaler_Adv)
 except ImportError as e:
     print(f"[Element_easy] Failed to import MinimaxH3LatentUpscaler_Adv: {e}")
-    
+
+try:
+    from .Element_scene_detection import NODE_CLASS_MAPPINGS as sd_maps, NODE_DISPLAY_NAME_MAPPINGS as sd_names
+    NODE_CLASS_MAPPINGS.update(sd_maps)
+    NODE_DISPLAY_NAME_MAPPINGS.update(sd_names)
+except ImportError as e:
+    print(f"[Element_easy] 场景检测节点未加载: {e}")
+
 #-----------------
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]

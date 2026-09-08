@@ -35,7 +35,7 @@
 - 中文说明： https://github.com/supElement/ComfyUI_Element_easy/blob/main/Element_scene_detection.zh.md
 - 英文说明： https://github.com/supElement/ComfyUI_Element_easy/blob/main/Element_scene_detection.en.md
 
-<img width="2433" height="969" alt="image" src="https://github.com/user-attachments/assets/5bc8a854-7620-4db5-9e12-995244c3be9d" />
+<img width="2140" height="1087" alt="image" src="https://github.com/user-attachments/assets/e994cb62-e59a-49f5-b5c1-84cd6ca8412e" />
 
 ## v1.5.3
 

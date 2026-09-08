@@ -80,6 +80,6 @@
    - 必需：`av` (PyAV)
    - 自动分镜：`pip install scenedetect`
    - 音轨播放/带音频导出：需系统安装 **ffmpeg**（缺失时导出为无声视频）
-2. **临时文件**：上传的视频保存在系统临时目录，若被清理，需重新导入
+2. **临时文件**：上传的视频保存至 ComfyUI/input/element_scene_detection/ 目录，随工作流持久保留；若文件被手动移动或删除，需重新导入
 3. **手动编辑优先**：一旦你修剪/重排过时间线，Auto Run 不会覆盖你的手动决定
 4. info 输出是一个 JSON 包（含视频路径、片段区间、帧率等），专门对接本节点组下游，也可被 Element Video Clip / Element Video Info 解析

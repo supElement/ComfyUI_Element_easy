@@ -1,7 +1,8 @@
 import os
 import base64
 import asyncio
-import tempfile
+import hashlib
+import re
 import json
 import shutil
 import subprocess
@@ -9,7 +10,6 @@ import threading
 import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
-
 import numpy as np
 import cv2
 import torch
@@ -24,18 +24,15 @@ import av
 WAVEFORM_POINTS = 1500
 
 _node_metadata_cache = OrderedDict()
-_auto_cuts_cache = {}  # node_id(int) → 最近一次执行期自动检测的切点列表
+_auto_cuts_cache = {}  
 
-# ★ 预览 JPEG 字节缓存：key=(video_path, frame, size) → bytes
 _preview_cache = OrderedDict()
 _preview_cache_lock = threading.Lock()
-MAX_PREVIEW_CACHE = 400  # 400 × ~35KB ≈ 14MB 内存
+MAX_PREVIEW_CACHE = 400  
 
-# ★ 解码线程池：重 CPU 工作移出 aiohttp 事件循环，避免阻塞整个 server
 _preview_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="esd-preview")
 
-# ========== ★ 音轨播放：整条音轨转码缓存（供前端 <audio> 播放） ==========
-_audio_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="esd-audio")  # 独立线程池，不占预览解码 worker
+_audio_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="esd-audio")  
 _audio_media_cache = OrderedDict()
 _audio_media_lock = threading.Lock()
 MAX_AUDIO_MEDIA_CACHE = 2
@@ -57,7 +54,6 @@ def _extract_audio_media(video_path: str):
         except Exception:
             pass
     try:
-        # 回退：PyAV 逐帧解码 → 内存 WAV
         import io as _io
         import wave as _wave
         with av.open(video_path) as container:
@@ -76,9 +72,9 @@ def _extract_audio_media(video_path: str):
                     ch = frame.layout.nb_channels if frame.layout else (arr.shape[0] if arr.ndim == 2 else 1)
                     if arr.ndim == 1:
                         arr = arr.reshape(1, -1)
-                    if arr.shape[0] == ch:  # planar: (ch, N)
+                    if arr.shape[0] == ch:  
                         mono = arr.mean(axis=0) if ch > 1 else arr[0]
-                    else:  # packed: (1, N*ch)
+                    else:  
                         mono = arr.reshape(-1, ch).mean(axis=1) if ch > 1 else arr.reshape(-1)
                     if arr.dtype == np.int16:
                         f = mono.astype(np.float32) / 32768.0
@@ -96,10 +92,9 @@ def _extract_audio_media(video_path: str):
         return None
 
 
-# 预取（warm）方向与代际：用户跳走后旧预取任务立即作废
 _last_preview_frame = {}
 _warm_generation = {}
-_AV_SEQUENTIAL_WINDOW = 24  # 常驻容器顺序解码窗口（拖动方向前方 N 帧内免 seek）
+_AV_SEQUENTIAL_WINDOW = 24  
 
 # ========== ★ 常驻 AV 容器：BGR uint8 快速解码 ==========
 _av_lock = threading.Lock()
@@ -237,24 +232,27 @@ def _schedule_warm(path, frame, size):
     direction = 1 if (prev is None or frame >= prev) else -1
     _last_preview_frame[path] = frame
     _warm_generation[path] = gen = _warm_generation.get(path, 0) + 1
-    for i in range(1, 4):  # ★ 方案A：6 帧 → 3 帧，降低对实时请求的挤占
+    for i in range(1, 4):  
         t = frame + direction * i
         if t < 0:
             break
         _preview_executor.submit(_warm_one, path, t, size, gen)
 
 
-def read_frame_range(video_path: str, start_frame: int, end_frame: int) -> torch.Tensor:
-    """读取视频从 start_frame (含) 到 end_frame (不含) 的帧序列，返回 [N, H, W, 3] float32 RGB tensor。
-    ★ av 顺序解码优先（一次 open + 一次 seek），失败回退 cv2。"""
+def read_frame_range(video_path: str, start_frame: int, end_frame: int, subsampling: int = 1) -> torch.Tensor:
+    """读取 [start_frame, end_frame) 区间并按 subsampling 抽帧，返回 [N, H, W, 3] float32 RGB tensor。
+    ★ 流式：解码循环内联抽帧，被抽掉的帧不转 tensor、不占内存。
+    subsampling=1 时行为与旧版逐帧全量读取完全一致。"""
+    subsampling = max(1, int(subsampling))
     try:
-        return _read_frames_range_av(video_path, start_frame, end_frame)
+        return _read_frames_range_av(video_path, start_frame, end_frame, subsampling)
     except Exception:
-        return _read_frames_range_cv2(video_path, start_frame, end_frame)
+        return _read_frames_range_cv2(video_path, start_frame, end_frame, subsampling)
 
 
-def _read_frames_range_av(video_path: str, start_frame: int, end_frame: int) -> torch.Tensor:
+def _read_frames_range_av(video_path: str, start_frame: int, end_frame: int, subsampling: int = 1) -> torch.Tensor:
     frames = []
+    kept = 0  
     with av.open(video_path) as container:
         stream = container.streams.video[0]
         fps = float(stream.average_rate) if stream.average_rate else 24.0
@@ -269,31 +267,34 @@ def _read_frames_range_av(video_path: str, start_frame: int, end_frame: int) -> 
                 continue
             if cur >= end_frame:
                 break
-            frames.append(torch.from_numpy(frame.to_ndarray(format="rgb24")).float() / 255.0)
-            if len(frames) >= (end_frame - start_frame):
-                break
+            if kept % subsampling == 0:
+                frames.append(torch.from_numpy(frame.to_ndarray(format="rgb24")).float() / 255.0)
+            kept += 1
     if not frames:
         raise ValueError("未读取到任何帧")
     return torch.stack(frames, dim=0)
 
 
-def _read_frames_range_cv2(video_path: str, start_frame: int, end_frame: int) -> torch.Tensor:
+def _read_frames_range_cv2(video_path: str, start_frame: int, end_frame: int, subsampling: int = 1) -> torch.Tensor:
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise IOError(f"无法打开视频: {video_path}")
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
     frames = []
+    kept = 0
     for _ in range(start_frame, end_frame):
         ret, frame = cap.read()
         if not ret:
             break
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        tensor = torch.from_numpy(frame_rgb.astype(np.float32) / 255.0)
-        frames.append(tensor)
+        if kept % subsampling == 0:
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frames.append(torch.from_numpy(frame_rgb.astype(np.float32) / 255.0))
+        kept += 1
     cap.release()
     if not frames:
         raise ValueError("未读取到任何帧")
     return torch.stack(frames, dim=0)
+
 
 
 def detect_scenes_direct(video_path: str, threshold: float) -> list:
@@ -639,15 +640,12 @@ class ElementSceneDetection(io.ComfyNode):
         total_frames = int(state.get("total_frames") or 0)
         local_video_path = state.get("local_video_path", "")
 
-        # ★ 唯一视频源：时间线中导入的本地文件。
-        # 无源时直接在本节点报清晰错误，而不是把 None 传给下游节点引发难懂的崩溃
         if not (local_video_path and os.path.exists(local_video_path)):
             raise RuntimeError(
                 "[ESD] No usable video source: import a video in the node UI first. "
-                "If imported earlier, the temp file may have been cleaned up — re-import."
+                "If imported earlier, the file may have been moved or deleted — re-import."
             )
 
-        # 只读 header 拿分辨率（不解码画面，本节点执行极轻）
         width, height = _probe_video_size(local_video_path)
 
         if node_id is not None:
@@ -669,8 +667,6 @@ class ElementSceneDetection(io.ComfyNode):
                 segs.append((start, tf))
             return segs
 
-        # ★ 解析前端时间线；"平凡时间线"（单段覆盖全片）视为"没有剪辑决定"，
-        # 否则勾选了自动分割也永远检测不到入口（前端导入后总是保存整片单段）
         seg_ranges = _parse_ranges(state.get("segments"))
         if len(seg_ranges) == 1 and seg_ranges[0][0] == 0 and seg_ranges[0][1] == max(1, total_frames):
             seg_ranges = []
@@ -680,7 +676,6 @@ class ElementSceneDetection(io.ComfyNode):
             print(f"[ESD] Auto scene detection on execute: threshold={thr}")
             cuts = detect_scenes_direct(local_video_path, thr)
             print(f"[ESD] Auto-detected {len(cuts)} cuts")
-            # ★ 无论检测结果是否为空都覆盖缓存，防止前端兜底拉到过期切点
             if node_id is not None:
                 _auto_cuts_cache[node_id] = list(cuts)
             if cuts and node_id is not None:
@@ -689,7 +684,6 @@ class ElementSceneDetection(io.ComfyNode):
                 except Exception as e:
                     print(f"[ESD] websocket cut sync failed (frontend will fall back to HTTP): {e}")
         else:
-            # ★ 本轮未做自动检测——清掉旧缓存，防止前端兜底把过期切点套到不一致的时间线上
             if node_id is not None:
                 _auto_cuts_cache.pop(node_id, None)
 
@@ -775,13 +769,12 @@ class ElementVideoClip(io.ComfyNode):
             ranges = list(segments)
         else:
             if mode == "segnum":
-                # ★ SegNum 现在是本节点自己的参数；越界时钳制到最后一段
                 idx = max(0, min(int(SegNum or 1) - 1, len(segments) - 1))
             elif mode == "first clip":
                 idx = 0
             elif mode == "last clip":
                 idx = len(segments) - 1
-            else:  # select clip：用时间线上选中的片段（未选中则回退第一段）
+            else:  
                 sel = []
                 for i in (data.get("selected_indices") or []):
                     try:
@@ -793,23 +786,20 @@ class ElementVideoClip(io.ComfyNode):
                 idx = sel[0] if sel else 0
             ranges = [segments[idx]]
 
-        # 读取画面（按片段源区间），再按 subsampling 抽帧
         clips = []
         for (s, e) in ranges:
             try:
-                t = read_frame_range(video_path, s, e)
+                t = read_frame_range(video_path, s, e, subsampling=n)
             except Exception as err:
                 raise RuntimeError(f"[ElementVideoClip] Failed to load segment ({s}-{e} frames): {err}")
-            if n > 1:
-                t = t[::n]
             clips.append(t)
+
         images = torch.cat(clips, dim=0) if len(clips) > 1 else clips[0]
-        first_image = images[0:1]   # ★ [1,H,W,C]，保持 batch 维
-        last_image = images[-1:]    # ★
+        first_image = images[0:1]   
+        last_image = images[-1:]    
         frame_count = int(images.shape[0])
         seconds = frame_count / out_fps
 
-        # 音频：整轨解码一次，按片段切分（不随 subsampling 抽帧）
         audio_tensor = None
         sample_rate = 44100
         try:
@@ -887,6 +877,23 @@ NODE_DISPLAY_NAME_MAPPINGS = {
 }
 
 # ========== API 路由 ==========
+def _sha256_of_file(path: str, chunk: int = 1 << 20) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(chunk), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def _safe_upload_name(filename: str) -> str:
+    """清洗上传文件名：取 basename、替换非法字符，保证落盘到 input 目录安全。"""
+    base = os.path.basename((filename or "").strip()) or "video"
+    stem, ext = os.path.splitext(base)
+    stem = re.sub(r'[\\/:*?"<>|\x00-\x1f\r\n\t]', "_", stem).strip() or "video"
+    ext = re.sub(r'[\\/:*?"<>|\x00-\x1f\r\n\t]', "", ext) or ".mp4"
+    return stem + ext
+
+
 @PromptServer.instance.routes.post("/element_scene_detection/upload_video")
 async def upload_video_handler(request):
     try:
@@ -894,17 +901,48 @@ async def upload_video_handler(request):
         file = data.get("video_file")
         if not file:
             return web.json_response({"error": "No file"}, status=400)
-        ext = os.path.splitext(file.filename)[1] or ".mp4"
-        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
-            tmp.write(file.file.read())
-            tmp_path = tmp.name
-        print(f"[ESD] Uploaded: {tmp_path}")
-        info = get_video_info(tmp_path)
-        info["file_path"] = tmp_path
+        esd_dir = os.path.join(folder_paths.get_input_directory(), "element_scene_detection")
+        os.makedirs(esd_dir, exist_ok=True)
+        target = os.path.join(esd_dir, _safe_upload_name(file.filename))
+        part = f"{target}.{os.getpid()}_{time.time_ns()}.part"
+        try:
+            h = hashlib.sha256()
+            total = 0
+            with open(part, "wb") as out:
+                while True:
+                    block = file.file.read(1 << 20)
+                    if not block:
+                        break
+                    out.write(block)
+                    h.update(block)
+                    total += len(block)
+            if total == 0:
+                raise ValueError("Empty upload")
+            digest = h.hexdigest()
+            if os.path.exists(target) and _sha256_of_file(target) == digest:
+                os.remove(part)   
+            else:
+                if os.path.exists(target):
+                    stem, ext = os.path.splitext(target)
+                    i = 1
+                    while os.path.exists(f"{stem}_{i}{ext}"):
+                        i += 1
+                    target = f"{stem}_{i}{ext}"
+                os.replace(part, target)  
+        except Exception:
+            try:
+                os.remove(part)
+            except Exception:
+                pass
+            raise
+        print(f"[ESD] Uploaded: {target}")
+        info = get_video_info(target)
+        info["file_path"] = target
         return web.json_response(info)
     except Exception as e:
         print(f"[ESD] Upload error: {e}")
         return web.json_response({"error": str(e)}, status=500)
+
 
 
 @PromptServer.instance.routes.post("/element_scene_detection/detect")
@@ -962,8 +1000,6 @@ async def esd_auto_cuts_handler(request):
     except ValueError:
         nid = -1
     cuts = _auto_cuts_cache.get(nid, [])
-    # ★ 排查打印——确认前端查询的 nid 与后端缓存键是否一致（定位后可删）
-    #print(f"[ESD] auto_cuts 查询 nid={nid} | 缓存键={list(_auto_cuts_cache.keys())} | 命中={len(cuts)}")
     return web.json_response({"cuts": cuts})
 
 

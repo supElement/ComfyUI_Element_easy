@@ -80,6 +80,6 @@ Transport bar below the preview: jump to timeline start/end, jump to current cli
    - Required: `av` (PyAV)
    - For scene detection: `pip install scenedetect`
    - For audio playback / export with audio: **ffmpeg** must be installed on the system (without it, clips export without audio)
-2. **Temporary files**: Uploaded videos are stored in the system temp directory; if cleaned up, re-import is required
+2. **Temporary files**: Uploaded videos are saved to ComfyUI/input/element_scene_detection/ and persist with the workflow; re-import only if the file was manually moved or deleted
 3. **Manual edits take priority**: Once you have trimmed/reordered the timeline, Auto Run will not overwrite your manual decisions
 4. The info output is a JSON bundle (containing video path, segment ranges, FPS, etc.) designed for this node group's downstream nodes, and can be parsed by Element Video Clip / Element Video Info

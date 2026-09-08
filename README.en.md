@@ -27,7 +27,7 @@ Enter the ./ComfyUI/custom_nodes directory and run the following code:<br>
 
 ## v1.5.4
 
-- Added Element Scene Detection video loading, intelligent scene detection node, and配套 nodes Element Video Clip and Element Video Info.
+- Added Element Scene Detection video loading, intelligent scene detection node, and supporting nodes Element Video Clip and Element Video Info.
 - Element Scene Detection is a "visual single-track video clipper" node: after importing the video, it can automatically detect shot cuts (PySceneDetect), and manually trim, reorder, and preview clips on the interactive timeline, and one-click deliver the clip results to downstream nodes for output of images and audio.
 - Its core value lies in: embedding the traditional "cutting—rough cut—taking clips" process that needs to be completed with professional video editing software directly into the ComfyUI workflow, so that video batch processing and fragmented generation workflows can be completed without leaving the canvas.
 - In most cases, it can replace the load video node.

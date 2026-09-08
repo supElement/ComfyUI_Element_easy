@@ -3,39 +3,31 @@ import { app } from "../../../scripts/app.js";
 // const NODE_NAME = "ElementSceneDetection";
 const STYLE_ID = "esd-style";
 const MIN_SEG_FRAMES = 2; // ★ 修剪后每个片段保留的最小帧数
-const EXPORT_DIR_MAX_W = 420; // ★ Out Dir 字段（含标签文字）随节点拉伸的最大宽度(px)，按需调整
+const EXPORT_DIR_MAX_W = 420; // ★ Out Dir 字段
 
 /* =====================================================
-   说明：下方 SVG 里的 xmlns="http://www.w3.org/2000/svg" 只是 XML 命名空间"标识字符串"，不是网络地址，浏览器永远不会
-   访问它。所有光标/图标都是 data:URI 内嵌源码，本组件无任何外部
-   资源请求。该属性必须保留：data:URI 中的 SVG 按独立 XML 解析，
-   缺少 xmlns 会导致光标静默失效。
+   说明：下方 SVG 里的 xmlns="http://www.w3.org/2000/svg" 只是 XML 命名空间"标识字符串"
    ===================================================== */
 function svgToCursor(svg, x, y) {
   return `url("data:image/svg+xml;charset=utf8,${encodeURIComponent(svg)}") ${x} ${y}, auto`;
 }
 
-// 手型（悬停片段）
 const CURSOR_HAND = svgToCursor(
   '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 14a8 8 0 0 1-8 8"/><path d="M18 11v-1a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V9a2 2 0 0 0-2-2a2 2 0 0 0-2 2v1"/><path d="M10 9.5V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v10"/><path d="M18 11a2 2 0 1 1 4 0v3a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>',
   8, 2);
 
-// 左右箭头（时间标尺 / 时间游标）
 const CURSOR_EW = svgToCursor(
   '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="16" viewBox="0 0 24 16"><path fill="white" d="M7 4 2 8l5 4v-2.5h10V12l5-4-5-4v2.5H7V4z"/></svg>',
   12, 8);
 
-// 剪刀（手动标记模式下轨道上）
 const CURSOR_SCISSORS = svgToCursor(
   '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>',
   12, 12);
 
-// [ ] 左右修剪（片段边缘）
 const CURSOR_TRIM = svgToCursor(
   '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4H4v16h4"/><path d="M16 4h4v16h-4"/><path d="M7 12h10"/><path d="m14 9 3 3-3 3"/><path d="m10 9-3 3 3 3"/></svg>',
   12, 12);
 
-/* ===================== 白色 SVG 图标 ===================== */
 const svgIcon = (paths, size = 13) =>
   `<svg class="esd-ico" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`;
 
@@ -50,7 +42,6 @@ const ICONS = {
   chevronLeft: '<path d="m15 18-6-6 6-6"/>',
   chevronRight: '<path d="m9 18 6-6-6-6"/>',
   music: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
-  /* ★ 播放控制图标 */
   play: '<path d="M7 4.5v15l13-7.5z" fill="#ffffff" stroke="none"/>',
   stop: '<rect x="6" y="6" width="12" height="12" rx="1.5" fill="#ffffff" stroke="none"/>',
   playAll: '<path d="M3 6h10"/><path d="M3 12h10"/><path d="M3 18h10"/><path d="M16 4.5v15l7.5-7.5z" fill="#ffffff" stroke="none"/>',
@@ -61,8 +52,6 @@ const ICONS = {
 
 };
 
-/* ★ 方案A：预览统一画质。解码永远是全分辨率，两档小图不省时间，
-   反而让松手时对同一帧再解码/编码一次。只留一档：同帧命中同一 URL/缓存，松手刷新近乎免费。 */
 const PREVIEW_SIZE = 384;
 
 function installStyles() {
@@ -83,7 +72,7 @@ function installStyles() {
       user-select: none;
     }
     .esd * { box-sizing: border-box; }
-    .esd img { pointer-events: none; -webkit-user-drag: none; } /* ★ 锁定所有图片：禁止原生拖拽/命中 */
+    .esd img { pointer-events: none; -webkit-user-drag: none; } 
     .esd button { font: inherit; }
     .esd-head {
       display: flex; align-items: center; gap: 6px; padding: 8px;
@@ -101,12 +90,11 @@ function installStyles() {
       border-bottom: 1px solid var(--line);
       font-size: 11px;
       white-space: nowrap;
-      /* 原来的 overflow / text-overflow 移到 .esd-vinfo-main */
     }
     .esd-vinfo-main {
       overflow: hidden;
       text-overflow: ellipsis;
-      min-width: 0;          /* flex 子项允许收缩，超长时省略 */
+      min-width: 0;          
     }
 
 
@@ -121,7 +109,7 @@ function installStyles() {
     .esd-btn.primary:hover { background: #3a6a9a; }
     .esd-spacer { flex: 1; }
     .esd-status {
-      margin-left: auto;     /* ★ 推到信息行右缘 */
+      margin-left: auto;    
       flex-shrink: 0;
       color: var(--muted);
       max-width: 180px;
@@ -129,15 +117,14 @@ function installStyles() {
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-	/* ★ Out Dir 字段：随节点宽度拉伸，上限由 EXPORT_DIR_MAX_W 控制 */
     .esd-field.grow {
       flex: 1 1 auto;
-      flex-shrink: 1;              /* 窄节点时允许收缩（覆盖 .esd-field 的 flex-shrink:0） */
+      flex-shrink: 1;              
       min-width: 150px;
       max-width: ${EXPORT_DIR_MAX_W}px;
     }
     .esd-field.grow input[type="text"] {
-      width: auto;                 /* 覆盖固定 130px */
+      width: auto;                
       flex: 1 1 auto;
       min-width: 90px;
     }
@@ -146,16 +133,14 @@ function installStyles() {
     .esd-preview-container {
       display: flex; flex-direction: column; align-items: center; justify-content: center;
       padding: 4px 12px; background: #0d1118; border-bottom: 1px solid var(--line);
-      height: 308px; min-height: 308px; /* ★ 308 = 264 画面 + 34 控制条 + padding */
+      height: 308px; min-height: 308px; 
       flex-shrink: 0; gap: 4px; position: relative;
     }
-    /* ★ 方案A：显示尺寸由 CSS 固定，仅一档画质来源，无呼吸效应 */
     .esd-preview-container img {
       height: 264px; width: auto; max-width: 100%;
       object-fit: contain; border-radius: 4px; background: #000;
       flex-shrink: 0; display: block;
     }
-    /* ★ 播放控制条：wrap 收缩到画面宽度 → 帧数信息右缘与画面右缘对齐 */
     .esd-preview-wrap { display: flex; flex-direction: column; align-items: center; gap: 2px; max-width: 100%; min-width: 250px; }
     .esd-preview-bar { display: flex; align-items: center; gap: 6px; align-self: stretch; flex-shrink: 0; }
     .esd-transport { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
@@ -168,9 +153,8 @@ function installStyles() {
     .esd-field input[type="checkbox"] { accent-color: var(--cyan); width: 16px; height: 16px; cursor: pointer; flex-shrink: 0; }
     .esd-timeline-shell { flex: 0 0 auto; height: 166px; display: flex; flex-direction: column; min-height: 0px; border-bottom: 1px solid var(--line); overflow: hidden; }
     .esd-viewport {
-      /* 原: flex: 1; overflow: auto; */
       flex: 0 0 auto;
-      height: 309px;          /* 与其它块一并计入总和 */
+      height: 309px;          
       overflow: auto;
       overflow-y: hidden;
       background: #0e1219;
@@ -183,7 +167,6 @@ function installStyles() {
     .esd-tick.major { height: 13px; background: #78849a; }
     .esd-tick span { position: absolute; left: 4px; top: -11px; white-space: nowrap; font-size: 10px; }
     .esd-track { position: relative; height: 94px; border-bottom: 1px solid #262d3a; background-image: linear-gradient(90deg, rgba(255,255,255,.027) 1px, transparent 1px); }
-    /* ★ 音频轨道：承载与视频片段一一对应的波形切片 */
     .esd-track.audio { height: 40px; background-color: #111720; position: relative; border-bottom: none; }
     .esd-seg {
       position: absolute; top: 8px; height: 78px;
@@ -205,7 +188,6 @@ function installStyles() {
     .esd-drag-cut { position: absolute; top: 0; width: 2px; height: 100%; background: #ffaa00; z-index: 4; pointer-events: none; border-left: 2px dashed #ffaa00; }
     .esd-playhead { position: absolute; top: 0; bottom: 0; width: 2px; z-index: 11; background: #ff737d; cursor: ew-resize; pointer-events: none; }
     .esd-playhead::before { content: ""; position: absolute; left: -5px; top: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 8px solid #ff737d; }
-    /* ★ 波形切片（每个视频片段对应一段） */
     .esd-wave { position: absolute; top: 50%; transform: translateY(-50%); left: 0; }
     .esd-wave-seg { position: absolute; top: 0; bottom: 0; overflow: hidden; border: 1px solid rgba(86,136,236,.35); border-radius: 3px; }
     .esd-wave-seg.selected { border-color: var(--cyan); box-shadow: 0 0 0 1px #43d9d166; }
@@ -222,10 +204,8 @@ function installStyles() {
     .esd-playhead { cursor: ${CURSOR_EW}; pointer-events: auto; }
     .esd-playhead::after { content: ""; position: absolute; top: 0; bottom: 0; left: -7px; width: 16px; }
     .esd.marking .esd-track, .esd.marking .esd-track .esd-seg, .esd.marking .esd-track .esd-cut { cursor: ${CURSOR_SCISSORS}; }
-    /* ★ 片段边缘修剪光标 */
     .esd-stage.trim-hover .esd-seg, .esd-stage.trimming .esd-seg { cursor: ${CURSOR_TRIM} !important; }
     .esd-stage.trim-hover .esd-track, .esd-stage.trimming .esd-track, .esd-stage.trim-hover .esd-cut, .esd-stage.trimming .esd-cut { cursor: ${CURSOR_TRIM}; }
-    /* ★ 拖拽排序 */
     .esd-stage.reordering, .esd-stage.reordering .esd-seg { cursor: grabbing !important; }
     .esd-insert-line { position: absolute; top: 0; width: 2px; height: 100%; background: var(--cyan); box-shadow: 0 0 6px var(--cyan); z-index: 12; pointer-events: none; }
     .esd-ico { display: inline-block; vertical-align: -2px; flex-shrink: 0; }
@@ -248,14 +228,13 @@ class SceneDetectionUI {
     this.dragCut = null;
     this.draggingPlayhead = false;
     this.playheadFrame = 0;
-    this._selAnchor = null;              // Shift 连选的锚点片段
-    this._renderSig = "";                // 状态无变化时跳过整块重绘（避免缩略图闪烁）
+    this._selAnchor = null;              
+    this._renderSig = "";                
     this._lastPreviewFrame = -1;
-    this._previewSeq = 0;                // ★ 预览请求序号：只有最新响应允许上屏
-    this._probe = null;                  // ★ 方案A：当前在途探测请求，新请求前取消旧的
-    this._previewThrottleTimer = null;   // ★ 方案A：节流尾帧定时器
-    this._lastPreviewAt = 0;             // ★ 方案A：上次预览出帧时间戳（节流基准）
-    /* ★ 播放控制状态 */
+    this._previewSeq = 0;                
+    this._probe = null;                  
+    this._previewThrottleTimer = null;   
+    this._lastPreviewAt = 0;            
     this._playing = false;
     this._playRaf = 0;
     this._playAcc = 0;
@@ -268,20 +247,19 @@ class SceneDetectionUI {
     this._audioUnavailable = false;
     this.playBtn = null;
     this.playAllBtn = null;
-    /* ★ 有序片段模型：片段成为一等公民，支持移动/修剪/重排 */
-    this.order = [];      // 显示顺序的片段列表 [{start,end},...]（源帧号）
+    this.order = [];      
     this.reordered = false;
-    this._layout = [];    // 每个片段的展示坐标 {x,w}
-    this._drag = null;    // 进行中的拖拽 {type:'trim'|'move', ...}
-    this._pending = null; // 待定点击（区分"单击选择"与"拖拽排序"）
-    this.insertEl = null; // 拖拽排序的插入指示线
+    this._layout = [];    
+    this._drag = null;    
+    this._pending = null; 
+    this.insertEl = null; 
     this.cutThreshold = 40.0;
     this.segMarker = false;
     this.forceTwoParts = false;
-    this.autoExec = false; // ★ 无手动决定时，执行工作流自动场景分割
+    this.autoExec = false; 
     this.localVideoPath = "";
     this.fps = 24;
-    this.videoWidth = 0;   // ★ 分辨率（供 video_info 信息行显示）
+    this.videoWidth = 0;   
     this.videoHeight = 0;
     this.exportDir = "./ComfyUI/output/video";
     this.exportAll = false;
@@ -327,19 +305,17 @@ class SceneDetectionUI {
     newState._node_id = nodeId;
     newState.local_video_path = this.localVideoPath;
     newState.force_two_parts = this.forceTwoParts;
-    newState.auto_detect_exec = this.autoExec;    // ★ 执行时自动分割开关
+    newState.auto_detect_exec = this.autoExec;    
     newState.cut_threshold = this.cutThreshold;
     newState.SegMarker = this.segMarker;
     newState.total_frames = this.totalFrames;
     newState.waveform = this.waveform;
     newState.fps = this.fps;
-    newState.video_width = this.videoWidth || 0;  // ★ 新增
-    newState.video_height = this.videoHeight || 0;// ★ 新增
+    newState.video_width = this.videoWidth || 0;  
+    newState.video_height = this.videoHeight || 0;
     newState.export_dir = this.exportDir;
     newState.export_all = this.exportAll;
     newState.playhead_frame = this.playheadFrame || 0;
-    /* ★ 平凡时间线（未做任何剪辑决定）保存为空 segments，
-       Python 端据此识别"无决定"状态，勾选自动分割时才能在执行期触发检测 */
     const trivial = !this.reordered && this.cuts.length === 0 && this.order.length === 1
       && this.order[0].start === 0 && this.order[0].end === this.totalFrames;
     newState.segments = trivial ? [] : this.order;
@@ -355,7 +331,6 @@ class SceneDetectionUI {
     if (this._suppressLoadOnce) { this._suppressLoadOnce = false; return; }
     this.state = this.readState();
     this.cuts = this.state.cuts || [];
-    /* ★ 视频源变化时：停止播放、重置音轨探测、作废预览帧记录 */
     if (this.state.local_video_path !== this.localVideoPath) {
       this.stopPlayback(true);
       this._audioUnavailable = false;
@@ -371,12 +346,11 @@ class SceneDetectionUI {
     if (this.state.total_frames !== undefined) this.totalFrames = this.state.total_frames;
     if (this.state.waveform) this.waveform = this.state.waveform;
     this.fps = this.state.fps || 24;
-    this.videoWidth = this.state.video_width || this.videoWidth || 0;    // ★ 新增
-    this.videoHeight = this.state.video_height || this.videoHeight || 0; // ★ 新增
+    this.videoWidth = this.state.video_width || this.videoWidth || 0;    
+    this.videoHeight = this.state.video_height || this.videoHeight || 0; 
     this.exportDir = this.state.export_dir || "./ComfyUI/output/video";
     this.exportAll = this.state.export_all || false;
     if (this.state.playhead_frame !== undefined) this.playheadFrame = this.state.playhead_frame || 0;
-    /* ★ 恢复有序片段：segments 优先，兼容回退到 cuts 划分 */
     if (Array.isArray(this.state.segments) && this.state.segments.length) {
       this.order = this.state.segments
         .map(s => ({ start: Math.max(0, s.start | 0), end: s.end | 0 }))
@@ -394,12 +368,11 @@ class SceneDetectionUI {
     this.root.classList.toggle("marking", this.segMarker);
     this._syncDomFromState();
     this.render();
-    this._updateVideoInfoWidget(); // ★ 新增：刷新 video_info 信息行
+    this._updateVideoInfoWidget(); 
     if (this.totalFrames > 0) this.updatePreview(this.playheadFrame);
   }
 
 
-  /* ★ FIX 4：把内部状态回填到 DOM 控件 */
   _syncDomFromState() {
     const q = (s) => this.root.querySelector(s);
     if (q("#esd-segmarker")) q("#esd-segmarker").checked = this.segMarker;
@@ -410,7 +383,6 @@ class SceneDetectionUI {
     if (q("#esd-export-dir")) q("#esd-export-dir").value = this.exportDir;
   }
   
-  /* ★ 信息条改为面板内 DOM 显示（放弃 widget 方案：新前端下 widget value 不会刷新 DOM 输入框） */
   _updateVideoInfoWidget() {
     const el = this.root?.querySelector("#esd-vinfo-main");
     if (!el) return;
@@ -483,9 +455,6 @@ class SceneDetectionUI {
     this.stage = this.root.querySelector(".esd-stage");
     this.viewport = this.root.querySelector(".esd-viewport");
     this.status = this.root.querySelector(".esd-status");
-/*     this.framesInfo = this.root.querySelector('[data-info="frames"]');
-    this.cutsInfo = this.root.querySelector('[data-info="cuts"]');
-    this.segInfo = this.root.querySelector('[data-info="segments"]'); */
     this.previewImg = this.root.querySelector("#esd-preview-img");
     this.previewTime = this.root.querySelector("#esd-preview-time");
 
@@ -509,7 +478,6 @@ class SceneDetectionUI {
     this.root.querySelector('[data-action="upload"]').onclick = () => this.root.querySelector("#esd-upload").click();
     this.root.querySelector('[data-action="auto"]').onclick = () => this.autoSplit();
 
-    // ★ 同步切点按钮带操作反馈
     this.root.querySelector('[data-action="refresh-cuts"]').onclick = async () => {
       const before = this.cuts.length;
       this.status.textContent = "Syncing cuts...";
@@ -535,7 +503,6 @@ class SceneDetectionUI {
     this.root.querySelector('[data-action="move-right"]').onclick = () => this.moveSelected(1);
     this.root.querySelector('[data-action="fit"]').onclick = () => this.fitToWidth();
 
-    /* ★ 播放控制条 */
     this.playBtn = this.root.querySelector("#esd-play-btn");
     this.playAllBtn = this.root.querySelector("#esd-playall-btn");
     this.root.querySelector('[data-action="play-toggle"]').onclick = () => this.togglePlay();
@@ -581,13 +548,13 @@ class SceneDetectionUI {
         const data = await resp.json();
         if (data.file_path) {
           this.stopPlayback(true);
-          this._audioUnavailable = false; // ★ 新视频重新探测音轨
+          this._audioUnavailable = false; 
           this.localVideoPath = data.file_path;
           this.totalFrames = data.total_frames || 0;
           this.waveform = data.waveform || [];
           this.fps = data.fps || 24;
-          this.videoWidth = data.width || 0;   // ★ 新增：后端 get_video_info 返回的分辨率
-          this.videoHeight = data.height || 0; // ★ 新增
+          this.videoWidth = data.width || 0;   
+          this.videoHeight = data.height || 0; 
           this.playheadFrame = 0;
           this.cuts = [];
           this.selections = [];
@@ -602,7 +569,7 @@ class SceneDetectionUI {
           this.dragging = false;
           this.dragCut = null;
           this._updateTransportButtons();
-          this._updateVideoInfoWidget(); // ★ 新增：立即刷新信息行
+          this._updateVideoInfoWidget(); 
           this.updateState();
           this.status.textContent = "Uploaded";
           this.render();
@@ -622,9 +589,8 @@ class SceneDetectionUI {
     this.stage.addEventListener("pointercancel", () => this.onPointerLeave());
     this.stage.addEventListener("pointerleave", () => this.onPointerLeave());
     this.stage.addEventListener("contextmenu", e => e.preventDefault());
-    this.stage.addEventListener("dragstart", e => e.preventDefault()); // ★ 兜底：禁止原生拖拽
+    this.stage.addEventListener("dragstart", e => e.preventDefault()); 
 
-    // ★ 缩略图：成功/失败由捕获阶段监听统一维护
     this.stage.addEventListener("load", (e) => {
       const img = e.target;
       if (img && img.tagName === "IMG" && img.classList.contains("esd-seg-thumb")) {
@@ -660,7 +626,6 @@ class SceneDetectionUI {
   }
 
 
-  /* 鼠标坐标 → 舞台内容坐标（兼容 ComfyUI 画布缩放） */
   stageX(e) {
     const rect = this.stage.getBoundingClientRect();
     const visual = rect.width || 1;
@@ -668,7 +633,6 @@ class SceneDetectionUI {
     return (e.clientX - rect.left) / (visual / content);
   }
 
-  /* ===================== ★ 有序片段模型 ===================== */
   rebuildOrderFromCuts() {
     const segs = [];
     let start = 0;
@@ -681,7 +645,6 @@ class SceneDetectionUI {
   }
 
   syncCutsFromOrder() {
-    // cuts 始终记录"各片段源起点"，作为无 segments 时的兼容回退
     this.cuts = [...new Set(this.order.slice(1).map(s => s.start))].sort((a, b) => a - b);
   }
 
@@ -690,7 +653,6 @@ class SceneDetectionUI {
     return this.order;
   }
 
-  /* ===================== 坐标 / 命中工具（槽位布局） ===================== */
   segmentIndexAt(x) {
     for (let i = 0; i < this._layout.length; i++) {
       const L = this._layout[i];
@@ -699,7 +661,6 @@ class SceneDetectionUI {
     return -1;
   }
 
-  /* x → 边界（含首尾端点）。leftIdx:null=首端，rightIdx:null=末端 */
   boundaryAt(x) {
     const TH = 6, L = this._layout;
     if (!L.length) return null;
@@ -712,7 +673,6 @@ class SceneDetectionUI {
     return null;
   }
 
-  /* x → 源帧号：重排/修剪后按槽位反解（游标拖动仍能正确预览对应源帧） */
   frameAtX(x) {
     for (let i = 0; i < this._layout.length; i++) {
       const L = this._layout[i];
@@ -722,7 +682,6 @@ class SceneDetectionUI {
     return Math.round(x / this.zoom * this.fps);
   }
 
-  /* 源帧号 → x：游标/切点虚线定位用 */
   xAtFrame(frame) {
     for (let i = 0; i < this._layout.length; i++) {
       const seg = this.order[i], L = this._layout[i];
@@ -732,7 +691,6 @@ class SceneDetectionUI {
     return frame / this.fps * this.zoom;
   }
 
-  /* ===================== 拖拽中的轻量 DOM 更新 ===================== */
   setSlotGeom(i, x, w) {
     const el = this.stage.querySelector(`.esd-seg[data-segi="${i}"]`);
     if (el) {
@@ -754,13 +712,11 @@ class SceneDetectionUI {
     if (cut) cut.style.left = x + "px";
   }
 
-  /* ★ 悬浮式几何更新：只动被拖片段（首端/右侧修剪用，拖动中出现临时空隙，松手闭合） */
   setFloatGeom(i, x, w) {
     this._layout[i] = { x, w };
     this.setSlotGeom(i, x, w);
   }
 
-  /* ★ 紧凑式几何更新：从当前 order 重算全部槽位（左段修剪/联动修剪/末端用，全程无空白） */
   applyCompactGeom() {
     const fps = this.fps || 24;
     let cx = 0;
@@ -777,7 +733,6 @@ class SceneDetectionUI {
     this.updatePlayhead();
   }
 
-  /* ★ 片段 i 的 end 最多能延长到哪（不侵占其他片段的源帧；重排后同样正确） */
   maxEndFor(i, preSegs) {
     const si = preSegs[i].start;
     let hi = this.totalFrames;
@@ -788,7 +743,6 @@ class SceneDetectionUI {
     return hi;
   }
 
-  /* ★ 片段 i 的 start 最多能回伸到哪（不侵占其他片段的源帧） */
   minStartFor(i, preSegs) {
     const ei = preSegs[i].end;
     let lo = 0;
@@ -799,7 +753,6 @@ class SceneDetectionUI {
     return lo;
   }
 
-  /* 拖拽期间只提示一次的钳制原因 */
   trimHint(msg) {
     if (this._drag && !this._drag.hinted) { this._drag.hinted = true; this.status.textContent = msg; }
   }
@@ -810,7 +763,7 @@ class SceneDetectionUI {
     if (this.totalFrames > 0 && this.playheadFrame >= 0 && this.playheadFrame <= this.totalFrames) {
       this.playheadEl.style.left = this.xAtFrame(this.playheadFrame) + "px";
       this.playheadEl.style.display = "block";
-      this.playheadEl.style.height = ""; // 贯穿视频轨 + 音频轨
+      this.playheadEl.style.height = ""; 
     } else {
       this.playheadEl.style.display = "none";
     }
@@ -837,17 +790,13 @@ class SceneDetectionUI {
     this._updateVideoInfoWidget();
   }
 
-
-  /* ===================== ★ 方案A：预览（节流 + 取消过期请求） ===================== */
-  _previewQuality() { return PREVIEW_SIZE; } // ★ 方案A：单档画质
+  /* ===================== 预览（节流 + 取消过期请求） ===================== */
+  _previewQuality() { return PREVIEW_SIZE; } 
 
   previewUrl(frame, size) {
     return `/esd/preview?p=${encodeURIComponent(this.localVideoPath)}&f=${frame}&s=${size}`;
   }
 
-  /* ★ 方案A：节流（非防抖）。拖动期间以固定节奏出帧，停手后由尾帧定时器补齐
-     最后一帧。旧版 setTimeout 防抖在持续拖动时每次 move 都被重置 → 定时器
-     永远凑不满 → 预览只有停手才刷新，这正是"时不时卡顿"的主因。 */
   _schedulePreview(frame) {
     const INTERVAL = 66; // ~15fps，可按手感在 50~100 之间调
     const now = performance.now();
@@ -857,7 +806,7 @@ class SceneDetectionUI {
       this.updatePreview(frame);
       return;
     }
-    if (this._previewThrottleTimer) return; // 已有尾帧在排队，它取的是最新 playheadFrame
+    if (this._previewThrottleTimer) return; 
     this._previewThrottleTimer = setTimeout(() => {
       this._previewThrottleTimer = null;
       this._lastPreviewAt = performance.now();
@@ -891,7 +840,7 @@ class SceneDetectionUI {
     probe.decoding = "async";
     this._probe = probe;
     probe.onload = () => {
-      if (seq !== this._previewSeq) return; // ★ 序号守卫：旧响应永不覆盖新画面
+      if (seq !== this._previewSeq) return; 
       this.previewImg.src = url;
       this.previewImg.style.display = 'block';
       this._lastPreviewFrame = frame;
@@ -901,7 +850,6 @@ class SceneDetectionUI {
     probe.src = url;
   }
 
-  /* ===================== ★ 播放控制（预览下方控制条） ===================== */
   _canTransport() {
     return !!(this.localVideoPath && this.totalFrames > 0 && this.order && this.order.length);
   }
@@ -911,7 +859,7 @@ class SceneDetectionUI {
     if (!o || !o.length) return -1;
     for (let i = 0; i < o.length; i++) if (f >= o[i].start && f < o[i].end) return i;
     let idx = 0;
-    for (let i = 0; i < o.length; i++) if (o[i].start <= f) idx = i;  // 端点/间隙回退
+    for (let i = 0; i < o.length; i++) if (o[i].start <= f) idx = i;  
     return idx;
   }
 
@@ -929,7 +877,6 @@ class SceneDetectionUI {
     this.previewTime.textContent = `Frame: ${frame} /${this.totalFrames} (${(frame / this.fps).toFixed(2)}s)`;
   }
 
-  /* ★ 两个播放按钮的图标/高亮随播放状态联动 */
   _updateTransportButtons() {
     if (!this.playBtn) return;
     const segPlaying = this._playing && !this._playAllMode;
@@ -942,10 +889,10 @@ class SceneDetectionUI {
     }
   }
 
-  togglePlay() { // 按钮①：播放/停止 当前片段
+  togglePlay() { 
     if (!this._canTransport()) return;
     if (this._playing && !this._playAllMode) { this.stopPlayback(); return; }
-    if (this._playing && this._playAllMode) { // 连播中 → 无缝切回仅当前片段
+    if (this._playing && this._playAllMode) { 
       this._playAllMode = false;
       this._rebasePlayback();
       this.status.textContent = "Playing";
@@ -955,10 +902,10 @@ class SceneDetectionUI {
     this.startPlayback(false);
   }
 
-  togglePlayAll() { // 按钮②：连播全部片段 / 停止
+  togglePlayAll() { 
     if (!this._canTransport()) return;
     if (this._playing && this._playAllMode) { this.stopPlayback(); return; }
-    if (this._playing && !this._playAllMode) { // 单段播放中 → 无缝切为连播全部
+    if (this._playing && !this._playAllMode) { 
       this._playAllMode = true;
       this._rebasePlayback();
       this.status.textContent = "Playing (all)";
@@ -973,7 +920,7 @@ class SceneDetectionUI {
     if (i < 0) return;
     const cur = this.order[i];
     let from = this.playheadFrame;
-    if (from >= cur.end - 1) from = cur.start; // 已到末帧 → 从片段起点重播
+    if (from >= cur.end - 1) from = cur.start; 
     from = Math.max(cur.start, Math.min(cur.end - 1, from));
     this._playAllMode = !!playAll;
     this._playQueue = [{ start: from, end: cur.end }];
@@ -1010,7 +957,7 @@ class SceneDetectionUI {
   _playTick(now) {
     this._playRaf = 0;
     if (!this._playing) return;
-    const dt = Math.min(0.25, (now - this._playLastT) / 1000); // 切后台回来不狂跳
+    const dt = Math.min(0.25, (now - this._playLastT) / 1000); 
     this._playLastT = now;
     this._playAcc += dt * (this.fps || 24);
     const range = this._playQueue[0];
@@ -1024,7 +971,7 @@ class SceneDetectionUI {
     if (f >= range.end) {
       this._playQueue.shift();
       const nxt = this._playQueue[0];
-      if (!nxt) {   // 播完：停在末帧
+      if (!nxt) {   
         this.playheadFrame = Math.max(0, Math.min(this.totalFrames - 1, range.end - 1));
         this._playAcc = 0;
         this.updatePlayhead();
@@ -1032,17 +979,17 @@ class SceneDetectionUI {
         this.stopPlayback();
         return;
       }
-      f = nxt.start; this._playAcc = 0; this._syncAudio(f, true); // 连播：接续下一段
+      f = nxt.start; this._playAcc = 0; this._syncAudio(f, true); 
     }
     this.playheadFrame = f;
     this.updatePlayhead();
     this._updatePreviewTimeText(f);
-    this._schedulePreview(f);   // 复用节流（~15fps 出帧）
-    this._syncAudio(f, false);  // 音画漂移校正
+    this._schedulePreview(f);   
+    this._syncAudio(f, false);  
     this._playRaf = requestAnimationFrame(this._playTickBound);
   }
 
-  _rebasePlayback(seek = true) {   // 播放中跳转/切模式后，以新位置重建剩余播放队列
+  _rebasePlayback(seek = true) {   
     if (!this._playing) return;
     const i = this._segIndexAtFrame(this.playheadFrame);
     if (i < 0) { this.stopPlayback(); return; }
@@ -1093,16 +1040,15 @@ class SceneDetectionUI {
     this._rebasePlayback();
   }
 
-  /* ---- 音频同步：后端 /esd/audio 提供整条音轨 ---- */
   _ensureAudio() {
     if (this._audioUnavailable) return;
     if (!this._audioEl || this._audioPath !== this.localVideoPath) {
       try { this._audioEl?.pause?.(); } catch (_) {}
       const el = new Audio(`/esd/audio?p=${encodeURIComponent(this.localVideoPath)}`);
       el.preload = "auto";
-      el.addEventListener("error", () => { this._audioUnavailable = true; }); // 无音轨 → 静默降级
+      el.addEventListener("error", () => { this._audioUnavailable = true; }); 
       el.addEventListener("loadedmetadata", () => {
-        if (this._playing) this._syncAudio(this.playheadFrame, true); // 元数据就绪后立即对齐
+        if (this._playing) this._syncAudio(this.playheadFrame, true); 
       });
       this._audioEl = el;
       this._audioPath = this.localVideoPath;
@@ -1138,36 +1084,33 @@ class SceneDetectionUI {
 
   onPointerDown(e) {
     const x = this.stageX(e);
-    if (e.button === 2) { this.deleteBoundaryAt(x); return; } // 右键边界 = 合并两段
+    if (e.button === 2) { this.deleteBoundaryAt(x); return; } 
     if (e.button !== 0) return;
-    // 时间标尺：按下并拖动 = 移动时间游标
     if (e.target?.closest?.(".esd-ruler")) {
       this.draggingPlayhead = true;
-      this._cancelScheduledPreview(); // ★ 方案A
+      this._cancelScheduledPreview(); 
       this.playheadFrame = Math.max(0, Math.min(this.totalFrames - 1, this.frameAtX(x)));
       this.updatePlayhead();
       this.updatePreview(this.playheadFrame);
-      this._lastPreviewAt = performance.now(); // ★ 方案A：从按下时刻起算节流间隔，首拖不连发
-      if (this._playing) this._rebasePlayback(); // ★ 播放中：立即对齐音频并重建队列
+      this._lastPreviewAt = performance.now(); 
+      if (this._playing) this._rebasePlayback(); 
       try { this.stage.setPointerCapture(e.pointerId); } catch (_) {}
       return;
     }
-    // 手动标记模式：按下/拖拽 = 添加切点（松手时把命中片段一分为二）
+
     if (this.segMarker) {
       this.dragging = true;
       this.dragCut = Math.max(1, Math.min(this.totalFrames - 1, this.frameAtX(x)));
       this.updateDragCut();
       return;
     }
-    // ★ 片段边缘：修剪
-    // 普通拖动 = 偏向哪段就修剪哪段（另一段不动）
-    // Alt/Ctrl+拖动 = 联动修剪（两侧此消彼长，分割点整体移动）
+
     const b = this.boundaryAt(x);
     if (b) {
       const roll = e.altKey || e.ctrlKey || e.metaKey;
       let side;
-      if (b.leftIdx == null) side = "right";           // 首端只有右侧片段
-      else if (b.rightIdx == null) side = "left";      // 末端只有左侧片段
+      if (b.leftIdx == null) side = "right";           
+      else if (b.rightIdx == null) side = "left";      
       else side = (x < this._layout[b.rightIdx].x) ? "left" : "right";
       this._drag = {
         type: "trim", mode: roll ? "roll" : "side",
@@ -1181,7 +1124,7 @@ class SceneDetectionUI {
       try { this.stage.setPointerCapture(e.pointerId); } catch (_) {}
       return;
     }
-    // ★ 片段体：延迟到 pointerup 再选择，先识别是否为拖拽排序
+
     const idx = this.segmentIndexAt(x);
     if (idx < 0) return;
     this._pending = { idx, x, shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey };
@@ -1195,8 +1138,8 @@ class SceneDetectionUI {
       if (f !== this.playheadFrame) {
         this.playheadFrame = f;
         this.updatePlayhead();
-        this._schedulePreview(f); // ★ 方案A：节流出帧，持续拖动也按固定节奏刷新
-        if (this._playing) this._rebasePlayback(false); // ★ 播放中：重建队列，音频由 tick 校正（拖动中不 seek 风暴）
+        this._schedulePreview(f); 
+        if (this._playing) this._rebasePlayback(false); 
       }
       return;
     }
@@ -1214,22 +1157,21 @@ class SceneDetectionUI {
       }
       return;
     }
-    this.updateTrimCursor(e); // 悬停边缘 → 修剪光标
+    this.updateTrimCursor(e); 
   }
 
   onPointerUp(e) {
-    this._cancelScheduledPreview(); // ★ 方案A
+    this._cancelScheduledPreview(); 
     if (e.button !== 0) return;
     if (this.draggingPlayhead) {
       this.draggingPlayhead = false;
-      if (this._playing) this._rebasePlayback(false); // ★ 播放中：以松手位置重建剩余播放队列
-      this.updatePreview(this.playheadFrame, true);   // ★ 方案A：松手强制精确刷新（同档画质命中缓存，代价极小）
+      if (this._playing) this._rebasePlayback(false); 
+      this.updatePreview(this.playheadFrame, true);   
       this.updateState();
     } else if (this.dragging && this.segMarker) {
       const frame = this.dragCut;
       const idx = this.order.findIndex(s => frame > s.start && frame < s.end);
       if (idx >= 0) {
-        // ★ 在命中片段内部一分为二（保持当前排列，不重置）
         const s = this.order[idx];
         this.order.splice(idx, 1, { start: s.start, end: frame }, { start: frame, end: s.end });
         this.syncCutsFromOrder();
@@ -1246,7 +1188,7 @@ class SceneDetectionUI {
     } else if (this._drag?.type === "move") {
       this.commitReorder();
     } else if (this._pending) {
-      // 未拖动 → 按点击选择处理（Ctrl 加选 / Shift 连选）
+
       const { idx, shift, ctrl } = this._pending;
       if (shift) {
         const anchor = this._selAnchor != null ? this._selAnchor : (this.selections.length ? this.selections[this.selections.length - 1] : 0);
@@ -1270,11 +1212,11 @@ class SceneDetectionUI {
   }
 
   onPointerLeave() {
-    this._cancelScheduledPreview(); // ★ 方案A
+    this._cancelScheduledPreview(); 
     if (this.draggingPlayhead) {
       this.draggingPlayhead = false;
-      if (this._playing) this._rebasePlayback(false); // ★ 播放中：拖出画布同样重建队列
-      this.updatePreview(this.playheadFrame, true);   // ★ 方案A：拖出画布也补一帧精确画面
+      if (this._playing) this._rebasePlayback(false); 
+      this.updatePreview(this.playheadFrame, true);   
       this.updateState();
     }
     if (this.dragging) {
@@ -1283,7 +1225,7 @@ class SceneDetectionUI {
       this.updateDragCut();
     }
     if (this._drag?.type === "trim") {
-      this.commitTrim(); // 拖出画布视为确认
+      this.commitTrim(); 
     } else if (this._drag?.type === "move") {
       if (this.insertEl) { this.insertEl.remove(); this.insertEl = null; }
       this.stage.classList.remove("reordering");
@@ -1293,17 +1235,16 @@ class SceneDetectionUI {
     this.stage?.classList.remove("trim-hover");
   }
 
-  /* ===================== ★ 修剪核心（偏向感知 + 联动两种模式） ===================== */
+  /* ===================== 修剪核心（偏向感知 + 联动两种模式） ===================== */
 
   applyTrimLive(x) {
     const d = this._drag;
     if (!d || d.type !== "trim") return;
     const fps = this.fps || 24;
     const MIN_F = MIN_SEG_FRAMES;
-    const df = Math.round((x - d.startX) / this.zoom * fps); // 鼠标位移换算为帧数
+    const df = Math.round((x - d.startX) / this.zoom * fps); 
     const pre = d.pre;
 
-    /* —— 首端（第一段左边缘）—— */
     if (d.leftIdx == null) {
       const i = d.rightIdx;
       const p = pre.segs[i];
@@ -1320,7 +1261,6 @@ class SceneDetectionUI {
       return;
     }
 
-    /* —— 末端（最后一段右边缘）—— */
     if (d.rightIdx == null) {
       const i = d.leftIdx;
       const p = pre.segs[i];
@@ -1335,14 +1275,12 @@ class SceneDetectionUI {
       return;
     }
 
-    /* —— 中间边界 —— */
     const li = d.leftIdx, ri = d.rightIdx;
     if (d.mode === "roll") {
-      /* Alt/Ctrl：联动修剪 */
       const pl = pre.segs[li], pr = pre.segs[ri];
       let lo, hi;
-      if (pl.end === pr.start) { lo = pl.start + MIN_F; hi = pr.end - MIN_F; }   // 源相邻
-      else { lo = Math.max(pl.start, pr.start) + MIN_F; hi = Math.min(pl.end, pr.end) - MIN_F; } // 重排后按交集钳制
+      if (pl.end === pr.start) { lo = pl.start + MIN_F; hi = pr.end - MIN_F; }   
+      else { lo = Math.max(pl.start, pr.start) + MIN_F; hi = Math.min(pl.end, pr.end) - MIN_F; } 
       if (lo > hi) { this.trimHint("No trim range on this boundary"); return; }
       const frame = Math.max(lo, Math.min(hi, pl.end + df));
       if (frame === this.order[li].end && frame === this.order[ri].start) return;
@@ -1353,7 +1291,6 @@ class SceneDetectionUI {
     }
 
     if (d.side === "left") {
-      /* ★ 偏向左侧：只改左段 */
       const p = pre.segs[li];
       const lo = p.start + MIN_F, hi = this.maxEndFor(li, pre.segs);
       if (lo > hi) { this.trimHint("No trim range"); return; }
@@ -1366,7 +1303,6 @@ class SceneDetectionUI {
       return;
     }
 
-    /* ★ 偏向右侧：只改右段（悬浮式：松手后自动贴合闭合） */
     const p = pre.segs[ri];
     const lo = this.minStartFor(ri, pre.segs), hi = p.end - MIN_F;
     if (lo > hi) { this.trimHint("No trim range"); return; }
@@ -1385,14 +1321,14 @@ class SceneDetectionUI {
     this._drag = null;
     this.stage.classList.remove("trimming");
     const changed = !!(d && JSON.stringify(d.pre.segs) !== JSON.stringify(this.order.map(o => ({ start: o.start, end: o.end }))));
-    this.reordered = true; // 时间线已偏离 cuts 划分，Python 端改用 segments
+    this.reordered = true; 
     this.syncCutsFromOrder();
     this.updateState();
-    this.render(); // 重排槽位：临时空隙在此闭合
+    this.render(); 
     if (changed) this.status.textContent = "Trim applied";
   }
 
-  deleteBoundaryAt(x) { /* 右键边界 = 合并两段（仅源相邻时） */
+  deleteBoundaryAt(x) { 
     const hit = this.boundaryAt(x);
     if (!hit || hit.leftIdx == null || hit.rightIdx == null) return;
     const l = this.order[hit.leftIdx], r = this.order[hit.rightIdx];
@@ -1410,7 +1346,7 @@ class SceneDetectionUI {
   }
 
 
-  /* ===================== ★ 拖拽排序 ===================== */
+  /* ===================== 拖拽排序 ===================== */
   beginReorderDrag() {
     const idx = this._pending.idx;
     if (!this.selections.includes(idx)) {
@@ -1464,11 +1400,10 @@ class SceneDetectionUI {
     if (!this.fps) return 0;
     const segs = this.getSegments();
     if (!segs.length) return this.totalFrames ? this.totalFrames / this.fps : 0;
-    return segs.reduce((a, s) => a + (s.end - s.start), 0) / this.fps; // ★ 槽位时间线总时长
+    return segs.reduce((a, s) => a + (s.end - s.start), 0) / this.fps; 
   }
 
   computeRenderSig() {
-    // ★ order 取代 cuts 进入签名：修剪/重排后能正确触发重绘，缩略图按新片段重新生成
     return JSON.stringify([
       this.zoom, this.totalFrames, this.fps,
       this.order, this.reordered ? 1 : 0,
@@ -1484,8 +1419,7 @@ class SceneDetectionUI {
   }
 
   render() {
-    if (this._playing) this.stopPlayback(true); // ★ 结构变化（修剪/重排/换片）即停止播放
-    // 状态无变化时跳过整块重绘：缩略图/波形完全静止，零闪烁
+    if (this._playing) this.stopPlayback(true); 
     const sig = this.computeRenderSig();
     if (sig === this._renderSig) {
       this.syncSelections();
@@ -1507,7 +1441,6 @@ class SceneDetectionUI {
     }
     html += '</div><div class="esd-track">';
     const segs = this.getSegments();
-    /* ★ 槽位布局：片段按显示顺序首尾相接，从 x=0 起，任何时刻无空白 */
     this._layout = [];
     let cx = 0;
     for (let i = 0; i < segs.length; i++) {
@@ -1522,7 +1455,6 @@ class SceneDetectionUI {
       const denom = Math.max(1, numThumbs - 1);
       let thumbsHtml = "";
       for (let j = 0; j < numThumbs; j++) {
-        /* ★ 最后一张缩略图取段内最后一帧 */
         let frame = Math.round(seg.start + (seg.end - seg.start) * (j / denom));
         if (j === numThumbs - 1) frame = seg.end - 1;
         frame = Math.max(seg.start, Math.min(seg.end - 1, frame));
@@ -1530,12 +1462,10 @@ class SceneDetectionUI {
       }
       html += `<div class="esd-seg ${sel ? "selected" : ""}" data-segi="${i}" style="left:${L.x}px;width:${L.w}px" title="Source ${seg.start}–${seg.end} frames (${(seg.start / this.fps).toFixed(2)}s–${(seg.end / this.fps).toFixed(2)}s)"><div class="esd-seg-thumbs">${thumbsHtml}</div><span class="esd-seg-label">${i + 1}</span></div>`;
     }
-    /* ★ 切割线由片段顺序推导（重排/修剪后依然正确） */
     for (let i = 1; i < segs.length; i++) {
       html += `<div class="esd-cut" data-cutidx="${i}" style="left:${this._layout[i].x}px"></div>`;
     }
     html += '</div>';
-    /* ★ 音频轨道：与视频片段一一对应的波形切片 */
     html += `<div class="esd-track audio" style="width: ${width}px;">`;
     if (this.waveform && this.waveform.length > 0) {
       for (let i = 0; i < segs.length; i++) {
@@ -1569,7 +1499,6 @@ class SceneDetectionUI {
   }
 
 
-  /* ★ 绘制单个片段对应的波形切片 */
   drawWaveSlice(canvas, seg, L) {
     const dpr = window.devicePixelRatio || 1;
     const cw = Math.max(1, Math.round(L.w)), ch = 35;
@@ -1608,7 +1537,7 @@ class SceneDetectionUI {
     this.stage.querySelectorAll(".esd-seg-thumb").forEach(img => this._thumbObserver.observe(img));
   }
 
-  /* ★ 缩略图：直接指向 GET URL，交给浏览器加载与缓存 */
+  /* 缩略图：直接指向 GET URL，交给浏览器加载与缓存 */
   loadSingleThumbnail(img) {
     if (img.dataset.loaded || img.dataset.loading || img.dataset.failed) return;
     const frame = parseInt(img.dataset.frame);
@@ -1643,12 +1572,11 @@ class SceneDetectionUI {
     this.syncSelections();
   }
 
-  /* ★ 左右箭头 = 真正移动片段位置（相邻交换），选中态跟随片段 */
   moveSelected(direction) {
     if (!this.selections.length) return;
     const order = this.getSegments();
     const sel = [...this.selections].sort((a, b) => a - b);
-    const selRefs = sel.map(i => order[i]); // 用引用追踪，避免交换后索引错位
+    const selRefs = sel.map(i => order[i]); 
     const n = order.length;
     if (direction < 0) {
       for (const i of sel) {
@@ -1727,10 +1655,8 @@ class SceneDetectionUI {
     }
   }
 
-  /* ★ 应用切点到时间线（websocket 直推与 HTTP 兜底共用） */
   _applyAutoCuts(cuts, source) {
     if (!Array.isArray(cuts) || !cuts.length) return;
-    // 仅在时间线"无手动决定"时应用，避免覆盖用户的编辑
     const isWholeClip = this.order.length === 1 && this.order[0].start === 0 && this.order[0].end === this.totalFrames;
     const noManualEdits = !this.reordered && (this.cuts?.length || 0) === 0;
     if (!(isWholeClip && noManualEdits)) {
@@ -1754,7 +1680,7 @@ class SceneDetectionUI {
     if (myId === -1) return;
     try {
       const data = await fetch(`/esd/auto_cuts?node_id=${myId}`).then(r => r.json());
-      console.log("[ESD] fetch cuts myId=", myId, "resp=", data); // ★ 排查日志（定位后可删）
+      // console.log("[ESD] fetch cuts myId=", myId, "resp=", data); 
       if (data && Array.isArray(data.cuts)) this._applyAutoCuts(data.cuts, "http");
     } catch (err) {
       console.warn("[ESD] auto cuts fetch failed:", err);
@@ -1769,7 +1695,6 @@ class SceneDetectionUI {
         this.loadInitialData();
       };
     }
-    /* ① 快路径：websocket 自定义事件（部分前端版本可能不转发） */
     this._onAutoCuts = ({ detail }) => {
       try {
         if (!detail) return;
@@ -1784,7 +1709,6 @@ class SceneDetectionUI {
     };
     app.api?.addEventListener?.("esd_auto_cuts", this._onAutoCuts);
 
-    /* ② 兜底路径：标准 executed 事件触发后主动 HTTP 查询（所有版本可靠） */
     this._onExecuted = ({ detail }) => {
       if (!detail) return;
       if (parseInt(detail.node) !== this.getEffectiveNodeId()) return;
@@ -1792,16 +1716,13 @@ class SceneDetectionUI {
     };
     app.api?.addEventListener?.("executed", this._onExecuted);
 
-    /* ③ FIX 7：兜底路径——监听队列状态（忙→闲转换时延迟拉取切点，不依赖节点事件）。
-       V3 API 节点的 executed 事件可能缺失或 node id 不匹配，此路径保证最终同步 */
     this._queueWasBusy = false;
     this._onStatus = ({ detail }) => {
       try {
         const qr = Number(detail?.exec_info?.queue_remaining ?? 0);
-        if (qr > 0) { this._queueWasBusy = true; return; } // 队列在跑
-        if (!this._queueWasBusy) return;                   // 纯空闲心跳，忽略
-        this._queueWasBusy = false;                        // 忙→闲 = 本轮执行结束
-        // 多次重试，防止后端缓存写入 / HTTP 时序抖动
+        if (qr > 0) { this._queueWasBusy = true; return; } 
+        if (!this._queueWasBusy) return;                   
+        this._queueWasBusy = false;                        
         [200, 600, 1500].forEach(delay => setTimeout(() => this._fetchAutoCuts(), delay));
       } catch (err) { /* 静默 */ }
     };
@@ -1815,14 +1736,12 @@ app.registerExtension({
     if (nodeData.name !== "ElementSceneDetection") return;
     installStyles();
 
-    const BODY_PAD = 8; // ★ 0 → 4 → 8 → 12 逐级调，Export 行贴住节点底边即停
+    const BODY_PAD = 8; // ★ 0 → 4 → 8 → 12 
     const origCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function() {
       const result = origCreated?.apply(this, arguments);
       this.__nodeId = this.id;
 
-      /* ★ 隐藏 clips_data：[0,-4] 是 litegraph 原生抵消写法（-4 抵消 +4 行距），
-         hidden 标记供 Nodes 2.0 的 Vue 布局跳过该行 */
       const hideWidget = (w) => {
         if (!w) return;
         w.hidden = true;
@@ -1844,18 +1763,14 @@ app.registerExtension({
       const clipsWidget = this.widgets?.find(w => w.name === "clips_data");
       this.__esd = new SceneDetectionUI(this, root, clipsWidget);
 
-      /* ===== 高度唯一来源 = 面板内容的自然高度 =====
-         ★ 用 offsetHeight（布局像素，与 node.size 同单位，不受画布缩放影响），
-           而不是 getBoundingClientRect（屏幕像素，会被 ds.scale 放大）
-         未挂载时量到 0 → 用 595 兜底（与 CSS 各块之和一致的经验值） */
       const FALLBACK_H = 595;
       let panelH = FALLBACK_H;
       const measureNatural = () => {
         const p = root.firstElementChild;
         if (!p || !root.isConnected) return 0;
         const prev = p.style.height;
-        p.style.height = "auto";                 // 解除 height:100%，让固定块之和显形
-        const h = Math.ceil(p.offsetHeight);     // 布局单位，缩放无关
+        p.style.height = "auto";                 
+        const h = Math.ceil(p.offsetHeight);     
         p.style.height = prev;
         return h > 100 ? h : 0;
       };
@@ -1864,17 +1779,13 @@ app.registerExtension({
       domWidget.computeSize = (w) =>
         [Math.max(100, (this.size?.[0] || w || 860) - 20), panelH];
 
-      /* 节点高度 = litegraph 原生累加（标题 + 全部 widgets），无任何估算 */
       this.size = [Math.max(this.size?.[0] || 0, 860), this.computeSize()[1] - BODY_PAD];
 	  
-      /* 宽度可拖、高度锁定：onResize 在拖拽过程中被逐帧调用，
-         每次都把高度钳回原生累加值，宽度不受影响 */
       const lockHeight = () => { this.size[1] = this.computeSize()[1] - BODY_PAD; };
       this.resizable = true;
       this.onResize = () => lockHeight();
 
 
-      /* 首帧后的精确补测（同样用 offsetHeight），若出入 >2px 悄悄修正 */
       requestAnimationFrame(() => {
         const h = measureNatural();
         if (h && Math.abs(h - panelH) > 2) {
@@ -1884,7 +1795,6 @@ app.registerExtension({
         }
       });
 
-      /* force_rate / subsampling 变化 → 刷新面板内信息条 */
       for (const nm of ["force_rate", "subsampling"]) {
         const w2 = this.widgets?.find(x => x.name === nm);
         if (w2) {
@@ -1896,19 +1806,16 @@ app.registerExtension({
       return result;
     };
 
-    /* ★ FIX 5：工作流恢复完成后再加载一次数据 */
     const origConfigure = nodeType.prototype.onConfigure;
     nodeType.prototype.onConfigure = function() {
       const r = origConfigure?.apply(this, arguments);
       this.__nodeId = this.id;
-      /* 旧工作流序列化过带偏差的 size，加载瞬间按原生累加值钳回（一次性，非校正） */
       const h = this.computeSize()[1] - BODY_PAD;
       if (Math.abs((this.size?.[1] || 0) - h) > 2) this.size[1] = h;
       if (this.__esd) this.__esd.loadInitialData();
       return r;
     };
 
-    /* ★ FIX 6：清理（原逻辑保留） */
     const origRemoved = nodeType.prototype.onRemoved;
     nodeType.prototype.onRemoved = function() {
       if (this.__esd) {

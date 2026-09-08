@@ -26,6 +26,17 @@
 
 ## Update
 
+## v1.5.4
+
+- 增加 Element Scene Detection 视频载入、智能场景检测节点，和配套节点Element Video Clip 和 Element Video Info。
+- Element Scene Detection 是一个"可视化单轨视频剪辑器"节点：导入视频后可自动检测镜头切点（PySceneDetect），并在交互式时间线上手动修剪、重排、预览片段，一键把剪辑结果交给下游节点按片段输出画面与音频。
+- 它的核心价值在于：把传统上需要专业剪辑软件完成的"分镜—粗剪—取片段"流程，直接内嵌到 ComfyUI 工作流中，让视频批处理、片段化生成类工作流无需脱离画布即可完成素材切分。
+- 大部分情况下，可替代load video 节点。
+- 中文说明： https://github.com/supElement/ComfyUI_Element_easy/blob/main/Element_scene_detection.zh.md
+- 英文说明： https://github.com/supElement/ComfyUI_Element_easy/blob/main/Element_scene_detection.en.md
+
+<img width="2433" height="969" alt="image" src="https://github.com/user-attachments/assets/5bc8a854-7620-4db5-9e12-995244c3be9d" />
+
 ## v1.5.3
 
 - 为Element_SigmaGraph 节点添加“P” 按钮。

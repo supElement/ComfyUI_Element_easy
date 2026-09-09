@@ -21,7 +21,7 @@
       cd ComfyUI_Element_easy
       pip install -r requirements.txt
   可选：ffmpeg
-  节点的**视频导出（带音频）**功能需要系统安装 ffmpeg，Windows从 https://www.gyan.dev/ffmpeg/builds/ 下载，解压后将 bin 目录加入 PATH
+  节点的**视频导出（带音频）**功能需要系统安装 ffmpeg，Windows从 <a href="https://www.gyan.dev/ffmpeg/builds/">ffmpeg</a>下载，解压后将 bin 目录加入 PATH
   未安装 ffmpeg 时其余功能均正常，仅导出为无声视频
 
 
@@ -41,8 +41,8 @@
 - 它的核心价值在于：把传统上需要专业剪辑软件完成的"分镜—粗剪—取片段"流程，直接内嵌到 ComfyUI 工作流中，让视频批处理、片段化生成类工作流无需脱离画布即可完成素材切分。
 - 大部分情况下，可替代load video 节点。
 - PS：节点原名是Element scene detection，经过多次功能修改，这个名字已经不能体现出节点的功能了，所以，节点名字改成了 Element Load and Edit Video 
-- 中文说明： https://github.com/supElement/ComfyUI_Element_easy/blob/main/Element_scene_detection.zh.md
-- 英文说明： https://github.com/supElement/ComfyUI_Element_easy/blob/main/Element_scene_detection.en.md
+- 中文说明： <a href="https://github.com/supElement/ComfyUI_Element_easy/blob/main/Element_scene_detection.zh.md">中文版详细说明</a>
+- 英文说明： <a href="https://github.com/supElement/ComfyUI_Element_easy/blob/main/Element_scene_detection.en.md">英文版详细说明</a>
 
 <img width="2147" height="1104" alt="image" src="https://github.com/user-attachments/assets/5ba547a7-31c8-4323-bf40-7ec58f1b548e" />
 

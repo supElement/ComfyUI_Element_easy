@@ -21,7 +21,7 @@
       cd ComfyUI_Element_easy
       pip install -r requirements.txt
   可选：ffmpeg
-  节点的**视频导出（带音频）**功能需要系统安装 ffmpeg：Windows：从 https://www.gyan.dev/ffmpeg/builds/ 下载，解压后将 bin 目录加入 PATH
+  节点的**视频导出（带音频）**功能需要系统安装 ffmpeg，Windows从 https://www.gyan.dev/ffmpeg/builds/ 下载，解压后将 bin 目录加入 PATH
   未安装 ffmpeg 时其余功能均正常，仅导出为无声视频
 
 

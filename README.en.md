@@ -14,9 +14,13 @@ A collection of small nodes for convenient use. Due to laziness, the code has no
 ## Installation
 
 - **Manual Installation (Manual Installation)**<br>
-Enter the ./ComfyUI/custom_nodes directory and run the following code:<br>
+Navigate to the `./ComfyUI/custom_nodes` directory and run the following commands:<br>
 
       git clone https://github.com/supElement/ComfyUI_Element_easy.git
+      cd ComfyUI_Element_easy
+      pip install -r requirements.txt
+   Optional ffmpeg：The node's **video export (with audio)** function requires ffmpeg to be installed on your system. For Windows: download it from https://www.gyan.dev/ffmpeg/builds/, extract the files, and add the `bin` directory to your system PATH.
+   If ffmpeg is not installed, all other functions will work normally, but exported videos will be silent.
 
 - **Install using Manager (Install using Manager)**<br>
 

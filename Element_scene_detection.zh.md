@@ -1,4 +1,4 @@
-# Element Scene Detection 使用说明
+# Element Load and Edit Video 使用说明
 
 ## 📦 节点组简介
 
@@ -6,7 +6,7 @@
 
 | 节点 | 作用 |
 |---|---|
-| **Element Scene Detection** | 主节点：导入视频、自动/手动分镜、时间线编辑 |
+| **Element Load and Edit Video** | 主节点：导入视频、时间线剪辑（自动/手动分镜、修剪、重排）、导出 |
 | **Element Video Clip** | 下游节点：输出选中片段的图像/音频/帧数/时长，以及描述本次实际输出的 info |
 | **Element Video Info** | 下游节点：输出 FPS、宽、高（兼容两种 info 来源） |
 
@@ -14,7 +14,7 @@
 
 ## 🚀 快速上手
 
-1. 添加 **Element Scene Detection** 节点，点击左上角 **Import** 导入本地视频
+1. 添加 **Element Load and Edit Video** 节点，点击左上角 **Import** 导入本地视频
 2. 点击 **Auto Split** 自动检测镜头切点（或按下面"时间线操作"手动剪辑）
 3. 将主节点的 **info** 输出连接到 **Element Video Clip** 的 info 输入
 4. 运行工作流，Element Video Clip 即可输出片段画面和音频
@@ -92,7 +92,7 @@
 
 | 接法 | FPS | Width / Height |
 |---|---|---|
-| 接 **Element Scene Detection** | force_rate/subsampling 换算后的有效帧率 | **源视频**分辨率 |
+| 接 **Element Load and Edit Video** | force_rate/subsampling 换算后的有效帧率 | **源视频**分辨率 |
 | 接 **Element Video Clip** | images 的真实播放帧率 | **缩放后实际输出**尺寸（直接取自输出张量） |
 
 > 推荐：需要输出尺寸时用 Video Clip → Video Info 的接法，无需手动同步 `target_long_edge` 设置。
@@ -118,5 +118,5 @@
    - 音轨播放/带音频导出：需系统安装 **ffmpeg**（缺失时导出为无声视频）
 2. **临时文件**：上传的视频保存至 ComfyUI/input/element_scene_detection/ 目录，随工作流持久保留；若文件被手动移动或删除，需重新导入
 3. **手动编辑优先**：一旦你修剪/重排过时间线，Auto Run 不会覆盖你的手动决定
-4. **info 输出**：两种 info 均为 JSON 包（含视频路径、片段区间、帧率等）。Scene Detection 的 info 描述**源视频**；Video Clip 的 info 描述**实际输出**，可被 Element Video Info 解析（也可回接 Element Video Clip）
+4. **info 输出**：两种 info 均为 JSON 包（含视频路径、片段区间、帧率等）。主节点的 info 描述**源视频**；Video Clip 的 info 描述**实际输出**，可被 Element Video Info 解析（也可回接 Element Video Clip）
 5. **首尾帧尺寸**：默认保持源分辨率，保证随时有全质量参考帧；需要与 images 同尺寸时开启 `scale_first_last`

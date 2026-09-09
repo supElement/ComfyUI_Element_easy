@@ -737,7 +737,7 @@ class ElementSceneDetection(io.ComfyNode):
         outputs = [_info_output("info")]
         common = dict(
             node_id="ElementSceneDetection",
-            display_name="Element Scene Detection",
+            display_name="Element Load and Edit Video",
             category="Element_easy/video",
             description="Scene detection & timeline editing. Outputs an info bundle for "
                         "Element Video Clip / Element Video Info.",
@@ -859,7 +859,7 @@ class ElementVideoClip(io.ComfyNode):
     @classmethod
     def define_schema(cls) -> io.Schema:
         inputs = [
-            _info_input("info", "Connect from Element Scene Detection 'info' output."),
+            _info_input("info", "Connect from Element Load and Edit Video 'info' output."),
             io.Int.Input("SegNum", default=1, min=1, tooltip="Segment index (1-based, timeline order) — used when clip_select = segnum"),
             io.Combo.Input("clip_select", options=["select clip", "segnum", "first clip", "last clip", "all"],
                            default="select clip", tooltip="Which timeline segment(s) to output"),
@@ -897,10 +897,10 @@ class ElementVideoClip(io.ComfyNode):
         data = _parse_info(info)
         video_path = data.get("video_path") or data.get("local_video_path") or ""
         if not (video_path and os.path.exists(video_path)):
-            raise RuntimeError("[ElementVideoClip] No usable video source in info — re-run Element Scene Detection.")
+            raise RuntimeError("[ElementVideoClip] No usable video source in info — re-run Element Load and Edit Video.")
         segments = _parse_ranges(data.get("segments"))
         if not segments:
-            raise RuntimeError("[ElementVideoClip] info contains no segments — re-run Element Scene Detection.")
+            raise RuntimeError("[ElementVideoClip] info contains no segments — re-run Element Load and Edit Video.")
         total_frames = int(data.get("total_frames") or max(e for _, e in segments))
         src_fps = float(data.get("fps") or 0) or 24.0
         n = max(1, int(data.get("subsampling") or 1))
@@ -1017,14 +1017,14 @@ class ElementVideoInfo(io.ComfyNode):
     @classmethod
     def define_schema(cls) -> io.Schema:
         inputs = [
-            _info_input("info", "Connect from Element Scene Detection OR Element Video Clip 'info' output."),
+            _info_input("info", "Connect from Element Load and Edit Video OR Element Video Clip 'info' output."),
         ]
         outputs = [io.Float.Output("FPS"), io.Int.Output("Width"), io.Int.Output("Height")]
         return io.Schema(
             node_id="ElementVideoInfo",
             display_name="Element Video Info",
             category="Element_easy/video",
-            description="Effective output FPS and video size. Accepts info from Element Scene Detection "
+            description="Effective output FPS and video size. Accepts info from Element Load and Edit Video "
                         "(source resolution) or Element Video Clip (actual output size after downscaling).",
             inputs=inputs,
             outputs=outputs,
@@ -1034,7 +1034,7 @@ class ElementVideoInfo(io.ComfyNode):
     def execute(cls, info):
         data = _parse_info(info)
         if not data:
-            raise RuntimeError("[ElementVideoInfo] Empty info — connect from Element Scene Detection or Element Video Clip.")
+            raise RuntimeError("[ElementVideoInfo] Empty info — connect from Element Load and Edit Video or Element Video Clip.")
 
         if (data.get("kind") or "").strip().lower() == "clip" or "frame_count" in data:
             fps = float(data.get("fps") or 0) or 24.0
@@ -1062,7 +1062,7 @@ NODE_CLASS_MAPPINGS = {
     "ElementVideoInfo": ElementVideoInfo,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "ElementSceneDetection": "Element Scene Detection",
+    "ElementSceneDetection": "Element Load and Edit Video",
     "ElementVideoClip": "Element Video Clip",
     "ElementVideoInfo": "Element Video Info",
 }

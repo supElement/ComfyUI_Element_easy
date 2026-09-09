@@ -53,37 +53,10 @@
 - P 按钮行为：当点数少于 steps+1 时，前 n-1 个点的 x 重排为 0, 1/steps, 2/steps, ..., (n-2)/steps，y 不变；最后一个点（x, y）原样保留。当点数不少于 steps+1 时，取前 steps+1 个点，x 均匀分布为 0, 1/steps, ..., 1，y 不变。撤销支持：操作会压入撤销栈，可 Ctrl+Z 撤回。
 - PS：有什么用？在不改变前面步数的步幅时，为后面增加采样步数（增加细节）。
 
-## v1.5.2
-
-  - Minimax_H3-LatentUpscaler_Adv 节点引入条件缩放模式，可选择忽略（pass_through）、只对齐不缩放（NO_refs）、缩放(refs)三种模式，质量最好的是缩放(refs)模式。
-
 ## v1.5.0
   
 添加 Minimax_H3-LatentUpscaler 潜空间缩放节点，只缩放视频的潜空间，没有对音频做任何处理，输出端口为Minimax H3 latent。
-  - 添加 Minimax_H3-LatentUpscaler_Adv  带校验的潜空间缩放节点。
-修复部分bug。
-
-
-## v1.4.8
-  
-增强 Smart merge images 节点的对图像的轻微畸变矫正及色彩匹配的算法。
-  - 其中用到的模型不是必须的。如果选择了相关选项，在运行节点时会自动下载模型到 \ComfyUI\models\elementEasy 目录下。 也可以提前将本仓库models文件夹下的elementEasy文件夹拷贝到 \ComfyUI\models\elementEasy 目录下，则无需再次下载模型。
-
-## v1.4.7
-  
-增加 Smart merge images 节点对分块合并的支持。即edited_crop_B端口输入多张图像时，输出为最终合并后的单张图像。
-  - 注意：要求输入到edited_crop_B端口的图像是 Batch 而非 list，如果是list，要经过 Image List To Batch 节点转换。
-## v1.4.6
-  
-添加Element ImageCurve、Element HueSat、Element HueBright 和 Element HueHue 节点的preview按钮对KJnode的GetNode节点的支持；修改Element ImageCurve节点的曲线类型。
-
-## v1.4.5
-  
-修改Element_SigmaGraph、Element ImageCurve、Element HueSat、Element HueBright 和 Element HueHue 节点的交互逻辑，改为单击鼠标左键加点，并可直接拖动新增加的点；增强Element HueBright节点对低饱和度色彩的影响程度，提高亮度调整范围。
-
-## v1.4.4
-  
-修复Element_SigmaGraph 节点 线性模式“L”的输出bug，，添加输出最大值 max value 参数，添加输出强制纠正。
+添加 Minimax_H3-LatentUpscaler_Adv  带校验的潜空间缩放节点。引入条件缩放模式，可选择忽略（pass_through）、只对齐不缩放（NO_refs）、缩放(refs)三种模式，质量最好的是缩放(refs)模式。
 
 ## v1.4.3（Optimized in V1.4.8）
   
@@ -97,20 +70,6 @@
   - 增加 Smart merge images 节点对分块合并的支持。即edited_crop_B端口输入多张图像时，输出为最终合并后的单张图像。注意：要求输入到edited_crop_B端口的图像是 Batch 而非 list，如果是list，要经过 Image List To Batch 节点转换。
 
   <img width="2121" height="963" alt="image" src="https://github.com/user-attachments/assets/0e341594-8b59-45af-8ece-59382ace50e4" />
-
-
-## v1.4.0
-
-  - 在 LoadImage_Preview 节点上增加可选图像输入端口，可用于桥接预览中的编辑; 优化编辑面板布局。
-  - 优化Element ImageCurve、Element HueSat、Element HueBright 和 Element HueHue 节点的载入预览逻辑。
-
-## v1.3.8 
-重要更新！！！
-- 合并Element_SigmaGraph 与 Element_SigmaGraph(curve)节点为Element_SigmaGraph；去除graph_data的数值显示框。
-- 在节点Element_SigmaGraph 中新增模式切换按钮 “C” 平滑曲线模式 和 线性模式。
-- 修复Element_SigmaGraph 节点曲线模式下，sigma输出与曲线不匹配的问题。
-- 修复快速缩小Element_SigmaGraph 节点高度时卡顿阻塞的问题。
-- 修复某些情况下可能无法删除LoadImage_Preview节点的问题；优化 LoadImage_Preview 节点。
 
 ## v1.3.5 （Optimized in v1.4.0）
   

@@ -1,4 +1,4 @@
-# Element Scene Detection User Guide
+# Element Load and Edit Video User Guide
 
 ## 📦 Node Group Overview
 
@@ -6,7 +6,7 @@ This node group provides **video scene detection + visual timeline editing** cap
 
 | Node | Purpose |
 |---|---|
-| **Element Scene Detection** | Main node: import video, auto/manual scene splitting, timeline editing |
+| **Element Load and Edit Video** | Main node: import video, timeline editing (auto/manual scene splitting, trim, reorder), export |
 | **Element Video Clip** | Downstream node: outputs images/audio/frame count/duration of selected clips, plus an info bundle describing the actual output |
 | **Element Video Info** | Downstream node: outputs FPS, width, height (accepts info from either upstream node) |
 
@@ -14,7 +14,7 @@ This node group provides **video scene detection + visual timeline editing** cap
 
 ## 🚀 Quick Start
 
-1. Add the **Element Scene Detection** node, click **Import** in the top-left corner to load a local video
+1. Add the **Element Load and Edit Video** node, click **Import** in the top-left corner to load a local video
 2. Click **Auto Split** to detect scene cuts automatically (or edit manually as described in "Timeline Operations" below)
 3. Connect the main node's **info** output to the info input of **Element Video Clip**
 4. Run the workflow — Element Video Clip will output the clip frames and audio
@@ -92,7 +92,7 @@ Accepts **two kinds of info sources** and detects them automatically:
 
 | Wired from | FPS | Width / Height |
 |---|---|---|
-| **Element Scene Detection** | Effective FPS after force_rate/subsampling | **Source** resolution |
+| **Element Load and Edit Video** | Effective FPS after force_rate/subsampling | **Source** resolution |
 | **Element Video Clip** | Real playback FPS of the output images | **Actual output** size after `target_long_edge` scaling (read from the output tensor itself) |
 
 > Recommended: wire Video Clip → Video Info when you need the output size — no need to keep `target_long_edge` settings in sync manually.
@@ -118,5 +118,5 @@ Accepts **two kinds of info sources** and detects them automatically:
    - For audio playback / export with audio: **ffmpeg** must be installed on the system (without it, clips export without audio)
 2. **Temporary files**: Uploaded videos are saved to ComfyUI/input/element_scene_detection/ and persist with the workflow; re-import only if the file was manually moved or deleted
 3. **Manual edits take priority**: Once you have trimmed/reordered the timeline, Auto Run will not overwrite your manual decisions
-4. **info outputs**: Both info bundles are JSON (video path, segment ranges, FPS, etc.). Scene Detection's info describes the *source*; Video Clip's info describes the *actual output* and can be parsed by Element Video Info (or fed back into Element Video Clip)
+4. **info outputs**: Both info bundles are JSON (video path, segment ranges, FPS, etc.). The main node’s info describes the *source*; Video Clip's info describes the *actual output* and can be parsed by Element Video Info (or fed back into Element Video Clip)
 5. **First/last image size**: By default they stay at source resolution so you always have full-quality reference frames; turn on `scale_first_last` if you need them to match `images`

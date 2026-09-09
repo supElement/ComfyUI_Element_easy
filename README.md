@@ -13,14 +13,23 @@
 
 ## Installation
 
-- 手动安装（Manual Installation）<br>
-进入 ./ComfyUI/custom_nodes目录，运行以下代码：<br>
+### 手动安装（Manual Installation）<br>
+
+   进入 ./ComfyUI/custom_nodes目录，运行以下代码：<br>
 
       git clone https://github.com/supElement/ComfyUI_Element_easy.git
+      cd ComfyUI_Element_easy
+      pip install -r requirements.txt
+  可选：ffmpeg
+  节点的**视频导出（带音频）**功能需要系统安装 ffmpeg：
+  - Windows：从 https://www.gyan.dev/ffmpeg/builds/ 下载，解压后将 bin 目录加入 PATH
+  - 未安装 ffmpeg 时其余功能均正常，仅导出为无声视频
 
-- 在manager管理器中安装（Install using Manager）<br>
 
-  在comfyUI manager 中搜索 ComfyUI_Element_easy, --然后install。
+
+### 在manager管理器中安装（Install using Manager）<br>
+
+  - 在comfyUI manager 中搜索 ComfyUI_Element_easy, --然后install。
  
 
 

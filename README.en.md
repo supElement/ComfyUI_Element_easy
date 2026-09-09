@@ -19,7 +19,7 @@ Navigate to the `./ComfyUI/custom_nodes` directory and run the following command
       git clone https://github.com/supElement/ComfyUI_Element_easy.git
       cd ComfyUI_Element_easy
       pip install -r requirements.txt
-   Optional ffmpeg：The node's **video export (with audio)** function requires ffmpeg to be installed on your system. For Windows: download it from https://www.gyan.dev/ffmpeg/builds/, extract the files, and add the `bin` directory to your system PATH.
+   Optional ffmpeg：The node's **video export (with audio)** function requires ffmpeg to be installed on your system. For Windows: download it from <a href="https://www.gyan.dev/ffmpeg/builds/">ffmpeg</a>, extract the files, and add the `bin` directory to your system PATH.
    If ffmpeg is not installed, all other functions will work normally, but exported videos will be silent.
 
 - **Install using Manager (Install using Manager)**<br>
@@ -36,8 +36,8 @@ Navigate to the `./ComfyUI/custom_nodes` directory and run the following command
 - Its core value lies in integrating the workflow traditionally requiring professional editing software—specifically storyboarding, rough cutting, and clip selection—directly into the ComfyUI workflow. This allows for source material segmentation within the canvas itself, facilitating workflows such as batch video processing and segment-based generation.
 - In most cases, it can serve as a replacement for the standard "Load Video" node.
 - Note: The node was originally named "Element Scene Detection," but following multiple functional updates, that name no longer accurately reflected its capabilities; it has therefore been renamed "Element Load and Edit Video."
-- Chinese description: https://github.com/supElement/ComfyUI_Element_easy/blob/main/Element_scene_detection.zh.md
-- English description: https://github.com/supElement/ComfyUI_Element_easy/blob/main/Element_scene_detection.en.md
+- Chinese description: <a href="https://github.com/supElement/ComfyUI_Element_easy/blob/main/Element_scene_detection.zh.md">Chinese description</a>
+- English description: <a href="https://github.com/supElement/ComfyUI_Element_easy/blob/main/Element_scene_detection.en.md">English description</a>
 
 <img width="2147" height="1104" alt="image" src="https://github.com/user-attachments/assets/5ba547a7-31c8-4323-bf40-7ec58f1b548e" />
 

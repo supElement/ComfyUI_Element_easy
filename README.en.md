@@ -8,7 +8,7 @@
 # ComfyUI_Element_easy
 
 
-A collection of small nodes for convenient use. Due to laziness, the code has not been merged. Includes: Element Scene Detection, Minimax_H3-LatentUpscaler, Smart merge images, LoadImage_Preview, Element_SigmaGraph, Element ImageCurve, Element HueSat, Element HueBright, Element HueHue, Frame Calculator, ImageSize Div, black_white_color, chessboard, empty_image_rgb, image_pad_blur, mask_noise_element, mask_stroke, random_chars, text_line_break.
+A collection of small nodes for convenient use. Due to laziness, the code has not been merged. Includes: Element Load and Edit Video, Minimax_H3-LatentUpscaler, Smart merge images, LoadImage_Preview, Element_SigmaGraph, Element ImageCurve, Element HueSat, Element HueBright, Element HueHue, Frame Calculator, ImageSize Div, black_white_color, chessboard, empty_image_rgb, image_pad_blur, mask_noise_element, mask_stroke, random_chars, text_line_break.
 
 
 ## Installation
@@ -27,10 +27,11 @@ Enter the ./ComfyUI/custom_nodes directory and run the following code:<br>
 
 ## v1.5.4
 
-- Added Element Scene Detection video loading, intelligent scene detection node, and配套 nodes Element Video Clip and Element Video Info.
-- Element Scene Detection is a "visual single track video clipper" node: after importing the video, it can automatically detect shot cuts (PySceneDetect), and manually trim, reorder, and preview clips on the interactive timeline, and one click to output the editing results to downstream nodes for segment output of images and audio.
-- Its core value lies in: embedding the traditional "shot division - rough cut - clip selection" process that needs to be completed with professional editing software directly into the ComfyUI workflow, so that video batch processing and fragment generation class workflows can be completed without leaving the canvas.
-- In most cases, it can replace the load video node.
+- Added the "Element Load and Edit Video" node—which supports video loading and basic single-track editing—along with the associated helper nodes "Element Video Clip" and "Element Video Info."
+- "Element Load and Edit Video" functions as a visual single-track video editor: after importing a video, it automatically detects shot cuts (using PySceneDetect) and provides an interactive timeline for manually trimming, rearranging, and previewing clips; the edited results can then be passed to downstream nodes with a single click to output video frames and audio based on the selected segments.
+- Its core value lies in integrating the workflow traditionally requiring professional editing software—specifically storyboarding, rough cutting, and clip selection—directly into the ComfyUI workflow. This allows for source material segmentation within the canvas itself, facilitating workflows such as batch video processing and segment-based generation.
+- In most cases, it can serve as a replacement for the standard "Load Video" node.
+- Note: The node was originally named "Element Scene Detection," but following multiple functional updates, that name no longer accurately reflected its capabilities; it has therefore been renamed "Element Load and Edit Video."
 - Chinese description: https://github.com/supElement/ComfyUI_Element_easy/blob/main/Element_scene_detection.zh.md
 - English description: https://github.com/supElement/ComfyUI_Element_easy/blob/main/Element_scene_detection.en.md
 

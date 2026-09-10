@@ -12,13 +12,14 @@ from server import PromptServer
 from aiohttp import web
 import node_helpers
 
+
 # --- API 路由定义 ---
 @PromptServer.instance.routes.post("/element_easy/images")
 async def get_images(request):
     body = await request.json()
     folder_path = body.get("folder_path", folder_paths.get_output_directory())
     sort_method = body.get("sort_method", "newest_first")
-    
+
     if not os.path.exists(folder_path) or not os.path.isdir(folder_path):
         return web.json_response({})
 
@@ -28,19 +29,28 @@ async def get_images(request):
         files.extend(glob.glob(os.path.join(folder_path, ext)))
         files.extend(glob.glob(os.path.join(folder_path, ext.upper())))
 
-    if sort_method == "name_asc": files.sort(key=lambda x: os.path.basename(x).lower())
-    elif sort_method == "name_desc": files.sort(key=lambda x: os.path.basename(x).lower(), reverse=True)
-    elif sort_method == "newest_first": files.sort(key=lambda x: os.path.getctime(x), reverse=True)
-    elif sort_method == "oldest_first": files.sort(key=lambda x: os.path.getctime(x))
-    elif sort_method == "recently_modified": files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-    elif sort_method == "oldest_modified": files.sort(key=lambda x: os.path.getmtime(x))
-    else: files.sort(key=lambda x: os.path.getctime(x), reverse=True)
+    if sort_method == "name_asc":
+        files.sort(key=lambda x: os.path.basename(x).lower())
+    elif sort_method == "name_desc":
+        files.sort(key=lambda x: os.path.basename(x).lower(), reverse=True)
+    elif sort_method == "newest_first":
+        files.sort(key=lambda x: os.path.getctime(x), reverse=True)
+    elif sort_method == "oldest_first":
+        files.sort(key=lambda x: os.path.getctime(x))
+    elif sort_method == "recently_modified":
+        files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+    elif sort_method == "oldest_modified":
+        files.sort(key=lambda x: os.path.getmtime(x))
+    else:
+        files.sort(key=lambda x: os.path.getctime(x), reverse=True)
 
     images = {}
     for file_path in files:
         item_name = os.path.basename(file_path)
         images[item_name] = item_name
+
     return web.json_response(images)
+
 
 @PromptServer.instance.routes.get("/element_easy/view")
 async def view_image(request):
@@ -52,6 +62,50 @@ async def view_image(request):
     if not os.path.exists(image_path) or not os.path.commonpath([folder_path, os.path.abspath(image_path)]) == folder_path:
         return web.Response(status=404)
     return web.FileResponse(image_path, headers={"Content-Disposition": f"filename=\"{filename}\""})
+
+
+@PromptServer.instance.routes.get("/element_easy/paths")
+async def get_known_paths(request):
+    return web.json_response({
+        "input": folder_paths.get_input_directory(),
+        "output": folder_paths.get_output_directory(),
+        "temp": folder_paths.get_temp_directory(),
+    })
+
+
+@PromptServer.instance.routes.post("/element_easy/upload")
+async def upload_dropped_image(request):
+    try:
+        post = await request.post()
+        upload = post.get("image")
+        if upload is None or not hasattr(upload, "file"):
+            return web.json_response({"error": "no file provided"}, status=400)
+
+        filename = os.path.basename(str(upload.filename or "").replace("\\", "/")).strip()
+        base, ext = os.path.splitext(filename)
+        if not ext:
+            ext = ".png"
+        if ext.lower() not in (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff", ".tif"):
+            return web.json_response({"error": f"unsupported file type: {ext}"}, status=400)
+        base = "".join(c for c in base if c not in '\\/:*?"<>|').strip() or "dropped_image"
+
+        input_dir = folder_paths.get_input_directory()
+        dest = os.path.join(input_dir, base + ext)
+        i = 1
+        while os.path.exists(dest):
+            dest = os.path.join(input_dir, f"{base}_{i}{ext}")
+            i += 1
+
+        with open(dest, "wb") as f:
+            f.write(upload.file.read())
+
+        return web.json_response({
+            "name": os.path.basename(dest),
+            "full": dest,
+            "dir": input_dir,
+        })
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
 
 
 # --- 节点定义 ---
@@ -66,12 +120,13 @@ class LoadImageWithPreview:
                 "sort_method": (["name_asc", "name_desc", "newest_first", "oldest_first", "recently_modified", "oldest_modified"], {"default": "newest_first"}),
             },
             "optional": {
-                "image": ("IMAGE", ), 
-                "mask_data": ("STRING", {"default": "", "multiline": True}), 
-                "shape_data": ("STRING", {"default": "", "multiline": True}), 
+                "image": ("IMAGE", ),
+                "mask_data": ("STRING", {"default": "", "multiline": True}),
+                "shape_data": ("STRING", {"default": "", "multiline": True}),
+                "crop_data": ("STRING", {"default": "", "multiline": True}),
             },
             "hidden": {
-                "unique_id": "UNIQUE_ID", 
+                "unique_id": "UNIQUE_ID",
             }
         }
 
@@ -82,8 +137,7 @@ class LoadImageWithPreview:
     DESCRIPTION = "Browse folders and load images with auto-formatted metadata."
     OUTPUT_NODE = True
 
-    def load_image(self, folder_path, selected_image, sort_method, mask_data="", shape_data="", image=None, unique_id=None):
-
+    def load_image(self, folder_path, selected_image, sort_method, mask_data="", shape_data="", crop_data="", image=None, unique_id=None):
         shape_layer = None
         if shape_data and shape_data.startswith("data:image"):
             try:
@@ -95,7 +149,7 @@ class LoadImageWithPreview:
 
         output_images = []
         ui_data = None
-        final_text = "" 
+        final_text = ""
 
         if image is not None:
             img_tensor = image[0]
@@ -106,6 +160,7 @@ class LoadImageWithPreview:
             base_img.save(os.path.join(temp_dir, temp_filename))
             ui_data = {"ee_preview": [{"filename": temp_filename, "type": "temp"}]}
             filename = "input_image"
+
             for img_t in image:
                 i_val = 255. * img_t.cpu().numpy()
                 i_img = Image.fromarray(np.clip(i_val, 0, 255).astype(np.uint8)).convert("RGBA")
@@ -127,36 +182,50 @@ class LoadImageWithPreview:
                 for ext in image_extensions:
                     files.extend(glob.glob(os.path.join(folder_path, ext)))
                     files.extend(glob.glob(os.path.join(folder_path, ext.upper())))
-                if sort_method == "name_asc": files.sort(key=lambda x: os.path.basename(x).lower())
-                elif sort_method == "name_desc": files.sort(key=lambda x: os.path.basename(x).lower(), reverse=True)
-                elif sort_method == "newest_first": files.sort(key=lambda x: os.path.getctime(x), reverse=True)
-                elif sort_method == "oldest_first": files.sort(key=lambda x: os.path.getctime(x))
-                elif sort_method == "recently_modified": files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-                elif sort_method == "oldest_modified": files.sort(key=lambda x: os.path.getmtime(x))
-                else: files.sort(key=lambda x: os.path.getctime(x), reverse=True)
-                if not files: raise ValueError(f"No images in {folder_path}")
+
+                if sort_method == "name_asc":
+                    files.sort(key=lambda x: os.path.basename(x).lower())
+                elif sort_method == "name_desc":
+                    files.sort(key=lambda x: os.path.basename(x).lower(), reverse=True)
+                elif sort_method == "newest_first":
+                    files.sort(key=lambda x: os.path.getctime(x), reverse=True)
+                elif sort_method == "oldest_first":
+                    files.sort(key=lambda x: os.path.getctime(x))
+                elif sort_method == "recently_modified":
+                    files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+                elif sort_method == "oldest_modified":
+                    files.sort(key=lambda x: os.path.getmtime(x))
+                else:
+                    files.sort(key=lambda x: os.path.getctime(x), reverse=True)
+
+                if not files:
+                    raise ValueError(f"No images in {folder_path}")
                 selected_image = os.path.basename(files[0])
-                
-            image_path = os.path.join(folder_path, selected_image)
-            
+
+            sel_name = selected_image.strip()
+            if os.path.isabs(sel_name) and os.path.exists(sel_name):
+                image_path = sel_name
+            else:
+                image_path = os.path.join(folder_path, sel_name)
+                if not os.path.exists(image_path):
+                    alt_path = os.path.join(folder_paths.get_input_directory(), sel_name)
+                    if os.path.exists(alt_path):
+                        image_path = alt_path
+
             try:
                 img_for_meta = Image.open(image_path)
                 if img_for_meta.info:
                     processed_parts = []
                     for k, v in img_for_meta.info.items():
                         content = str(v)
-                       
                         content = content.replace("\\n", "\n")
-                        
                         if k in ["prompt", "workflow"]:
                             try:
                                 json_data = json.loads(v)
                                 content = json.dumps(json_data, indent=2, ensure_ascii=False)
                             except:
                                 pass
-                        
                         processed_parts.append(f"[{k.upper()}]\n{content}")
-                    
                     final_text = "\n\n".join(processed_parts)
                 img_for_meta.close()
             except Exception as e:
@@ -164,6 +233,7 @@ class LoadImageWithPreview:
 
             base_img = node_helpers.pillow(Image.open, image_path)
             filename = os.path.basename(selected_image)
+
             for i in ImageSequence.Iterator(base_img):
                 i = node_helpers.pillow(ImageOps.exif_transpose, i)
                 i = i.convert("RGBA")
@@ -172,12 +242,11 @@ class LoadImageWithPreview:
                         current_shape_layer = shape_layer.resize(i.size, Image.LANCZOS)
                     else:
                         current_shape_layer = shape_layer
-                    i = Image.alpha_composite(i, current_shape_layer)
-                image_tensor = i.convert("RGB")
-                image_tensor = np.array(image_tensor).astype(np.float32) / 255.0
+                i = Image.alpha_composite(i, current_shape_layer) if shape_layer is not None else i
+                image_tensor = np.array(i.convert("RGB")).astype(np.float32) / 255.0
                 image_tensor = torch.from_numpy(image_tensor)[None,]
                 output_images.append(image_tensor)
-                
+
         if len(output_images) > 1:
             output_image = torch.cat(output_images, dim=0)
         else:
@@ -198,8 +267,24 @@ class LoadImageWithPreview:
 
         if len(mask_tensor.shape) == 2:
             mask_tensor = mask_tensor.unsqueeze(0)
-            
+
+        if crop_data:
+            try:
+                arr = json.loads(crop_data)
+                if isinstance(arr, (list, tuple)) and len(arr) == 4:
+                    H = int(output_image.shape[1]); W = int(output_image.shape[2])
+                    x, y, cw, ch = [int(round(float(v))) for v in arr]
+                    x = max(0, min(x, W - 1)); y = max(0, min(y, H - 1))
+                    cw = max(1, min(cw, W - x)); ch = max(1, min(ch, H - y))
+                    output_image = output_image[:, y:y + ch, x:x + cw, :].contiguous()
+                    if mask_tensor.dim() == 3:
+                        mask_tensor = mask_tensor[:, y:y + ch, x:x + cw].contiguous()
+                    elif mask_tensor.dim() == 2:
+                        mask_tensor = mask_tensor[y:y + ch, x:x + cw].contiguous()
+            except Exception:
+                pass
+
         if ui_data is not None:
             return {"ui": ui_data, "result": (output_image, mask_tensor, filename, final_text)}
-            
+
         return (output_image, mask_tensor, filename, final_text)

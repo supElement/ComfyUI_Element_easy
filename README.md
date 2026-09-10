@@ -8,7 +8,7 @@
 # ComfyUI_Element_easy
 
 
-一些方便使用的小节点。因为太懒没有合并代码。 包括：Element Load and Edit Video，Minimax_H3-LatentUpscaler, Smart merge images,LoadImage_Preview,Element_SigmaGraph,Element ImageCurve,Element HueSat,Element HueBright,Element HueHue,Frame Calculator,ImageSize Div,black_white_color, chessboard, empty_image_rgb, image_pad_blur, mask_noise_element, mask_stroke, random_chars, text_line_break.
+一些方便使用的小节点。因为太懒没有合并代码。 包括：Element Multi REF, Element Load and Edit Video，Minimax_H3-LatentUpscaler, Smart merge images,LoadImage_Preview,Element_SigmaGraph,Element ImageCurve,Element HueSat,Element HueBright,Element HueHue,Frame Calculator,ImageSize Div,black_white_color, chessboard, empty_image_rgb, image_pad_blur, mask_noise_element, mask_stroke, random_chars, text_line_break.
 
 
 ## Installation
@@ -47,21 +47,11 @@
 ## v1.5.4
 
 - 增加 Element Load and Edit Video 视频载入、简单单轨编辑节点，和相关辅助节点Element Video Clip 和 Element Video Info。
-- Element Load and Edit Video 是一个"可视化单轨视频剪辑器"节点：导入视频后可自动检测镜头切点（PySceneDetect），并在交互式时间线上手动修剪、重排、预览片段，一键把剪辑结果交给下游节点按片段输出画面与音频。
-- 它的核心价值在于：把传统上需要专业剪辑软件完成的"分镜—粗剪—取片段"流程，直接内嵌到 ComfyUI 工作流中，让视频批处理、片段化生成类工作流无需脱离画布即可完成素材切分。
-- 大部分情况下，可替代load video 节点。
-- PS：节点原名是Element scene detection，经过多次功能修改，这个名字已经不能体现出节点的功能了，所以，节点名字改成了 Element Load and Edit Video 
+- "可视化单轨视频剪辑器"节点：在交互式时间线上手动修剪、重排、预览片段。
 - [中文版详细说明](Element_scene_detection.zh.md)
 - [英文版详细说明](Element_scene_detection.en.md)
 
 <img width="2147" height="1104" alt="image" src="https://github.com/user-attachments/assets/5ba547a7-31c8-4323-bf40-7ec58f1b548e" />
-
-
-## v1.5.3
-
-- 为Element_SigmaGraph 节点添加“P” 按钮。
-- P 按钮行为：当点数少于 steps+1 时，前 n-1 个点的 x 重排为 0, 1/steps, 2/steps, ..., (n-2)/steps，y 不变；最后一个点（x, y）原样保留。当点数不少于 steps+1 时，取前 steps+1 个点，x 均匀分布为 0, 1/steps, ..., 1，y 不变。撤销支持：操作会压入撤销栈，可 Ctrl+Z 撤回。
-- PS：有什么用？在不改变前面步数的步幅时，为后面增加采样步数（增加细节）。
 
 ## v1.5.0
   
@@ -70,20 +60,15 @@
 
 ## v1.4.3（Optimized in V1.4.8）
   
-  添加节点 Smart merge images。
-  - 两张图像有足够的共同特征时，智能合并图像。
-  - 纠正编辑模型（Flux2 Klein、Qwen Edit等）编辑图像后产生的像素偏移和色差。这种情况下的使用方法：将原图与编辑后的图像分别连接到 original_image 和 edited_crop_B 输入端口。
-  - 合并剪切的图像到原图时，如果条件允许，最可靠的合并方案：original_image + edited_crop_B + original_crop_A。其中 original_crop_A 是从original_image中剪切的没有修改或变形的图像。
-  - 增加色彩匹配模式 Adaptive Local (strong), 可以更好的修复图像经过编辑后产生的色差。新增仅用于此模式下的两个参数：adapt_thresh（色彩差异阈值）。
-  - 增加 adapt_local_match 参数，为色彩匹配模式 Adaptive Local (strong) 的掩码融合提供更多选择。
-  - 优化 Smart merge images 节点的融合方法，对通过编辑模型（Flux2 Klein、Qwen Edit等）编辑后产生的像素偏移和色彩偏移，有更好的纠正。 
-  - 增加 Smart merge images 节点对分块合并的支持。即edited_crop_B端口输入多张图像时，输出为最终合并后的单张图像。注意：要求输入到edited_crop_B端口的图像是 Batch 而非 list，如果是list，要经过 Image List To Batch 节点转换。
+  添加节点 Smart merge images; 两张图像有足够的共同特征时，智能合并图像。
+  - 最优方案：original_image + edited_crop_B + original_crop_A。其中 original_crop_A 是从original_image中剪切的没有修改或变形的图像，edited_crop_B是经过编辑或重绘的图像。
+  - 增对分块合并的支持。即edited_crop_B端口输入多张图像时，输出为最终合并后的单张图像。注意：要求输入到edited_crop_B端口的图像是 Batch 而非 list，如果是list，要经过 Image List To Batch 节点转换。
 
   <img width="2121" height="963" alt="image" src="https://github.com/user-attachments/assets/0e341594-8b59-45af-8ece-59382ace50e4" />
 
 ## v1.3.5 （Optimized in v1.4.0）
   
-  添加 LoadImage_Preview 节点,其中浏览图像功能引用了作者Enashka的ComfyUI-nhknodes扩展image_loader_with_previews节点中的部分代码。<br>
+  添加 LoadImage_Preview 节点。
   - 主要功能：浏览指定路径下的图像文件，选择其中一张后进入编辑面板（绘制mask或在图像上绘制方框、圆等）。
   - shift+左键：画直线、正方形或正圆。
   - L-alpha：用于载入图像alpha到画布。
@@ -109,19 +94,13 @@
 
   <img width="1767" height="1008" alt="Image" src="https://github.com/user-attachments/assets/f3bcfd71-eaba-4933-aa97-01ee6eefad62" />
 
-## v1.2.4 （fix in V1.4.4，Optimized in V1.4.5，add "P" button in V1.5.3）
+## v1.2.4 （add "P" button in V1.5.3）
   
-  添加自定义sigma，Element_SigmaGraph 节点, 原始代码来自作者Temult 的 TWanSigmaGraph节点https://github.com/Temult/TWanSigmaGraph , 修改、优化、添加了很多内容。
-
-  - 添加可选latent 输入端口以同步ltx audio vae 载入与卸载顺序。<br>
-  - 添加可选custom_sigmas 输入端口，添加单独执行功能，方便将现有的sigma数列存储为预设<br>
-  - 鼠标点击曲线的位置增减控制点（单击加点，右键删除），增减点时，保持其它控制点不变。 解除控制点 X 轴方向移动限制
-  - 添加输出最大值 max value 参数，添加输出强制纠正。
-  - P 按钮行为：当点数少于 steps+1 时，前 n-1 个点的 x 重排为 0, 1/steps, 2/steps, ..., (n-2)/steps，y 不变；最后一个点（x, y）原样保留。当点数不少于 steps+1 时，取前 steps+1 个点，x 均匀分布为 0, 1/steps, ..., 1，y 不变。撤销支持：操作会压入撤销栈，可 Ctrl+Z 撤回。
+  添加自定义sigma，Element_SigmaGraph 节点。
+  - 鼠标点击曲线的位置增减控制点（单击加点，右键删除）
+  - P 按钮行为：当点数少于 steps+1 时，前 n-1 个点的 x 重排为 0, 1/steps, 2/steps, ..., (n-2)/steps，y 不变；最后一个点（x, y）原样保留。当点数不少于 steps+1 时，取前 steps+1 个点，x 均匀分布为 0, 1/steps, ..., 1，y 不变。PS：有什么用？在不改变前面步数的步幅时，为后面增加采样步数（增加细节）。
 
   <img width="1176" height="794" alt="image" src="https://github.com/user-attachments/assets/a8741609-cbe7-4ec8-a88d-5cae79b031a8" />
-  上图显示的是点击“P”按钮的前后对比。PS：有什么用？在不改变前面步数的步幅时，为后面增加采样步数（增加细节）。
-
 
 ## v1.2.3
   
@@ -132,7 +111,7 @@
 
 ## v1.2.2
   
-  添加帧数计算节点 Frame Calculator，计算结果为“取整”后+1，可选择Seconds或frame方式。
+  添加帧数计算节点 Frame Calculator，计算结果为“取整”后+1。
 
   <img width="1043" height="578" alt="image" src="https://github.com/user-attachments/assets/0a922590-c3bb-4504-8708-443476c3ac03" />
 
@@ -140,24 +119,22 @@
 ## v1.1.3
   
   添加 Black White Color 节点,输入端口的mask会与由节点生成的mask做 ADD 运算。
-
-  起初 ChessboardPattern 节点的 目的是为了在qwenEdit中风格转换时，抑制转换后的像素偏移问题，先转换mask区域风格，再转换invert mask区域（不过需要两次采样，这种方法在Klein模型中不起作用），后来发现ChessboardPattern这种遮罩会影响模型对物体的识别，所以才有了 Black White Color 节点。尽量使黑白区域的面积平均，以减少色调不一致的问题。
+  为了在qwenEdit中风格转换时，抑制转换后的像素偏移问题，先转换mask区域风格，再转换invert mask区域。尽量使黑白区域的面积平均，以减少色调不一致的问题。
   
   <img width="1596" height="1084" alt="image" src="https://github.com/user-attachments/assets/c715e5e6-1ff3-46ff-9d48-a0a87d2506df" />
 
 
 ## v0.0.9
 
-  添加 ChessboardPattern 节点，创建黑白棋盘格图像，可选择"by_grid_size"或"by_rows_and_cols"两种模式确定单位格子的尺寸。
+  添加 ChessboardPattern 节点，创建黑白棋盘格图像。
 
   <img width="1714" height="608" alt="image" src="https://github.com/user-attachments/assets/466bc026-adc5-42cd-abe5-c28f323dd482" />
 
 
 ## v0.0.8
 
-  添加Image Noise Using Mask节点，方便在图像的mask区域添加随机噪点，可调整噪点大小，透明度，可选择是否为灰度模式。
-  
-  添加Image Pad & Blur节点， target width 和 target height，有输入时会自动计算扩展（当参数小于原图像时为clip模式），此时aligment参数生效，可选择对齐模式（中心对齐、左对齐、右对齐、上对齐、下对齐、左上对齐、左下对齐、右上对齐、右下对齐）。
+  添加Image Noise Using Mask节点，方便在图像的mask区域添加随机噪点。
+  添加Image Pad & Blur节点， target width 和 target height，可选择对齐模式（中心对齐、左对齐、右对齐、上对齐、下对齐、左上对齐、左下对齐、右上对齐、右下对齐）。
   pad模式可选择constant、reflect、edge，另一个和reflect效果相同。当选择constant模式时，feathering控制整体模糊程度，content_blur控制原图像扩展出的区域模糊度。constant模式时，background_color参数生效，兼容rgb色和HEX色码（16位色码）。
 
 <img width="1724" height="878" alt="屏幕截图 2026-01-17 134457" src="https://github.com/user-attachments/assets/17b9af6d-e8d2-4c35-9e13-6822e6bfa266" />
@@ -175,16 +152,10 @@
   
 ## v0.0.6
 
-Empty Image RGB：支持RGB和16位色彩信息输入，节点会自动识别色彩信息color_code。输出纯色图像，附带图像尺寸输出端口,图像尺寸会根据divisibale_by（整除）取近似值。
-
-Text Line Break： 将输入的文本按字符数量换行，支持中文、英文和中英文混搭，支持标点符号避首尾。方便将提示词与生成的图像连接到一起，这要借助其它的节点，例如：Kjnode中的Add Label节点。
-
-Random Chars (Append)：为输入的文本添加无效的特殊字符（可以自定义字符和个数），主要是为了不破坏提示词意图的前提下使生成的图像有更大的变化（不知是否起作用），因为qwen_image 和Z_image模型生成的图像构图的随机变化小。这里的“无效”是相对的。
-                       可简单设置插入位置（before,end,insert）,其中insert的插入方式是将字符个数平均分配插入到原文本的每个标点符号后面，从后向前分配。
-
-
-
-
+Empty Image RGB：支持RGB和16位色彩信息输入。
+Text Line Break： 将输入的文本按字符数量换行，支持标点符号避首尾。
+Random Chars (Append)：为输入的文本添加无效的特殊字符（可以自定义字符和个数），
+                       
 <img width="1590" height="1080" alt="节点截图 2025-12-04 164008" src="https://github.com/user-attachments/assets/1cdacfe2-7c7a-4434-9f48-1ec571bb19ab" />
 
 

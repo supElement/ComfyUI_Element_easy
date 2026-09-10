@@ -34,6 +34,16 @@
 
 ## Update
 
+## v1.5.5
+
+- 增加Element Multi REF和辅助节点Element ref convert。
+- 为 MiniMax-H3 等需要多路参考输入的视频生成模型设计的素材管理方案；配有简易图像编辑器和音视频编辑器，每个参考卡片的编辑器参数独立。
+- [中文版详细说明](Element_multi_ref_zh.md)
+- [英文版详细说明](Element_multi_ref_en.md)
+
+<img width="1520" height="1083" alt="image" src="https://github.com/user-attachments/assets/a25dd0eb-77b2-4111-a60e-5ab787dac767" />
+
+
 ## v1.5.4
 
 - 增加 Element Load and Edit Video 视频载入、简单单轨编辑节点，和相关辅助节点Element Video Clip 和 Element Video Info。
@@ -41,8 +51,8 @@
 - 它的核心价值在于：把传统上需要专业剪辑软件完成的"分镜—粗剪—取片段"流程，直接内嵌到 ComfyUI 工作流中，让视频批处理、片段化生成类工作流无需脱离画布即可完成素材切分。
 - 大部分情况下，可替代load video 节点。
 - PS：节点原名是Element scene detection，经过多次功能修改，这个名字已经不能体现出节点的功能了，所以，节点名字改成了 Element Load and Edit Video 
-- 中文说明： <a href="https://github.com/supElement/ComfyUI_Element_easy/blob/main/Element_scene_detection.zh.md">中文版详细说明</a>
-- 英文说明： <a href="https://github.com/supElement/ComfyUI_Element_easy/blob/main/Element_scene_detection.en.md">英文版详细说明</a>
+- [中文版详细说明](Element_scene_detection.zh.md)
+- [英文版详细说明](Element_scene_detection.en.md)
 
 <img width="2147" height="1104" alt="image" src="https://github.com/user-attachments/assets/5ba547a7-31c8-4323-bf40-7ec58f1b548e" />
 

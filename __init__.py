@@ -1,5 +1,5 @@
 # __init__.py
-__version__ = "1.5.0" 
+__version__ = "1.5.5" 
 
 from .random_chars import RandomCharacterGenerator
 from .empty_image_rgb import EmptyImageRGB
@@ -63,30 +63,31 @@ NODE_DISPLAY_NAME_MAPPINGS = {
 
 }
 
-# ---- 动态注册----
+# ---- 动态注册（单模块失败只跳过自身，不影响其它节点） ----
+import importlib
+import traceback
 
 def _register_module(module):
     NODE_CLASS_MAPPINGS.update(getattr(module, "NODE_CLASS_MAPPINGS", {}))
     NODE_DISPLAY_NAME_MAPPINGS.update(getattr(module, "NODE_DISPLAY_NAME_MAPPINGS", {}))
 
-try:
-    from . import MinimaxH3LatentUpscaler
-    _register_module(MinimaxH3LatentUpscaler)
-except ImportError as e:
-    print(f"[Element_easy] Failed to import MinimaxH3LatentUpscaler: {e}")
-    
-try:
-    from . import MinimaxH3LatentUpscaler_Adv
-    _register_module(MinimaxH3LatentUpscaler_Adv)
-except ImportError as e:
-    print(f"[Element_easy] Failed to import MinimaxH3LatentUpscaler_Adv: {e}")
+def _try_register(module_name: str) -> bool:
+    try:
+        mod = importlib.import_module("." + module_name, __name__)
+        _register_module(mod)
+        return True
+    except Exception as e:
+        print(f"\n[Element_easy] 模块 {module_name} 加载失败，已跳过: "
+              f"{type(e).__name__}: {e}")
+        traceback.print_exc()   
+        print(f"[Element_easy] 其余节点继续正常加载。\n")
+        return False
 
-try:
-    from .Element_scene_detection import NODE_CLASS_MAPPINGS as sd_maps, NODE_DISPLAY_NAME_MAPPINGS as sd_names
-    NODE_CLASS_MAPPINGS.update(sd_maps)
-    NODE_DISPLAY_NAME_MAPPINGS.update(sd_names)
-except ImportError as e:
-    print(f"[Element_easy] 场景检测节点未加载: {e}")
+_try_register("MinimaxH3LatentUpscaler")
+_try_register("MinimaxH3LatentUpscaler_Adv")
+_try_register("Element_scene_detection")
+_try_register("Element_multi_ref")
+
 
 #-----------------
 

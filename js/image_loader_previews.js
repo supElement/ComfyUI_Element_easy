@@ -759,7 +759,9 @@ app.registerExtension({
         
         const exportCrop = () => {
             cropWidget.value = cropRect ? JSON.stringify([Math.round(cropRect.x), Math.round(cropRect.y), Math.round(cropRect.w), Math.round(cropRect.h)]) : "";
+            try { if (node.graph && node.graph.change) node.graph.change(); } catch (e) {}
         };
+
         
         const redrawCrop = () => {
             if (!cropCtx) return;
@@ -776,6 +778,25 @@ app.registerExtension({
             cropCtx.lineWidth = Math.max(2, 2 * getScaleX());
             cropCtx.strokeRect(r.x, r.y, r.w, r.h);
         };
+		
+		// ====== 从 crop_data 恢复裁切框======
+        const restoreCrop = () => {
+            try {
+                const raw = cropWidget ? (cropWidget.value || "") : "";
+                if (!raw || !raw.startsWith("[")) return;
+                const arr = JSON.parse(raw);
+                if (!Array.isArray(arr) || arr.length !== 4) return;
+                const [x, y, w, h] = arr.map(v => Math.max(0, Math.round(Number(v) || 0)));
+                if (w <= 0 || h <= 0) return;
+                const W = cropCanvas.width || 1, H = cropCanvas.height || 1;
+                const cx = Math.min(Math.max(0, x), W - 1);
+                const cy = Math.min(Math.max(0, y), H - 1);
+                cropRect = { x: cx, y: cy, w: Math.max(1, Math.min(w, W - cx)), h: Math.max(1, Math.min(h, H - cy)) };
+                exportCrop();
+                redrawCrop();
+            } catch (e) {}
+        };
+
 		
         const setCropMode = (on) => {
             cropMode = on;
@@ -1509,6 +1530,7 @@ app.registerExtension({
             if (colorData && colorData.startsWith("data:image")) {
                 const mImg = new Image(); mImg.onload = () => { maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height); maskCtx.drawImage(mImg, 0, 0); }; mImg.src = colorData;
             }
+			restoreCrop();
         };
 
         if (pathWidget) {

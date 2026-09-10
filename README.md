@@ -66,15 +66,18 @@
 
   <img width="2121" height="963" alt="image" src="https://github.com/user-attachments/assets/0e341594-8b59-45af-8ece-59382ace50e4" />
 
-## v1.3.5 （Optimized in v1.4.0）
+## v1.3.5 （Optimized in v1.5.6）
   
   添加 LoadImage_Preview 节点。
-  - 主要功能：浏览指定路径下的图像文件，选择其中一张后进入编辑面板（绘制mask或在图像上绘制方框、圆等）。
+  - 主要功能：浏览指定路径下的图像文件，选择其中一张后进入编辑面板进行简单编辑。包括：自由绘制线条、mask、方框、圆，裁剪图像。
   - shift+左键：画直线、正方形或正圆。
   - L-alpha：用于载入图像alpha到画布。
-  - Return：返回浏览图像面板。
+  - Return：在缩略图面板和编辑面板之间切换。
+  - 图像编辑模式下，支持ctrl+v 粘贴图像，支持鼠标拖入图像（例如：从网页或资源管理器拖入）。
+  - \ComfyUI\input目录常驻节点中，folder path的指定做为增加的目录。
 
-  <img width="989" height="783" alt="image" src="https://github.com/user-attachments/assets/f5d64913-2980-493c-b70a-a60855f2ae16" />
+  <img width="1453" height="913" alt="image" src="https://github.com/user-attachments/assets/ed8d3d43-b18d-482b-84f1-6c0f6b87add5" />
+
 
 
 ## v1.3.1 （Optimized in V1.4.5）

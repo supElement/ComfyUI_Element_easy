@@ -57,13 +57,22 @@ const ICONS = {
   x:    '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
   play: '<path d="M7 4.5v15l13-7.5z" fill="currentColor" stroke="none"/>',
   stop: '<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/>',
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
 };
+
+const NAV_ICONS = {
+  first: '<path d="M6 5v14"/><path d="M17 5l-6 7 6 7"/>',
+  prev:  '<path d="M15 5l-7 7 7 7"/>',
+  next:  '<path d="M9 5l7 7-7 7"/>',
+  last:  '<path d="M18 5v14"/><path d="M7 5l6 7-6 7"/>',
+};
+
 
 function installStyles() {
   if (document.getElementById("emr-style")) return;
   const st = document.createElement("style"); st.id = "emr-style";
   st.textContent = `
-  .emr{box-sizing:border-box;display:flex;flex-direction:column;width:100%;height:100%;min-height:600px;
+  .emr{box-sizing:border-box;display:flex;flex-direction:column;width:100%;height:100%;
     background:#14171e;color:#dfe6f2;border-radius:9px;overflow:hidden;font:12px/1.4 Inter,Segoe UI,sans-serif;user-select:none}
   .emr *{box-sizing:border-box}
   .emr-head{display:flex;align-items:center;gap:8px;padding:7px 10px;background:#1b2029;border-bottom:1px solid #2b3342;flex-shrink:0}
@@ -71,7 +80,7 @@ function installStyles() {
   .emr-status{margin-left:auto;color:#8d97a8;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .emr-btn{height:24px;padding:0 9px;border:1px solid #3b4558;border-radius:5px;background:#252d3a;color:#dce5f5;cursor:pointer;display:inline-flex;align-items:center;gap:4px}
   .emr-btn:hover{background:#303a4b}
-  .emr-grid{flex:1;display:grid;grid-template-columns:minmax(320px,1fr) minmax(340px,1.1fr);gap:10px;padding:10px;min-height:0}
+  .emr-grid{flex:1 1 480px;min-height:280px;display:grid;grid-template-columns:minmax(280px,1fr) minmax(160px,1.1fr);gap:10px;padding:10px;min-height:0}   /* 参考图最小总宽280，首尾帧卡最小总宽260 */
   .emr-col{display:flex;flex-direction:column;gap:8px;min-height:0}
   .emr-col-img{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr);gap:8px;min-height:0}
   .emr-row{display:grid;gap:8px;min-height:0}
@@ -122,8 +131,10 @@ function installStyles() {
   .emr-tbar input[type=checkbox]{accent-color:#43d9d1}
   .emr-canvaswrap{background:#0b0e14;border:1px solid #2a3242;border-radius:6px;display:flex;align-items:center;justify-content:center;min-height:300px;position:relative;overflow:hidden}
   .emr-canvaswrap canvas{max-width:100%;cursor:crosshair}
-  .emr-foot{display:flex;gap:8px;justify-content:flex-end}
+  .emr-foot{display:flex;align-items:center;gap:8px;justify-content:flex-end}
   .emr-pbtn{background:#2a4b7a;border-color:#4e7fc0}
+  .emr-pmsg{font-size:12px;color:#7ee2a8;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .emr-btn.danger{background:#8c2f39;border-color:#c0392b;color:#ffd9d9}
   .emr-tl{position:relative;border:1px solid #2a3242;border-radius:6px;overflow-x:auto;overflow-y:hidden;background:#0b0e14}
   .emr-tl-inner{position:relative;height:150px}
   .emr-ruler{position:relative;height:18px;border-bottom:1px solid #2c3443;background:#10151d}
@@ -188,6 +199,38 @@ function installStyles() {
   .emr-tl + .emr-transport{margin-top:8px}    
   .emr-playhead{z-index:35;cursor:ew-resize}
   .emr-playhead::after{content:"";position:absolute;left:-6px;right:-6px;top:0;bottom:0}  /* 14px 热区 */
+  /* --- 底部 prompt + 按钮行 ---
+     ★ flex 分配：grid 基准480/grow1，bottom 基准160/grow2
+       → 节点拉高时新增空间约 2/3 给 prompt、1/3 给参考区（prompt 优先变大） */
+  .emr-bottom{display:flex;flex-direction:column;gap:6px;padding:0 10px 10px;flex:2 1 160px;min-height:150px}
+  .emr-prompt{width:100%;flex:1 1 auto;min-height:96px;resize:none;user-select:text;
+    background:#0d1118;border:1px solid #333d50;border-radius:6px;color:#e5ecf8;padding:6px 8px;
+    font:12px/1.5 Inter,Segoe UI,sans-serif;box-sizing:border-box;outline:none}
+  .emr-prompt:focus{border-color:#4e7fc0}
+  .emr-btnrow{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;flex-shrink:0}
+  /* --- Presets 弹窗（卡片宽度由 --pcard-w 控制，可在弹窗里调） --- */
+  .emr-pgrid{--pcard-font:14px;flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;display:grid;grid-auto-rows:min-content; /* --- Presets 卡片文字字号 --- */
+    grid-template-columns:repeat(auto-fill,minmax(var(--pcard-w,180px),1fr));gap:10px;align-content:start;
+    border:1px solid #2a3242;border-radius:6px;padding:10px;background:#0b0e14}
+  .emr-pgrid::-webkit-scrollbar{width:10px}
+  .emr-pgrid::-webkit-scrollbar-thumb{background:#3a465c;border-radius:5px}
+  .emr-pgrid::-webkit-scrollbar-track{background:#0b0e14}
+  .emr-pcard{position:relative;border:1.5px solid #3a4356;border-radius:7px;background:#1a2030;
+    overflow:hidden;cursor:pointer;display:flex;flex-direction:column;gap:4px;padding:4px;user-select:none}
+  .emr-pcard.sel{border-color:#43d9d1;box-shadow:0 0 0 1px rgba(67,217,209,.4)}
+  .emr-pcard.over{outline:2px dashed #57a8ff}
+  .emr-pcard.ws .num{background:#43d9d1}
+  .emr-pcard .num{position:absolute;left:4px;top:4px;z-index:2;background:#e2b04a;color:#1a1508;
+    font-size:calc(var(--pcard-font,14px) - 3px);font-weight:700;border-radius:4px;padding:1px 6px}
+  .emr-pcard .th{height:calc(var(--pcard-w,180px) * .75);flex-shrink:0;background:#0d1119;border-radius:4px;overflow:hidden;
+    display:flex;align-items:center;justify-content:center;color:#4d5870;font-size:calc(var(--pcard-font,14px) - 4px)}
+  .emr-pcard .th img{width:100%;height:100%;object-fit:cover;display:block}
+  .emr-pcard .nm{width:100%;background:#0d1118;border:1px solid #333d50;border-radius:4px;
+    color:#e5ecf8;font:var(--pcard-font,14px)/1.5 Inter,Segoe UI,sans-serif;padding:3px 6px;user-select:text;
+    resize:vertical;min-height:calc(4 * 1.5em + 8px);box-sizing:border-box;outline:none}
+  .emr-save-th{height:180px;display:flex;align-items:center;justify-content:center;background:#0b0e14;
+    border:1px solid #2a3242;border-radius:6px;overflow:hidden}
+  .emr-save-th img{max-width:100%;max-height:100%;object-fit:contain}
 
   `;
   document.head.appendChild(st);
@@ -217,7 +260,37 @@ function drawWaveCanvas(cv, pts) {
 }
 
 const previewUrl = (p, f, s) => `/emr/preview?p=${encodeURIComponent(p)}&f=${f}&s=${s}`;
-const audioUrl   = (p) => `/emr/audio?p=${encodeURIComponent(p)}`;
+const audioUrl = (p) => `/emr/audio?p=${encodeURIComponent(p)}`;
+
+/* ================= 预设工具（模块级） ================= */
+const normDigits = (s) => String(s).replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+const presetNumKey = (name) => {
+  const s = normDigits(name);
+  const pats = [
+    /[【\[]\s*(\d+)\s*[】\]]/,                      
+    /第\s*(\d+)/,                                   
+    /(\d+)\s*号/,                                  
+    /(\d+)\s*[-–—~至到]\s*\d+\s*(?:s|秒)?/i,       
+    /(\d+)\s*(?:s|秒)/i,                           
+    /(\d+)/,                                       
+  ];
+  for (const p of pats) { const m = s.match(p); if (m) return parseInt(m[1], 10); }
+  return null;
+};
+
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) { let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0; }
+  return t;
+})();
+const crc32 = (u8) => {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < u8.length; i++) c = CRC_TABLE[(c ^ u8[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+};
+
 
 /* ================= 图像编辑器 ================= */
 class ImageEditor {
@@ -226,7 +299,7 @@ class ImageEditor {
     const ov = document.createElement("div");
     ov.className = "emr-modal";
     ov.innerHTML = `
-      <div class="emr-box">
+      <div class="emr-box" style="width:min(1000px,96vw);aspect-ratio:auto;height:min(900px,92vh);overflow:hidden">
         <h3>Edit Image · ${mat.path.split(/[\\/]/).pop()} <button class="emr-btn emr-x">✕</button></h3>
         <div class="emr-tbar">
           <button class="emr-btn" data-m="crop">Crop</button>
@@ -457,7 +530,7 @@ class ImageEditor {
     q('[data-m="crop"]').classList.add("emr-pbtn");
     syncPaintbar();
     q('[data-a="erase"]').onclick = (e) => { eraseMode = !eraseMode; e.currentTarget.classList.toggle("emr-pbtn", eraseMode); };
-    // ---- 形状工具（box / circle ----
+
     const setShape = (s) => {
       shapeMode = (shapeMode === s) ? null : s;
       ov.querySelectorAll("[data-a='box'],[data-a='circle']").forEach(b => b.classList.toggle("emr-pbtn", b.dataset.a === shapeMode));
@@ -486,7 +559,7 @@ class ImageEditor {
       strokesState = "dirty";
       redrawPaint();
     }
-    // ---- ★ 形状 / 直线绘制（落笔时拍底片，move 中恢复底片 + 画预览）----
+    // ---- ★ 形状 / 直线绘制----
     const shapeOpts = (ctx) => {
       if (eraseMode) ctx.globalCompositeOperation = "destination-out";
       ctx.strokeStyle = ctx.fillStyle = q('[data-f="color"]').value;
@@ -1394,13 +1467,19 @@ class MultiRefUI {
     try { saved = JSON.parse(widget?.value || "{}"); } catch (_) {}
     this.mats = saved.materials || {};
     this.slots = saved.slots || {};
-    this._waves = {};           
+    this.prompt = typeof saved.prompt === "string" ? saved.prompt : "";
+    this.presets = Array.isArray(saved.presets) ? saved.presets : [];
+    this._ensurePids();
+    this._wsSrcPid = typeof saved._ws_src_pid === "string" ? saved._ws_src_pid : null;
+    this._waves = {};
     this._dragSlot = null;
-	this._editVer = {};   
-    this.build(); this.render();
+    this._editVer = {};
+    this.build();
+    this.render();
     this._ro = new ResizeObserver(() => { this.node.onResize?.(); this.node.setDirtyCanvas?.(true, true); });
     setTimeout(() => this._ro.observe(root), 100);
   }
+
   status(t) { const el = this.root.querySelector(".emr-status"); if (el) el.textContent = t; }
   defaultEdit(kind, mat) {
     if (kind === "image") return { crop: null, out_w: 0, out_h: 0, lock_ratio: true, div_by: 32, paint_file: null };
@@ -1411,14 +1490,16 @@ class MultiRefUI {
     const dur = mat?.media?.duration || 0;
     return { trim: [0, dur], quant: false, div_by: 17, a: 5, ref_fps: 24 };
   }
+  
+  
   build() {
     this.root.className = "emr";
     const card = (d) => `<div class="emr-slot g-${d.group}" data-slot="${d.id}" draggable="false">
-      <div class="emr-media"><span class="emr-empty">Drop or click to add</span></div>
-      <span class="emr-tag">${d.id}</span>
-      <button class="emr-iconbtn emr-edit" title="Edit">${svgIcon(ICONS.edit, 12)}</button>
-      <button class="emr-iconbtn emr-del" title="Remove">${svgIcon(ICONS.x, 11)}</button>
-    </div>`;
+        <div class="emr-media"><span class="emr-empty">Drop/click</span></div>
+        <span class="emr-tag">${d.id}</span>
+        <button class="emr-iconbtn emr-edit" title="Edit">${svgIcon(ICONS.edit, 12)}</button>
+        <button class="emr-iconbtn emr-del" title="Remove">${svgIcon(ICONS.x, 11)}</button>
+      </div>`;
     const img9 = SLOT_DEFS.filter(d => d.group === "img").map(card).join("");
     const frame = SLOT_DEFS.filter(d => d.group === "frame").map(card).join("");
     const vids = SLOT_DEFS.filter(d => d.group === "video").map(card).join("");
@@ -1442,33 +1523,65 @@ class MultiRefUI {
           <div class="emr-row emr-row-drive">${drv}</div>
         </div>
       </div>
+      <div class="emr-bottom">
+        <textarea class="emr-prompt" rows="3" placeholder="Prompt…"></textarea>
+        <div class="emr-btnrow">
+          <button class="emr-btn" data-a="pfirst" title="Apply first preset">${svgIcon(NAV_ICONS.first)}</button>
+          <button class="emr-btn" data-a="pprev" title="Apply previous preset">${svgIcon(NAV_ICONS.prev)}</button>
+          <button class="emr-btn" data-a="pnext" title="Apply next preset">${svgIcon(NAV_ICONS.next)}</button>
+          <button class="emr-btn" data-a="plast" title="Apply last preset">${svgIcon(NAV_ICONS.last)}</button>
+          <button class="emr-btn" data-a="presets">Presets</button>
+          <button class="emr-btn" data-a="savepreset">Save Preset</button>
+		  <button class="emr-btn" data-a="expdir" title="Export folder settings (remembered, silent writes)">${svgIcon(ICONS.folder, 13)}</button>
+          <button class="emr-btn" data-a="collectexport" title="Export presets + ALL referenced media files (video/audio/overlays/thumbs)">Collect and Export</button>
+        </div>
+      </div>
       <input type="file" hidden accept="image/*,video/*,audio/*">`;
+
     this.fileInput = this.root.querySelector("input[type=file]");
     this.fileInput.onchange = (e) => {
       const files = [...(e.target.files || [])];
-      const slot = this._pendingSlot;
-      this._pendingSlot = null; e.target.value = "";
-      if (files.length && slot)
-        this.handleFiles(files, slot).catch(err => {
-          console.error("[EMR] handleFiles error:", err);
-          this.status("Import error: " + err.message);
-        });
+      const slot = this._pendingSlot; this._pendingSlot = null;
+      e.target.value = "";
+      if (files.length && slot) this.handleFiles(files, slot).catch(err => {
+        console.error("[EMR] handleFiles error:", err); this.status("Import error: " + err.message); });
     };
 
     this.root.querySelector('[data-a="clearall"]').onclick = () => {
-      this.mats = {}; this.slots = {}; this._waves = {}; this.updateState(); this.render(); this.status("Cleared");
+      this.mats = {}; this.slots = {}; this._waves = {}; this.prompt = "";
+	  this._wsSrcPid = null;
+      const t = this.root.querySelector(".emr-prompt"); if (t) t.value = "";
+      this.updateState(); this.render(); this.status("Cleared (presets kept)");
     };
+
+    this.root.querySelector('[data-a="expdir"]').onclick = () => this.openDirSettings();
+
+    const ta = this.root.querySelector(".emr-prompt");
+    ta.value = this.prompt || "";
+    ta.addEventListener("input", () => {
+      this.prompt = ta.value;
+      clearTimeout(this._pt);
+      this._pt = setTimeout(() => this.updateState(), 300);
+    });
+
+    // ---- 底部按钮 ----
+    this.root.querySelector('[data-a="presets"]').onclick = () => this.openPresetsModal();
+    this.root.querySelector('[data-a="savepreset"]').onclick = () => this.savePreset();
+    this.root.querySelector('[data-a="collectexport"]').onclick = () => this.collectAndExport();
+    this.root.querySelector('[data-a="pfirst"]').onclick = () => this.navPreset("first");
+    this.root.querySelector('[data-a="pprev"]').onclick = () => this.navPreset("prev");
+    this.root.querySelector('[data-a="pnext"]').onclick = () => this.navPreset("next");
+    this.root.querySelector('[data-a="plast"]').onclick = () => this.navPreset("last");
+
+
     const grid = this.root.querySelector(".emr-grid");
     grid.addEventListener("dragenter", (e) => { e.preventDefault(); });
     grid.addEventListener("dragover", (e) => { e.preventDefault(); e.stopPropagation(); });
     grid.addEventListener("drop", (e) => {
       e.preventDefault(); e.stopPropagation();
       const files = filesFromDataTransfer(e.dataTransfer);
-      if (files.length)
-        this.handleFiles(files, e.target.closest?.(".emr-slot")?.dataset.slot || null).catch(err => {
-          console.error("[EMR] handleFiles error:", err);
-          this.status("Import error: " + err.message);
-        });
+      if (files.length) this.handleFiles(files, e.target.closest?.(".emr-slot")?.dataset.slot || null).catch(err => {
+        console.error("[EMR] handleFiles error:", err); this.status("Import error: " + err.message); });
     });
 
     for (const el of this.root.querySelectorAll(".emr-slot")) {
@@ -1477,7 +1590,8 @@ class MultiRefUI {
       el.addEventListener("dragstart", (e) => {
         if (!this.slots[id]) { e.preventDefault(); return; }
         this._dragSlot = id;
-        e.dataTransfer.setData("text/emr", id); e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/emr", id);
+        e.dataTransfer.effectAllowed = "move";
         el.classList.add("drag-src");
       });
       el.addEventListener("dragend", () => {
@@ -1492,30 +1606,32 @@ class MultiRefUI {
       });
       el.addEventListener("dragleave", () => el.classList.remove("drop-ok"));
       el.addEventListener("drop", (e) => {
-        e.preventDefault(); e.stopPropagation(); el.classList.remove("drop-ok");
+        e.preventDefault(); e.stopPropagation();
+        el.classList.remove("drop-ok");
         const files = filesFromDataTransfer(e.dataTransfer);
         if (files.length) {
           this.handleFiles(files, id).catch(err => {
-            console.error("[EMR] handleFiles error:", err);
-            this.status("Import error: " + err.message);
-          });
-          return;  
-        }
-        else if ([...(e.dataTransfer?.types || [])].includes("Files")) {
+            console.error("[EMR] handleFiles error:", err); this.status("Import error: " + err.message); });
+          return;
+        } else if ([...(e.dataTransfer?.types || [])].includes("Files")) {
           this.status("Drop contained no readable files — drag real files from Explorer");
         }
         if (this._dragSlot && this._dragSlot !== id && SLOT_MAP[this._dragSlot].kind === def.kind) {
-          const tmp = this.slots[id]; this.slots[id] = this.slots[this._dragSlot]; this.slots[this._dragSlot] = tmp;
-          this._dragSlot = null; this.updateState(); this.render(); this.status("Swapped");
+          const tmp = this.slots[id];
+          this.slots[id] = this.slots[this._dragSlot];
+          this.slots[this._dragSlot] = tmp;
+          this._dragSlot = null;
+          this.updateState(); this.render(); this.status("Swapped");
         }
       });
-
       el.addEventListener("click", (e) => {
         if (e.target.closest(".emr-iconbtn")) return;
         if (this.slots[id]) return;
         const pv = this._pairedVideoSlotId(id);
-        if (pv) { this.openEditor(pv); return; }   
-        this._pendingSlot = id; this.fileInput.accept = KIND_ACCEPT[def.kind]; this.fileInput.click();
+        if (pv) { this.openEditor(pv); return; }
+        this._pendingSlot = id;
+        this.fileInput.accept = KIND_ACCEPT[def.kind];
+        this.fileInput.click();
       });
       el.querySelector(".emr-edit").onclick = () => this.openEditor(id);
       el.querySelector(".emr-del").onclick = () => { delete this.slots[id]; this.updateState(); this.render(); };
@@ -1524,21 +1640,29 @@ class MultiRefUI {
         if (this.slots[id]) {
           this.showMenu(e.clientX, e.clientY, [
             ["Clear this slot", () => { delete this.slots[id]; this.updateState(); this.render(); }],
-            ["Reset edits", () => { const m = this.mats[this.slots[id].mat];
-              this.slots[id].edit = this.defaultEdit(m.kind, m); this.updateState(); this.render(); }],
+            ["Reset edits", () => {
+              const m = this.mats[this.slots[id].mat];
+              this.slots[id].edit = this.defaultEdit(m.kind, m);
+              this.updateState(); this.render();
+            }],
           ]);
         } else {
           const pv = this._pairedVideoSlotId(id);
           if (!pv) return;
           this.showMenu(e.clientX, e.clientY, [
             ["Open paired video editor", () => this.openEditor(pv)],
-            ["Replace with independent audio…", () => { this._pendingSlot = id;
-              this.fileInput.accept = KIND_ACCEPT.audio; this.fileInput.click(); }],
+            ["Replace with independent audio…", () => {
+              this._pendingSlot = id;
+              this.fileInput.accept = KIND_ACCEPT.audio;
+              this.fileInput.click();
+            }],
           ]);
         }
       });
     }
   }
+
+
   showMenu(x, y, items) {
     document.querySelectorAll(".emr-menu").forEach(m => m.remove());
     const m = document.createElement("div"); m.className = "emr-menu";
@@ -1661,7 +1785,7 @@ class MultiRefUI {
             .then(r => r.json()).then(d => { vm._wave = d.waveform || []; if (!this.slots[id]) draw(); })
             .catch(() => {});
         } else {
-            media.innerHTML = '<span class="emr-empty">Drop or click to add</span>';
+            media.innerHTML = '<span class="emr-empty">Drop/click</span>';
         }
         continue;
       }
@@ -1712,7 +1836,8 @@ class MultiRefUI {
   }
   updateState() {
     const nodeId = this.node.__nodeId !== undefined ? this.node.__nodeId : this.node.id;
-    const payload = { version: 2, _node_id: nodeId, materials: this.mats, slots: this.slots };
+    const payload = { version: 3, _node_id: nodeId, materials: this.mats, slots: this.slots,
+                      prompt: this.prompt, presets: this.presets, _ws_src_pid: this._wsSrcPid || null };
     const mats = JSON.parse(JSON.stringify(payload.materials));
     for (const m of Object.values(mats)) delete m._wave;
     payload.materials = mats;
@@ -1722,14 +1847,1029 @@ class MultiRefUI {
     }
     this.node.setDirtyCanvas?.(true, true);
   }
+
   reloadFromWidget() {
     let saved = {};
     try { saved = JSON.parse(this.widget?.value || "{}"); } catch (_) {}
     this.mats = saved.materials || this.mats;
     this.slots = saved.slots || this.slots;
+    this.prompt = typeof saved.prompt === "string" ? saved.prompt : this.prompt;
+    if (Array.isArray(saved.presets)) this.presets = saved.presets;
+	this._ensurePids();
+    this._wsSrcPid = typeof saved._ws_src_pid === "string" ? saved._ws_src_pid : null;
+    const ta = this.root.querySelector(".emr-prompt");
+    if (ta) ta.value = this.prompt;
     this.render();
   }
-}
+
+  /* ================= 预设 / 收集导出 ================= */
+
+  _stripWaves(mats) {
+    const c = JSON.parse(JSON.stringify(mats || {}));
+    for (const m of Object.values(c)) delete m._wave;
+    return c;
+  }
+
+  _newPid() { return "p_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+  _ensurePids() { for (const p of this.presets) if (!p.pid) p.pid = this._newPid(); }
+  _presetSig(p) { return (p.name || "") + "\u0000" + JSON.stringify(p.snapshot || {}); }
+
+
+  _db() {
+    return new Promise((res, rej) => {
+      const rq = indexedDB.open("emr_fs", 1);
+      rq.onupgradeneeded = () => rq.result.createObjectStore("handles");
+      rq.onsuccess = () => res(rq.result);
+      rq.onerror = () => rej(rq.error);
+    });
+  }
+  async _saveDirHandle(h) {
+    try {
+      const db = await this._db();
+      await new Promise((res, rej) => {
+        const tx = db.transaction("handles", "readwrite");
+        tx.objectStore("handles").put(h, "collect_dir");
+        tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+      });
+    } catch (e) { console.warn("[EMR] save dir handle failed:", e); }
+  }
+  async _loadDirHandle() {
+    try {
+      const db = await this._db();
+      return await new Promise((res, rej) => {
+        const tx = db.transaction("handles", "readonly");
+        const rq = tx.objectStore("handles").get("collect_dir");
+        rq.onsuccess = () => res(rq.result || null);
+        rq.onerror = () => rej(rq.error);
+      });
+    } catch (_) { return null; }
+  }
+  async _ensurePerm(h, mode = "readwrite") {
+    try {
+      if ((await h.queryPermission({ mode })) === "granted") return true;
+      return (await h.requestPermission({ mode })) === "granted";
+    } catch (_) { return false; }
+  }
+
+  openDirSettings() {
+    const ov = document.createElement("div");
+    ov.className = "emr-modal";
+    ov.innerHTML = `<div class="emr-box" style="width:min(480px,92vw);aspect-ratio:auto">
+      <h3>Export folder <button class="emr-btn emr-x">✕</button></h3>
+      <div data-cur style="color:#9aa6ba;line-height:1.7"></div>
+      <div class="emr-foot">
+        <button class="emr-btn" data-a="forget">Forget</button>
+        <button class="emr-btn" data-a="pick">Choose folder…</button>
+        <button class="emr-btn emr-pbtn" data-a="ok">Close</button>
+      </div></div>`;
+    document.body.appendChild(ov);
+    const cur = ov.querySelector("[data-cur]");
+    const refresh = async () => {
+      const h = await this._loadDirHandle();
+      cur.innerHTML = h
+        ? `Remembered: <b style="color:#43d9d1">${h.name}</b><br><span style="font-size:11px">Collect and Export write silently into it (same-name files are overwritten).</span>`
+        : "No folder remembered — next Collect will ask once, then remember it.";
+    };
+    refresh();
+    ov.querySelector(".emr-x").onclick = ov.querySelector('[data-a="ok"]').onclick = () => ov.remove();
+    ov.querySelector('[data-a="forget"]').onclick = async () => {
+      try { const db = await this._db(); db.transaction("handles", "readwrite").objectStore("handles").delete("collect_dir"); } catch (_) {}
+      refresh(); this.status("Remembered folder cleared");
+    };
+    ov.querySelector('[data-a="pick"]').onclick = async () => {
+      const h = await this._pickDir();
+      if (h) { await this._saveDirHandle(h); refresh(); }
+    };
+  }
+
+
+  async _pickDir() {
+    if (!window.showDirectoryPicker) return false;
+    try { return await window.showDirectoryPicker({ mode: "readwrite" }); }
+    catch (_) { return null; }
+  }
+  
+
+  async _writeTree(root, pkg, mediaMap) {
+    const wf = async (rel, data) => {
+      const parts = String(rel).split("/").filter(Boolean);
+      const name = parts.pop();
+      let d = root;
+      for (const p of parts) d = await d.getDirectoryHandle(p, { create: true });
+      const fh = await d.getFileHandle(name, { create: true });
+      const w = await fh.createWritable(); await w.write(data); await w.close();
+    };
+    await wf("emr_package.json", JSON.stringify(pkg, null, 2));
+    for (const [src, rel] of Object.entries(mediaMap || {})) {
+      try {
+        const url = src.startsWith("data:") ? src : previewUrl(src, -1);
+        await wf(rel, await (await fetch(url)).blob());
+      } catch (e) { console.warn("[EMR] collect media fetch failed:", src, e); }
+    }
+  }
+
+  _pmsg(text, warn) {
+    const el = this._pmsgEl;
+    if (!el) { this.status(text); return; }
+    el.textContent = text; el.title = text;
+    el.style.color = warn ? "#ff9c9c" : "#7ee2a8";
+    clearTimeout(this._pmsgT);
+    this._pmsgT = setTimeout(() => { el.textContent = ""; el.title = ""; }, 8000);
+  }
+
+
+  _wsLinkedIndex() { return this._wsSrcPid ? this.presets.findIndex(p => p.pid === this._wsSrcPid) : -1; }
+
+
+  _usedMats(slots) {
+    const s = new Set();
+    for (const v of Object.values(slots || {})) if (v?.mat) s.add(v.mat);
+    return s;
+  }
+
+  _blobToDataURL(b) {
+    return new Promise(r => { const f = new FileReader(); f.onload = () => r(f.result); f.readAsDataURL(b); });
+  }
+
+  async _uploadBlob(blob, name = "thumb.png") {
+    const fd = new FormData();
+    fd.append("paint_file", blob, name);
+    const d = await (await fetch("/element_multi_ref/save_paint", { method: "POST", body: fd })).json();
+    return d.path || null;
+  }
+
+
+  async snapshotThumb() {
+    const root = this.root, rr = root.getBoundingClientRect();
+    const imgs = [...root.querySelectorAll("img.emr-thumb")];
+    await Promise.all(imgs.map(im => im.complete ? 0 :
+      new Promise(r => { im.onload = im.onerror = r; })));
+    const TW = 640, scale = TW / Math.max(1, rr.width);
+    const cv = document.createElement("canvas");
+    cv.width = TW; cv.height = Math.max(80, Math.round(rr.height * scale));
+    const ctx = cv.getContext("2d");
+    ctx.fillStyle = "#14171e"; ctx.fillRect(0, 0, cv.width, cv.height);
+    for (const el of root.querySelectorAll(".emr-slot")) {
+      const r = el.getBoundingClientRect();
+      const x = (r.left - rr.left) * scale, y = (r.top - rr.top) * scale, w = r.width * scale, h = r.height * scale;
+      const cs = getComputedStyle(el);
+      ctx.fillStyle = cs.backgroundColor; ctx.fillRect(x, y, w, h);
+      const img = el.querySelector("img.emr-thumb");
+      if (img && img.complete && img.naturalWidth) {
+        ctx.save(); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
+        const s = Math.min(w / img.naturalWidth, h / img.naturalHeight);
+        const dw = img.naturalWidth * s, dh = img.naturalHeight * s;
+        ctx.drawImage(img, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
+        ctx.restore();
+      }
+      const wav = el.querySelector("canvas");
+      if (wav) ctx.drawImage(wav, x, y, w, h);
+      const tag = el.querySelector(".emr-tag");
+      if (tag) {
+        ctx.fillStyle = "rgba(8,12,18,.72)";
+        ctx.fillRect(x, y + h - 15 * scale, tag.textContent.length * 6 * scale + 8, 12 * scale + 4);
+        ctx.fillStyle = "#cdd7e5"; ctx.font = `${11 * scale}px sans-serif`;
+        ctx.fillText(tag.textContent, x + 4, y + h - 5);
+      }
+      ctx.strokeStyle = cs.borderColor; ctx.lineWidth = 1.5 * scale; ctx.strokeRect(x, y, w, h);
+    }
+    return await new Promise(res => cv.toBlob(res, "image/jpeg", 0.85));
+  }
+
+
+  _collectRefs() {
+    const mats = {};
+    const extras = new Set(), thumbSet = new Set();
+    const addMat = (id, m) => { if (m && m.path) mats[id] = m; };
+    const addSlots = (slots, srcMats) => {
+      for (const v of Object.values(slots || {})) {
+        if (!v || !v.mat) continue;
+        addMat(v.mat, (srcMats && srcMats[v.mat]) || this.mats[v.mat]);
+        const ed = v.edit || {};
+        if (ed.strokes_file) extras.add(ed.strokes_file);
+        if (ed.paint_file) extras.add(ed.paint_file);
+      }
+    };
+    addSlots(this.slots, this.mats);
+    for (const p of this.presets) {
+      const snap = p.snapshot || {};
+      addSlots(snap.slots, snap.materials);
+      if (p.thumb && !p.thumb.startsWith("data:")) thumbSet.add(p.thumb);
+    }
+    return { mats, extras: [...extras], thumbs: [...thumbSet] };
+  }
+
+  async _saveFile(name, text) {
+    if (window.showSaveFilePicker) {
+      try {
+        const h = await showSaveFilePicker({ suggestedName: name,
+          types: [{ description: "JSON", accept: { "application/json": [".json"] } }] });
+        const w = await h.createWritable(); await w.write(text); await w.close();
+        return "saved to chosen path";
+      } catch (e) { if (e.name === "AbortError") return "cancelled"; }
+    }
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+    a.download = name; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+    return "downloaded to browser default folder";
+  }
+
+
+  async _makeZip(fileList) { // [{name:"media/x.mp4", blob}]
+    const enc = new TextEncoder();
+    const items = [];
+    for (const f of fileList) items.push({ name: f.name, data: new Uint8Array(await f.blob.arrayBuffer()) });
+    const w = (n, len) => { const a = new Uint8Array(len); for (let i = 0; i < len; i++) a[i] = (n >>> (8 * i)) & 0xFF; return a; };
+    const chunks = [], central = [];
+    let offset = 0;
+    for (const it of items) {
+      const name = enc.encode(it.name), crc = crc32(it.data);
+      const h = new Uint8Array(30 + name.length);
+      h.set([0x50, 0x4B, 0x03, 0x04], 0);
+      h.set(w(20, 2), 4); h.set(w(0x0800, 2), 6); h.set(w(0, 2), 8);
+      h.set(w(0, 2), 10); h.set(w(0, 2), 12);
+      h.set(w(crc, 4), 14); h.set(w(it.data.length, 4), 18); h.set(w(it.data.length, 4), 22);
+      h.set(w(name.length, 2), 26); h.set(w(0, 2), 28);
+      h.set(name, 30);
+      chunks.push(h, it.data);
+      central.push({ name, crc, size: it.data.length, offset });
+      offset += h.length + it.data.length;
+    }
+    const cdStart = offset;
+    for (const c of central) {
+      const h = new Uint8Array(46 + c.name.length);
+      h.set([0x50, 0x4B, 0x01, 0x02], 0);
+      h.set(w(20, 2), 4); h.set(w(20, 2), 6); h.set(w(0x0800, 2), 8); h.set(w(0, 2), 10);
+      h.set(w(0, 2), 12); h.set(w(0, 2), 14);
+      h.set(w(c.crc, 4), 16); h.set(w(c.size, 4), 20); h.set(w(c.size, 4), 24);
+      h.set(w(c.name.length, 2), 28); h.set(w(0, 2), 30); h.set(w(0, 2), 32);
+      h.set(w(0, 2), 34); h.set(w(0, 2), 36); h.set(w(0, 4), 38);
+      h.set(w(c.offset, 4), 42);
+      h.set(c.name, 46);
+      chunks.push(h); offset += h.length;
+    }
+    const end = new Uint8Array(22);
+    end.set([0x50, 0x4B, 0x05, 0x06], 0);
+    end.set(w(0, 2), 4); end.set(w(0, 2), 6);
+    end.set(w(central.length, 2), 8); end.set(w(central.length, 2), 10);
+    end.set(w(offset - cdStart, 4), 12); end.set(w(cdStart, 4), 16);
+    end.set(w(0, 2), 20);
+    chunks.push(end);
+    return new Blob(chunks, { type: "application/zip" });
+  }
+
+  async _readZip(file) { 
+    const buf = new Uint8Array(await file.arrayBuffer());
+    const dv = new DataView(buf.buffer);
+    let eocd = -1;
+    for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65558); i--) {
+      if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+    }
+    if (eocd < 0) throw new Error("not a zip");
+    const count = dv.getUint16(eocd + 10, true);
+    let off = dv.getUint32(eocd + 16, true);
+    const dec = new TextDecoder();
+    const out = {};
+    for (let i = 0; i < count; i++) {
+      if (dv.getUint32(off, true) !== 0x02014b50) break;
+      const method = dv.getUint16(off + 10, true);
+      const usize = dv.getUint32(off + 24, true);
+      const fnLen = dv.getUint16(off + 28, true);
+      const exLen = dv.getUint16(off + 30, true);
+      const cmLen = dv.getUint16(off + 32, true);
+      const lho = dv.getUint32(off + 42, true);
+      const name = dec.decode(buf.subarray(off + 46, off + 46 + fnLen));
+      if (method === 0) {
+        const lfn = dv.getUint16(lho + 26, true), lex = dv.getUint16(lho + 28, true);
+        const start = lho + 30 + lfn + lex;
+        out[name] = new Blob([buf.subarray(start, start + usize)]);
+      }
+      off += 46 + fnLen + exLen + cmLen;
+    }
+    return out;
+  }
+
+  openPresetsModal() {
+    const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const ov = document.createElement("div");
+    ov.className = "emr-modal";
+        ov.innerHTML = `<div class="emr-box" style="width:min(980px,94vw);height:min(840px,88vh);max-width:98vw;max-height:96vh;overflow:hidden;resize:both">
+      <h3>Presets <span style="color:#66718a;font-weight:400;font-size:11px">drag to reorder · teal badge = current workspace · yellow badge = run_preset_NUM</span>
+        <button class="emr-btn" data-a="fs" style="margin-left:auto" title="Toggle fullscreen (⛶)">⛶</button>
+        <button class="emr-btn emr-x" style="margin-left:0">✕</button></h3>
+      <div class="emr-tbar">
+        <label>Card size<input type="range" data-f="csize" min="140" max="400" step="10" style="width:150px">
+          <span data-cs style="color:#9aa6ba;min-width:52px"></span></label>
+        <label>Font size<input type="range" data-f="cfont" min="10" max="22" step="1" style="width:120px">
+          <span data-fs style="color:#9aa6ba;min-width:36px"></span></label>
+      </div>
+      <div class="emr-pgrid"></div>
+      <div class="emr-foot" style="flex-wrap:wrap">
+        <button class="emr-btn" data-a="load" title="Import presets from JSON/ZIP">Load…</button>
+        <button class="emr-btn" data-a="export" title="Export all presets to JSON">Export…</button>
+        <span style="width:12px"></span>
+        <span style="color:#9aa6ba;font-size:12px;white-space:nowrap">Re-sort:</span>
+        <button class="emr-btn" data-a="sortNum" title="Sort by leading number">Num</button>
+        <button class="emr-btn" data-a="sortAZ" title="Sort by name A→Z">A-Z</button>
+        <button class="emr-btn" data-a="sortZA" title="Sort by name Z→A">Z-A</button>
+        <button class="emr-btn" data-a="del">Delete</button>
+        <button class="emr-btn" data-a="clearallp" title="Remove ALL presets (two clicks)">Clear all</button>
+        <span class="emr-pmsg" data-a="pmsg"></span>
+        <span style="flex:1"></span>
+        <button class="emr-btn emr-pbtn" data-a="apply">Apply</button>
+      </div></div>`;
+    document.body.appendChild(ov);
+    const q = (s) => ov.querySelector(s);
+    const grid = q(".emr-pgrid");
+	this._pmsgEl = q('[data-a="pmsg"]');
+    const box = q(".emr-box");
+    const BKEY = "emr_presets_box";
+    let lastW = 0, lastH = 0, roT = 0, fs = false, preFs = null;
+    const persistBox = () => {
+      clearTimeout(roT);
+      if (fs || lastW < 260 || lastH < 200) return;
+      try { localStorage.setItem(BKEY, JSON.stringify({ w: lastW, h: lastH })); } catch (_) {}
+    };
+
+    try {
+      const saved = JSON.parse(localStorage.getItem(BKEY) || "null");
+      if (saved?.w > 260 && saved?.h > 200) {
+        box.style.width = Math.min(saved.w, innerWidth * 0.98) + "px";
+        box.style.height = Math.min(saved.h, innerHeight * 0.96) + "px";
+      }
+    } catch (_) {}
+    const ro = new ResizeObserver(() => {
+      lastW = box.offsetWidth; lastH = box.offsetHeight;  
+      if (fs) return;
+      clearTimeout(roT);
+      roT = setTimeout(persistBox, 300);
+    });
+    ro.observe(box);
+    q('[data-a="fs"]').onclick = () => {
+      fs = !fs;
+      if (fs) {
+        preFs = { w: box.offsetWidth, h: box.offsetHeight };   
+        box.style.width = "98vw"; box.style.height = "96vh";
+      } else {
+        box.style.width = (preFs?.w > 260 ? preFs.w + "px" : "min(980px,94vw)");
+        box.style.height = (preFs?.h > 200 ? preFs.h + "px" : "min(840px,88vh)");
+      }
+      q('[data-a="fs"]').textContent = fs ? "◱" : "⛶";
+    };
+
+
+    let sel = -1;
+    const CKEY = "emr_pcard_w", FKEY = "emr_pcard_font";
+    let cardW = 180, cardF = 14;
+    try { cardW = Math.max(140, Math.min(400, parseInt(localStorage.getItem(CKEY)) || 180)); } catch (_) {}
+    try { cardF = Math.max(10, Math.min(22, parseInt(localStorage.getItem(FKEY)) || 14)); } catch (_) {}
+    const applyW = () => {
+      grid.style.setProperty("--pcard-w", cardW + "px");
+      q('[data-f="csize"]').value = cardW;
+      q("[data-cs]").textContent = cardW + "px";
+    };
+    const applyF = () => {
+      grid.style.setProperty("--pcard-font", cardF + "px");
+      q('[data-f="cfont"]').value = cardF;
+      q("[data-fs]").textContent = cardF + "px";
+    };
+    q('[data-f="csize"]').oninput = (e) => {
+      cardW = +e.target.value || 180;
+      try { localStorage.setItem(CKEY, String(cardW)); } catch (_) {}
+      applyW();
+    };
+    q('[data-f="cfont"]').oninput = (e) => {
+      cardF = +e.target.value || 14;
+      try { localStorage.setItem(FKEY, String(cardF)); } catch (_) {}
+      applyF();
+    };
+    applyW();
+    applyF();
+
+    const render = () => {
+      grid.innerHTML = "";
+      if (!this.presets.length)
+        grid.innerHTML = '<div style="color:#6f7c92">No presets — use Save Preset</div>';
+      this.presets.forEach((p, i) => {
+        const card = document.createElement("div");
+        card.className = "emr-pcard" + (i === sel ? " sel" : "");
+        if (p.pid && p.pid === this._wsSrcPid) card.classList.add("ws");
+        card.draggable = true;
+        const thumbSrc = p.thumb ? (p.thumb.startsWith("data:") ? p.thumb
+          : previewUrl(p.thumb, -1, 320)) : "";
+        card.innerHTML = `<span class="num">${i + 1}</span>
+          <div class="th">${thumbSrc ? `<img src="${thumbSrc}" draggable="false">` : "no thumb"}</div>
+          <textarea class="nm" rows="4" spellcheck="false">${esc(p.name)}</textarea>`;
+        card.onclick = (e) => { if (e.target.classList.contains("nm")) return; sel = i; render(); };
+        const nmEl = card.querySelector(".nm");
+        nmEl.oninput = (e) => { p.name = e.target.value; };
+        nmEl.onchange = () => this.updateState();
+        card.ondragstart = (e) => e.dataTransfer.setData("text/emr-preset", String(i));
+        card.ondragover = (e) => { e.preventDefault(); card.classList.add("over"); };
+        card.ondragleave = () => card.classList.remove("over");
+        card.ondrop = (e) => {
+          e.preventDefault(); card.classList.remove("over");
+          const from = +e.dataTransfer.getData("text/emr-preset");
+          if (Number.isInteger(from) && from !== i) {
+            [this.presets[from], this.presets[i]] = [this.presets[i], this.presets[from]];
+            this.updateState(); render();
+          }
+        };
+        grid.appendChild(card);
+      });
+    };
+	
+    q('[data-a="load"]').onclick = (e) => {
+      const r = e.currentTarget.getBoundingClientRect();
+      this.showMenu(r.left, r.bottom + 4, [
+        ["JSON / ZIP file…", () => this.loadPresets(() => { sel = -1; render(); })],
+        ["Collect folder…", () => this.loadCollectFolder(() => { sel = -1; render(); })],
+      ]);
+    };
+
+    q('[data-a="export"]').onclick = () => this.exportPresets();
+	
+    q('[data-a="del"]').onclick = () => {
+      if (sel < 0) return;
+      this.presets.splice(sel, 1); sel = -1;
+      this.updateState(); render();
+    };
+	
+	const clearBtn = q('[data-a="clearallp"]');
+    let clearArm = 0, clearT = 0;
+    const disarm = () => { clearArm = 0; clearTimeout(clearT); clearBtn.textContent = "Clear all"; clearBtn.classList.remove("danger"); };
+    clearBtn.onclick = () => {
+      if (!this.presets.length) { this._pmsg("No presets to clear", true); return; }
+      if (!clearArm) {
+        clearArm = 1;
+        clearBtn.textContent = "Confirm clear?";
+        clearBtn.classList.add("danger");
+        clearT = setTimeout(disarm, 3000);
+        return;
+      }
+      disarm();
+      this.presets = [];
+      this._wsSrcPid = null;          
+      sel = -1;
+      this.updateState();
+      render();
+      this._pmsg("All presets cleared");
+    };
+
+	
+    const num = (p) => { const n = presetNumKey(p.name); return n == null ? Number.MAX_SAFE_INTEGER : n; };
+    const sortBtns = { num: q('[data-a="sortNum"]'), az: q('[data-a="sortAZ"]'), za: q('[data-a="sortZA"]') };
+    const doSort = (key) => {
+      if (key === "num") this.presets.sort((a, b) => num(a) - num(b));
+      else if (key === "az") this.presets.sort((a, b) => (a.name || "").localeCompare(b.name || "", "zh-Hans-CN", { numeric: true }));
+      else this.presets.sort((a, b) => (b.name || "").localeCompare(a.name || "", "zh-Hans-CN", { numeric: true }));
+      for (const [k, b] of Object.entries(sortBtns)) b.classList.toggle("emr-pbtn", k === key);
+      this.updateState(); render();
+    };
+    sortBtns.num.onclick = () => doSort("num");
+    sortBtns.az.onclick = () => doSort("az");
+    sortBtns.za.onclick = () => doSort("za");
+
+    q('[data-a="apply"]').onclick = () => {
+      if (sel >= 0) this.applyPreset(sel);
+      else this._pmsg("Select a preset first", true);
+      persistBox(); ro.disconnect(); this._pmsgEl = null; ov.remove();
+    };
+
+
+    q(".emr-x").onclick = () => { persistBox(); ro.disconnect(); this._pmsgEl = null; this.updateState(); ov.remove(); };
+    render();
+  }
+
+  _runPresetWidget() {
+    return this.node?.widgets?.find(w => w.name === "run_preset_NUM") || null;
+  }
+
+  _onRunPresetInput(v) {
+    clearTimeout(this._rpT);
+    this._rpT = setTimeout(() => {
+      const i = Math.round(+v) - 1;
+      if (!this.presets.length) return;
+      if (!(i >= 0 && i < this.presets.length)) return;
+      if (this._wsSrcPid && this.presets[i]?.pid === this._wsSrcPid) return; 
+      this.applyPreset(i);
+    }, 200);
+  }
+
+
+  navPreset(dir) {
+    const n = this.presets.length;
+    if (!n) { this.status("No presets yet"); return; }
+    const cur = this._wsLinkedIndex();
+    let i;
+    if (dir === "first") i = 0;
+    else if (dir === "last") i = n - 1;
+    else if (dir === "next") {
+      if (cur < 0) i = 0;                                              
+      else if (cur >= n - 1) { this.status("Already at last preset — nothing after"); return; }
+      else i = cur + 1;
+    } else {                                                          
+      if (cur < 0) i = 0;                                              
+      else if (cur <= 0) { this.status("Already at first preset — nothing before"); return; }
+      else i = cur - 1;
+    }
+    this.applyPreset(i);
+  }
+
+
+
+  applyPreset(i) {
+    const p = this.presets[i];
+    if (!p) return;
+    const snap = p.snapshot || {};
+    this.mats = JSON.parse(JSON.stringify(snap.materials || {}));
+    this.slots = JSON.parse(JSON.stringify(snap.slots || {}));
+    this.prompt = snap.prompt || "";
+    this._editVer = {};
+    if (!p.pid) p.pid = this._newPid();
+    this._wsSrcPid = p.pid;                        
+    const ta = this.root.querySelector(".emr-prompt");
+    if (ta) ta.value = this.prompt;
+    this.updateState(); this.render();
+	const rp = this._runPresetWidget();
+    if (rp && Math.round(+rp.value) !== i + 1) rp.value = i + 1;
+    this.status(`Applied preset #${i + 1} — Save Preset now overwrites it`);
+  }
+
+  async savePreset() {
+    const linked = this._wsLinkedIndex();
+    const isNew = linked < 0;
+    const num = isNew ? this.presets.length + 1 : linked + 1;
+    const cur = isNew ? null : this.presets[linked];
+    let thumbPath = null;
+    try {
+      const blob = await this.snapshotThumb();
+      if (blob) thumbPath = await this._uploadBlob(blob);
+    } catch (e) { console.warn("[EMR] snapshot thumb failed:", e); }
+    const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    const ov = document.createElement("div");
+    ov.className = "emr-modal";
+    ov.innerHTML = `<div class="emr-box" style="width:min(480px,92vw);aspect-ratio:auto">
+      <h3>${isNew ? "Save New Preset" : `Update Preset #${num}`} <button class="emr-btn emr-x">✕</button></h3>
+      <div style="color:#9aa6ba">${isNew
+        ? `New index: <b style="color:#e2b04a">#${num}</b>　(run_preset_NUM = ${num})`
+        : `Overwrite <b style="color:#43d9d1">#${num} · ${esc(cur?.name || "")}</b> — position (run_preset_NUM) unchanged`}</div>
+      <div class="emr-save-th">${thumbPath ? `<img src="${previewUrl(thumbPath, -1, 420)}">` : '<span style="color:#4d5870">no snapshot</span>'}</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="emr-btn" data-a="pick">Pick image…</button>
+        <input class="nm" placeholder="Preset name" value="${cur ? esc(cur.name || "") : ""}"
+          style="flex:1;height:26px;background:#0d1118;border:1px solid #333d50;border-radius:5px;color:#e5ecf8;padding:0 8px">
+      </div>
+      <div class="emr-foot">
+        ${isNew ? "" : '<button class="emr-btn" data-a="asnew">Save as New</button>'}
+        <button class="emr-btn" data-a="cancel">Cancel</button>
+        <button class="emr-btn emr-pbtn" data-a="ok">${isNew ? "Save" : "Update"}</button>
+      </div></div>`;
+    document.body.appendChild(ov);
+    const nm = ov.querySelector(".nm");
+    const collect = () => {
+      const used = this._usedMats(this.slots);
+      const mats = Object.fromEntries(Object.entries(this._stripWaves(this.mats)).filter(([k]) => used.has(k)));
+      return {
+        name: nm.value.trim() || (cur?.name || `Preset ${num}`),
+        thumb: ov.dataset.custom || thumbPath,
+        snapshot: { materials: mats, slots: JSON.parse(JSON.stringify(this.slots)), prompt: this.prompt || "" },
+      };
+    };
+    ov.querySelector('[data-a="pick"]').onclick = () => {
+      const inp = document.createElement("input");
+      inp.type = "file"; inp.accept = "image/*";
+      inp.onchange = async () => {
+        const f = inp.files && inp.files[0]; if (!f) return;
+        const p2 = await this._uploadBlob(f, f.name);
+        if (p2) { ov.dataset.custom = p2; ov.querySelector(".emr-save-th").innerHTML = `<img src="${previewUrl(p2, -1, 420)}">`; }
+      };
+      inp.click();
+    };
+    ov.querySelector('[data-a="cancel"]').onclick = ov.querySelector(".emr-x").onclick = () => ov.remove();
+    const saveNew = () => {
+      const pid = this._newPid();
+      this.presets.push({ pid, ...collect() });
+      this._wsSrcPid = pid;                        
+      this.updateState(); ov.remove();
+      this.status(`Saved preset #${this.presets.length}`);
+    };
+    ov.querySelector('[data-a="ok"]').onclick = () => {
+      if (isNew) { saveNew(); return; }
+      Object.assign(cur, collect());               
+      this.updateState(); ov.remove();
+      this.status(`Updated preset #${linked + 1}`);
+    };
+    const asNewBtn = ov.querySelector('[data-a="asnew"]');
+    if (asNewBtn) asNewBtn.onclick = saveNew;
+  }
+
+  loadPresets(onDone) {
+    const inp = document.createElement("input");
+    inp.type = "file"; inp.accept = ".json,.zip,application/json,application/zip";
+    inp.onchange = async () => {
+      const f = inp.files && inp.files[0]; if (!f) return;
+      try {
+        let pkg = null, entries = null;
+        if (/\.zip$/i.test(f.name) || f.type === "application/zip") {
+          const zipEntries = await this._readZip(f);
+          const pkgKey = Object.keys(zipEntries).find(k => k.endsWith("emr_package.json"));
+          pkg = JSON.parse(await zipEntries[pkgKey].text());
+          entries = zipEntries;
+        } else {
+          pkg = JSON.parse(await f.text());
+        }
+        await this._importPackage(pkg, entries);
+      } catch (e) { console.error(e); this._pmsg("Load failed: " + e.message, true); }
+      onDone?.();
+    };
+    inp.click();
+  }
+
+
+  async loadCollectFolder(onDone) {
+    const picked = await this._pickDir();
+    if (picked) {
+      try {
+        const fh = await picked.getFileHandle("emr_package.json");
+        const pkg = JSON.parse(await (await fh.getFile()).text());
+        const entries = {};
+        const walk = async (dir, prefix) => {
+          for await (const [name, handle] of dir.entries()) {
+            if (handle.kind === "file") entries[prefix + name] = await handle.getFile();
+            else await walk(handle, prefix + name + "/");
+          }
+        };
+        await walk(picked, "");
+        await this._importPackage(pkg, entries);
+      } catch (e) { console.error(e); this._pmsg("Load failed: " + e.message, true); }
+      onDone?.();
+      return;
+    }
+    if (picked === null) { onDone?.(); return; }   
+
+    const inp = document.createElement("input");
+    inp.type = "file";
+    inp.webkitdirectory = true;
+    inp.onchange = async () => {
+      const files = [...(inp.files || [])];
+      if (!files.length) return;
+      try {
+        let pkgFile = null;
+        const entries = {};
+        for (const fl of files) {
+          let rel = fl.webkitRelativePath || fl.name;
+          rel = rel.split("/").slice(1).join("/");
+          if (!rel) continue;
+          if (rel === "emr_package.json") pkgFile = fl;
+          else entries[rel] = fl;
+        }
+        if (!pkgFile) throw new Error("emr_package.json not found in selected folder");
+        await this._importPackage(JSON.parse(await pkgFile.text()), entries);
+      } catch (e) {
+        console.error(e);
+        this._pmsg("Load failed: " + e.message, true);
+      }
+      onDone?.();
+    };
+    inp.click();
+  }
+
+
+  async _importPackage(pkg, entries) {
+    const arr = Array.isArray(pkg) ? pkg : (Array.isArray(pkg.presets) ? pkg.presets : null);
+    if (!arr && !pkg.workspace) throw new Error("no presets found in file");
+    const remap = {};
+    if (entries) {
+      for (const [rel, blob] of Object.entries(entries)) {
+        if (rel.endsWith("emr_package.json")) continue;
+        const fname = rel.split("/").pop();
+        let serverPath = null;
+        try {
+          if (/(^|\/)(thumbs|extra)\//.test(rel)) {                 
+            serverPath = await this._uploadBlob(blob, fname);
+          } else {
+            const fd = new FormData();
+            fd.append("file", new File([blob], fname));
+            const d = await (await fetch("/element_multi_ref/upload", { method: "POST", body: fd })).json();
+            serverPath = d.path || null;
+          }
+        } catch (e) { console.warn("[EMR] import upload failed:", rel, e); }
+        if (serverPath) remap["/" + rel] = serverPath;
+      }
+    } else {
+      const isCollectRel = (p) => /^(00_workspace|\d{2}_[^/]+)\/(media|extra|thumbs)\//.test(String(p).replace(/\\/g, "/"));
+      let relHits = 0;
+      for (const p of (arr || [])) {
+        for (const m of Object.values(p?.snapshot?.materials || {})) if (isCollectRel(m?.path)) relHits++;
+        if (isCollectRel(p?.thumb)) relHits++;
+      }
+      if (relHits) this._pmsg(`⚠ ${relHits} path(s) need media — use "Collect folder…"`, true);
+    }
+    const fixPath = (p) => (p && remap["/" + String(p).replace(/\\/g, "/")]) || p;
+    const idMap = {};
+    const newId = () => "m_" + Math.random().toString(36).slice(2, 9);
+    const importSlots = (slots) => {
+      const c = JSON.parse(JSON.stringify(slots || {}));
+      for (const v of Object.values(c)) {
+        if (v?.mat && idMap[v.mat]) v.mat = idMap[v.mat];
+        const ed = v?.edit;
+        if (ed) {
+          if (ed.strokes_file) ed.strokes_file = fixPath(ed.strokes_file);
+          if (ed.paint_file) ed.paint_file = fixPath(ed.paint_file);
+        }
+      }
+      return c;
+    };
+    const havePids = new Set(this.presets.map(p => p.pid).filter(Boolean));
+    const haveSigs = new Set(this.presets.map(p => this._presetSig(p)));
+    let n = 0, dup = 0;
+    const tryPush = (entry) => {
+      if (entry.pid && havePids.has(entry.pid)) { dup++; return; }
+      const sig = this._presetSig(entry);
+      if (!entry.pid && haveSigs.has(sig)) { dup++; return; }
+      if (!entry.pid) entry.pid = this._newPid();
+      havePids.add(entry.pid); haveSigs.add(sig);
+      this.presets.push(entry); n++;
+    };
+    for (const p of arr) {
+      if (!p || typeof p !== "object" || !p.snapshot) continue;
+      const ms = {};
+      for (const [id, m] of Object.entries(p.snapshot.materials || {})) {
+        const nid = idMap[id] || (idMap[id] = newId());
+        const c = { ...m }; c.path = fixPath(c.path); ms[nid] = c;
+      }
+      let thumb = p.thumb;
+      if (thumb && !thumb.startsWith("data:")) thumb = fixPath(thumb);
+      tryPush({ pid: p.pid || null, name: p.name || "Imported", thumb: thumb || null,
+        snapshot: { materials: ms, slots: importSlots(p.snapshot.slots), prompt: p.snapshot.prompt ?? "" } });
+    }
+    if (pkg.workspace && pkg.workspace.slots) {
+      const ms = {};
+      for (const [id, m] of Object.entries(pkg.workspace.materials || {})) {
+        const nid = idMap[id] || (idMap[id] = newId());
+        const c = { ...m }; c.path = fixPath(c.path); ms[nid] = c;
+      }
+      let wthumb = pkg.workspace.thumb;
+      if (wthumb && !wthumb.startsWith("data:")) wthumb = fixPath(wthumb);
+      tryPush({ pid: null, name: "workspace · imported", thumb: wthumb || null,
+        snapshot: { materials: ms, slots: importSlots(pkg.workspace.slots), prompt: pkg.workspace.prompt ?? "" } });
+    }
+    this.updateState();
+    this._pmsg(`Imported ${n} preset(s)` + (dup ? `, skipped${dup} duplicate(s)` : "") + (entries ? " (+media files)" : ""));
+  }
+
+
+
+  async exportPresets() {
+    if (!this.presets.length) { this._pmsg("No presets to export", true); return; }
+    const out = [];
+    for (const p of this.presets) {
+      let thumb = p.thumb;
+      if (thumb && !thumb.startsWith("data:")) {
+        try {
+          const b = await (await fetch(previewUrl(thumb, -1, 640))).blob();
+          thumb = await this._blobToDataURL(b);
+        } catch (_) { /* 保留服务器路径 */ }
+      }
+      out.push({ pid: p.pid || null, name: p.name, thumb, snapshot: p.snapshot });
+    }
+    const text = JSON.stringify({ version: 1, kind: "element_multi_ref_presets",
+      exported_at: new Date().toISOString(), presets: out }, null, 2);
+    const d = new Date(), pad = (x) => String(x).padStart(2, "0");
+    const name = `emr_presets_${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}.json`;
+    let dh = null;
+    const storedH = await this._loadDirHandle();
+    if (storedH && (await this._ensurePerm(storedH))) dh = storedH;
+    if (!dh) {
+      const picked = await this._pickDir();
+      if (picked === null) { this._pmsg("Export cancelled", true); return; }
+      if (picked) { dh = picked; await this._saveDirHandle(picked); }
+    }
+
+    if (dh) {
+      const fh = await dh.getFileHandle(name, { create: true });
+      const w = await fh.createWritable(); await w.write(text); await w.close();
+      this._pmsg("Exported: " + name);
+    } else {
+      this._pmsg("Exported: " + await this._saveFile(name, text));
+    }
+  }
+
+
+
+   _askExportFolder(defVal) {
+    return new Promise((resolve) => {
+      const ov = document.createElement("div");
+      ov.className = "emr-modal";
+      ov.innerHTML = `<div class="emr-box" style="width:min(620px,92vw);aspect-ratio:auto">
+        <h3>Collect and Export <button class="emr-btn emr-x">✕</button></h3>
+        <div style="color:#9aa6ba;font-size:12px;line-height:1.6">
+          Files are written by the ComfyUI server into the folder below.
+          Sub-folders: <b>00_workspace/</b> + <b>01_预设名/</b>… (each with media/ extra/ thumbs/).
+          Server-side write — no browser permission prompt.</div>
+        <input class="nm" spellcheck="false" placeholder="e.g. D:\\shots\\emr_export"
+          style="width:100%;height:30px;background:#0d1118;border:1px solid #333d50;border-radius:5px;color:#e5ecf8;padding:0 8px">
+        <div class="emr-foot">
+          <button class="emr-btn" data-a="cancel">Cancel</button>
+          <button class="emr-btn emr-pbtn" data-a="ok">Export</button>
+        </div></div>`;
+      document.body.appendChild(ov);
+      const inp = ov.querySelector("input.nm");
+      inp.value = defVal || "";
+      const done = (v) => { ov.remove(); resolve(v); };
+      ov.querySelector('[data-a="cancel"]').onclick = ov.querySelector(".emr-x").onclick = () => done(null);
+      ov.querySelector('[data-a="ok"]').onclick = () => done(inp.value.trim() || null);
+      inp.onkeydown = (e) => { if (e.key === "Enter") done(inp.value.trim() || null); };
+      setTimeout(() => inp.focus(), 30);
+    });
+  }
+
+  /* ★ Collect and Export：按预设名称分子文件夹 → 服务端写盘（失败回退 ZIP） */
+  async collectAndExport() {
+    const safeSeg = (s) => {
+      let t = String(s || "").replace(/[\\/:*?"<>|\x00-\x1f]/g, "_")
+        .replace(/[\s.]+$/g, "").trim().slice(0, 60);          
+      if (/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(t)) t = "_" + t;
+      return t || "preset";
+    };
+	
+    const hasWs = Object.values(this.slots || {}).some(v => v?.mat) || !!(this.prompt || "").trim();
+    const groups = [];
+    if (hasWs) groups.push({ folder: "00_workspace", slots: this.slots, matsSrc: this.mats, thumb: null });
+	
+    this.presets.forEach((p, i) => {
+      const snap = p.snapshot || {};
+      groups.push({ folder: `${String(i + 1).padStart(2, "0")}_${safeSeg(p.name)}`,
+        slots: snap.slots || {}, matsSrc: snap.materials || {},
+        thumb: (p.thumb && !p.thumb.startsWith("data:")) ? p.thumb : null });
+    });
+    const hasAnything = groups.some(g => Object.values(g.slots).some(v => v?.mat) || g.thumb);
+    if (!hasAnything) { this.status("Nothing to collect — no materials or presets"); return; }
+
+    /* ---- 目标目录 ---- */
+    let dh = null;
+    const storedH = await this._loadDirHandle();
+    if (storedH && (await this._ensurePerm(storedH))) dh = storedH;
+    if (!dh) {
+      const picked = await this._pickDir();
+      if (picked === null) { this.status("Export cancelled"); return; }
+      if (picked) { dh = picked; await this._saveDirHandle(picked); }
+    }
+
+    const mediaMap = {};      
+    const nameTaken = new Set();
+    const uniqName = (base) => { let n = base, i = 1;
+      while (nameTaken.has(n.toLowerCase())) { const d = base.lastIndexOf(".");
+        n = d > 0 ? `${base.slice(0, d)}_${i}${base.slice(d)}` : `${base}_${i}`; i++; }
+      nameTaken.add(n.toLowerCase()); return n; };
+    const files = [];
+    let done = 0, failed = 0;
+    const place = async (folder, sub, p) => {
+      if (!p || mediaMap[p]) return;
+      done++;
+      this.status(`Collecting ${done}: ${p.split(/[\\/]/).pop()}`);
+      try {
+        const r = await fetch(`/element_multi_ref/raw_file?p=${encodeURIComponent(p)}`);
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const base = p.split(/[\\/]/).pop() || ("file_" + done);
+        const rel = `${folder}/${sub}/${uniqName(base)}`;
+        mediaMap[p] = rel;
+        files.push({ rel, blob: await r.blob() });
+      } catch (e) { failed++; console.warn("[EMR] collect fetch failed:", p, e); }
+    };
+	
+    let wsThumbPath = null;
+    if (hasWs) {
+      try {
+        const blob = await this.snapshotThumb();
+        if (blob) {
+          wsThumbPath = await this._uploadBlob(blob, "workspace.jpg");
+          if (wsThumbPath) await place("00_workspace", "thumbs", wsThumbPath);
+        }
+      } catch (e) { console.warn("[EMR] workspace thumb failed:", e); }
+    }
+
+	
+    for (const g of groups) {
+      for (const v of Object.values(g.slots || {})) {
+        if (!v || !v.mat) continue;
+        const m = g.matsSrc[v.mat] || this.mats[v.mat];
+        if (m && m.path) await place(g.folder, "media", m.path);
+        const ed = v.edit || {};
+        if (ed.strokes_file) await place(g.folder, "extra", ed.strokes_file);
+        if (ed.paint_file) await place(g.folder, "extra", ed.paint_file);
+      }
+      if (g.thumb) await place(g.folder, "thumbs", g.thumb);
+    }
+
+    const remapSlots = (slots) => {
+      const c = JSON.parse(JSON.stringify(slots || {}));
+      for (const v of Object.values(c)) {
+        const ed = v?.edit; if (!ed) continue;
+        if (ed.strokes_file && mediaMap[ed.strokes_file]) ed.strokes_file = mediaMap[ed.strokes_file];
+        if (ed.paint_file && mediaMap[ed.paint_file]) ed.paint_file = mediaMap[ed.paint_file];
+      }
+      return c;
+    };
+    const presetsOut = this.presets.map((p) => {
+      const snap = p.snapshot || {};
+      const ms = {};
+      for (const [id, m] of Object.entries(snap.materials || {})) {
+        const c = { ...m };
+        if (c.path && mediaMap[c.path]) c.path = mediaMap[c.path];
+        ms[id] = c;
+      }
+      return { pid: p.pid || null, name: p.name || "",
+        thumb: (p.thumb && mediaMap[p.thumb]) || (p.thumb?.startsWith("data:") ? p.thumb : null),
+        snapshot: { materials: ms, slots: remapSlots(snap.slots), prompt: snap.prompt ?? "" } };
+    });
+
+    const pkg = { version: 1, kind: "element_multi_ref_collect", created: new Date().toISOString(), presets: presetsOut };
+    if (hasWs) {
+      const wsMats = {};
+      for (const [id, m] of Object.entries(this._stripWaves(this.mats))) {
+        const c = { ...m };
+        if (c.path && mediaMap[c.path]) c.path = mediaMap[c.path];
+        wsMats[id] = c;
+      }
+      pkg.workspace = { thumb: (wsThumbPath && mediaMap[wsThumbPath]) || null,
+        materials: wsMats, slots: remapSlots(this.slots), prompt: this.prompt || "" };
+    }
+
+
+    const pkgBlob = new Blob([JSON.stringify(pkg)], { type: "application/json" });
+    if (failed) this.status(`Collect: ${failed} file(s) failed — package may be incomplete`);
+	
+    if (dh) {
+      const wf = async (rel, blob) => {
+        const parts = String(rel).split("/").filter(Boolean);
+        const nm = parts.pop();
+        let d = dh;
+        for (const p of parts) d = await d.getDirectoryHandle(p, { create: true });
+        const fh = await d.getFileHandle(nm, { create: true });
+        const w = await fh.createWritable(); await w.write(blob); await w.close();
+      };
+      let okc = 0;
+      const all = [{ rel: "emr_package.json", blob: pkgBlob }, ...files];
+      try {
+        for (let i = 0; i < all.length; i++) {
+          this.status(`Writing ${i + 1}/${all.length}: ${all[i].rel.split("/").pop()}`);
+          await wf(all[i].rel, all[i].blob);
+          okc++;
+        }
+        this.status(`Exported ${okc} files → ${dh.name}`);
+      } catch (e) {
+        console.warn("[EMR] local write failed:", e);
+        this.status(`Local write failed (${e.message}) — wrote ${okc}/${all.length} before error`);
+      }
+      return;
+    }
+
+
+    let base = "";
+    try { const d = await (await fetch("/element_multi_ref/export_base")).json(); base = d.output || ""; } catch (_) {}
+    let lastDir = "";
+    try { lastDir = localStorage.getItem("emr_export_dir") || ""; } catch (_) {}
+    const folder = await this._askExportFolder(lastDir || base);
+    if (!folder) { this.status("Export cancelled"); return; }
+    try { localStorage.setItem("emr_export_dir", folder); } catch (_) {}
+
+    let okc = 0;
+    const writeOne = async (rel, blob) => {
+      const fd = new FormData();
+      fd.append("folder", folder);
+      fd.append("rel", rel);
+      fd.append("file", blob, rel.split("/").pop());
+      const r = await fetch("/element_multi_ref/collect_write", { method: "POST", body: fd });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || d.error) throw new Error(d.error || ("HTTP " + r.status));
+    };
+    try {
+      const all = [{ rel: "emr_package.json", blob: pkgBlob }, ...files];
+      for (let i = 0; i < all.length; i++) {
+        this.status(`Writing ${i + 1}/${all.length}: ${all[i].rel.split("/").pop()}`);
+        await writeOne(all[i].rel, all[i].blob);
+        okc++;
+      }
+      this.status(`Exported ${okc} files → ${folder}`);
+    } catch (e) {
+      console.warn("[EMR] server write failed, fallback to zip:", e);
+      this.status("Server write failed (" + e.message + ") — downloading ZIP instead");
+      const zip = await this._makeZip([...files.map(f => ({ name: f.rel, blob: f.blob })),
+                                      { name: "emr_package.json", blob: pkgBlob }]);
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(zip);
+      a.download = `emr_collect_${new Date().toISOString().slice(0, 10)}.zip`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+    }
+  }
+
+ }
+
 
 /* ================= 注册 ================= */
 app.registerExtension({
@@ -1737,53 +2877,84 @@ app.registerExtension({
   async beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData.name !== "ElementMultiRef") return;
     installStyles();
-    const BODY_PAD = 8, FALLBACK_H = 640;
+    const MIN_W = 520, MIN_H = 560, MIN_DOM_H = 480, NEW_W = 720, NEW_H = 680;
+
     const origCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function () {
       const result = origCreated?.apply(this, arguments);
       this.__nodeId = this.id;
       const hideWidget = (w) => {
         if (!w) return;
-        w.hidden = true; if (!w.options) w.options = {}; w.options.hidden = true;
+        w.hidden = true;
+        if (!w.options) w.options = {};
+        w.options.hidden = true;
         if (w.computeSize) w.computeSize = () => [0, -4];
         w.draw = function () {};
         const el = w.element || w.inputEl;
-        if (el) { el.style.display = "none"; if (el.parentElement) el.parentElement.style.display = "none"; }
+        if (el) {
+          el.style.display = "none";
+          if (el.parentElement) el.parentElement.style.display = "none";
+        }
       };
       hideWidget(this.widgets?.find(w => w.name === "refs_data"));
       const root = document.createElement("div");
       const domWidget = this.addDOMWidget("multi_ref_ui", "div", root, { serialize: false, hideOnZoom: false });
       const widget = this.widgets?.find(w => w.name === "refs_data");
       this.__emr = new MultiRefUI(this, root, widget);
-      let panelH = FALLBACK_H;
-      const measure = () => {
-        const p = root.firstElementChild;
-        if (!p || !root.isConnected) return 0;
-        const prev = p.style.height; p.style.height = "auto";
-        const h = Math.ceil(p.offsetHeight); p.style.height = prev;
-        return h > 100 ? h : 0;
+
+      const rpW = this.widgets?.find(w => w.name === "run_preset_NUM");
+      if (rpW) {
+        const origCb = rpW.callback;
+        rpW.callback = (v) => { try { origCb?.(v); } catch (_) {} this.__emr?._onRunPresetInput(v); };
+      }
+
+
+      root.style.width = "100%";
+      root.style.height = MIN_DOM_H + "px";
+      domWidget.computeSize = () => [400, 4];
+      const fixedH = Math.max(0, this.computeSize()[1] - 4);  
+      const applyDomH = () => {
+        const h = Math.max(MIN_DOM_H, Math.round((this.size?.[1] || 0) - fixedH - 8)); //底边距
+        if (Math.abs((parseFloat(root.style.height) || 0) - h) > 0.5) root.style.height = h + "px";
       };
-      panelH = measure() || FALLBACK_H;
-      domWidget.computeSize = (w) => [Math.max(100, (this.size?.[0] || w || 900) - 20), panelH];
-      this.size = [Math.max(this.size?.[0] || 0, 920), this.computeSize()[1] - BODY_PAD];
-      this.onResize = () => { this.size[1] = this.computeSize()[1] - BODY_PAD; };
-      requestAnimationFrame(() => {
-        const h = measure();
-        if (h && Math.abs(h - panelH) > 2) { panelH = h; this.size[1] = this.computeSize()[1] - BODY_PAD; this.setDirtyCanvas?.(true, true); }
-      });
+      this.__applyDomH = applyDomH;
+      applyDomH();
+      this.onResize = applyDomH;                
+
+      const origComputeSize = this.computeSize;
+      this.computeSize = function () {
+        const size = origComputeSize ? origComputeSize.apply(this, arguments) : [MIN_W, MIN_H];
+        if (size[0] < MIN_W) size[0] = MIN_W;
+        if (size[1] < MIN_H) size[1] = MIN_H;
+        return size;
+      };
+
+      try { this.__emr._ro?.disconnect(); } catch (_) {}
+      this.__emr._ro = new ResizeObserver(applyDomH);
+      this.__emr._ro.observe(root);
+      this.__emrH = setInterval(applyDomH, 250);
+
+      if (typeof this.id !== "number" || this.id < 0) this.size = [NEW_W, NEW_H];
       return result;
     };
+
     const origConfigure = nodeType.prototype.onConfigure;
     nodeType.prototype.onConfigure = function () {
       const r = origConfigure?.apply(this, arguments);
       this.__nodeId = this.id;
-      const h = this.computeSize()[1] - BODY_PAD;
-      if (Math.abs((this.size?.[1] || 0) - h) > 2) this.size[1] = h;
-      if (this.__emr) setTimeout(() => this.__emr.reloadFromWidget(), 50);
+      this.__applyDomH?.();
+      if (this.__emr) setTimeout(() => {
+        this.__emr.reloadFromWidget();
+        const rp = this.widgets?.find(w => w.name === "run_preset_NUM");
+        if (rp) this.__emr._onRunPresetInput(rp.value);   
+      }, 50);
       return r;
     };
+
+
     const origRemoved = nodeType.prototype.onRemoved;
     nodeType.prototype.onRemoved = function () {
+      clearInterval(this.__emrH);
       if (this.__emr) {
         try { this.__emr._ro?.disconnect(); } catch (_) {}
         this.__emr = null;

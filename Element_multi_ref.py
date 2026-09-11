@@ -173,7 +173,6 @@ def _probe_media(path: str) -> dict:
             dur = float(vs.duration * vs.time_base) if vs.duration else 0.0
             total = int(vs.frames) if vs.frames else int(round(dur * fps))
             v_start = float(vs.start_time * vs.time_base) if getattr(vs, "start_time", None) is not None else 0.0
-            # ★ fps 元数据校验：标称帧率与 帧数/时长 不符时用真实值（否则越到后面越偏）
             if total > 0 and dur > 0.5:
                 fps_real = total / dur
                 if abs(fps_real - fps) / max(fps, 1e-6) > 0.02:
@@ -639,7 +638,7 @@ def _load_video_slot(mat: dict, edit: dict):
 
     def collect(do_seek):
         step_t = 1.0 / out_fps
-        grid_n = max(1, int(math.ceil((end_sec - start_sec) * out_fps - 1e-6)))  # ★ 自建，不依赖外部 grid
+        grid_n = max(1, int(math.ceil((end_sec - start_sec) * out_fps - 1e-6)))  
         slots = [None] * grid_n
         with av.open(path) as c:
             vs = c.streams.video[0]; vs.thread_type = "AUTO"; vtb = vs.time_base
@@ -716,34 +715,67 @@ def _video_paired_audio(mat: dict, slot: dict) -> dict:
 class ElementMultiRef(io.ComfyNode):
     @classmethod
     def define_schema(cls) -> io.Schema:
-        inputs = [io.String.Input("refs_data", default="{}", tooltip="Internal UI state (hidden)")]
+        inputs = [
+            io.Int.Input("run_preset_NUM", default=0, min=0, step=1,
+                         tooltip="0 = output the CURRENT panel state (materials/slots/prompt as edited in UI). "
+                                 ">=1 = output preset #n (1-based). Out of range is clamped to preset count. "
+                                 "Connect an upstream int node that changes per queue run for batch playback."),
+            io.String.Input("refs_data", default="{}", tooltip="Internal UI state (hidden)"),
+        ]
         outputs = [_ref_output("REF_ALL_IN_ONE")]
         common = dict(
-            node_id="ElementMultiRef", display_name="Element Multi REF",
+            node_id="ElementMultiRef",
+            display_name="Element Multi REF",
             category="Element_easy",
             description="Multi-reference material slots for MiniMax-H3 style video models. "
                         "Outputs an info bundle consumed by Element ref convert.",
         )
-        try: return io.Schema(inputs=inputs, hidden=[io.Hidden.unique_id], outputs=outputs, **common)
-        except TypeError: return io.Schema(inputs=inputs, outputs=outputs, **common)
+        try:
+            return io.Schema(inputs=inputs, hidden=[io.Hidden.unique_id], outputs=outputs, **common)
+        except TypeError:
+            return io.Schema(inputs=inputs, outputs=outputs, **common)
 
     @classmethod
-    def execute(cls, refs_data="{}"):
-        try: state = json.loads(refs_data) if isinstance(refs_data, str) else (refs_data or {})
-        except Exception: state = {}
+    def execute(cls, run_preset_NUM=0, refs_data="{}"):
+        try:
+            state = json.loads(refs_data) if isinstance(refs_data, str) else (refs_data or {})
+        except Exception:
+            state = {}
         node_id = None
-        try: node_id = cls.hidden.unique_id
-        except Exception: pass
-        if node_id is None: node_id = state.get("_node_id")
-        try: node_id = int(node_id)
-        except Exception: node_id = None
+        try:
+            node_id = cls.hidden.unique_id
+        except Exception:
+            pass
+        if node_id is None:
+            node_id = state.get("_node_id")
+        try:
+            node_id = int(node_id)
+        except Exception:
+            node_id = None
+
         materials = state.get("materials") or {}
         slots = state.get("slots") or {}
-        missing = [mid for mid, m in materials.items()
-                   if not (m.get("path") and os.path.exists(m["path"]))]
-        info = {"version": 2, "node_id": node_id, "materials": materials,
-                "slots": slots, "missing": missing}
+        prompt = state.get("prompt", "")
+        presets = state.get("presets") or []
+
+        try:
+            n = int(run_preset_NUM)
+        except Exception:
+            n = 0
+        applied = None
+        if n > 0 and presets:
+            nn = min(n, len(presets))
+            snap = (presets[nn - 1] or {}).get("snapshot") or {}
+            materials = snap.get("materials") or materials
+            slots = snap.get("slots") or slots
+            prompt = snap.get("prompt", prompt)
+            applied = nn
+
+        missing = [mid for mid, m in materials.items() if not (m.get("path") and os.path.exists(m["path"]))]
+        info = {"version": 3, "node_id": node_id, "materials": materials, "slots": slots,
+                "missing": missing, "prompt": prompt, "preset_index": applied, "run_preset_NUM": n}
         return io.NodeOutput(_pack_ref(info))
+
 
 # ================= 节点：ElementRefConvert =================
 class ElementRefConvert(io.ComfyNode):
@@ -758,13 +790,15 @@ class ElementRefConvert(io.ComfyNode):
             + [io.Image.Output(f"ref_video_{i}") for i in range(3)]
             + [io.Audio.Output(f"ref_video_audio_{i}") for i in range(3)]
             + [io.Audio.Output(f"ref_audio_{i}") for i in range(3)]
-            + [io.Audio.Output("drive_audio"), io.String.Output("info")]
+            + [io.Audio.Output("drive_audio"),
+               io.String.Output("prompt"),
+               io.String.Output("info")]
         )
         return io.Schema(
             node_id="ElementRefConvert",
             display_name="Element ref convert",
             category="Element_easy",
-            description="Convert REF_ALL_IN_ONE into 21 typed outputs. "
+            description="Convert REF_ALL_IN_ONE into 21 typed outputs + prompt. "
                         "Empty slots output black image / silence; 'info' carries per-slot manifest.",
             inputs=inputs,
             outputs=outputs,
@@ -775,6 +809,7 @@ class ElementRefConvert(io.ComfyNode):
         data = _parse_ref(info)
         materials = data.get("materials") or {}
         slots = data.get("slots") or {}
+        prompt_out = data.get("prompt") or ""
 
         def slot_val(sid):
             v = slots.get(sid)
@@ -791,7 +826,7 @@ class ElementRefConvert(io.ComfyNode):
                     if vs.get("with_audio") and (vm.get("media") or {}).get("has_audio"):
                         slot, paired = vs, True
             entry = {"has": False, "kind": "image" if sid in _IMAGE_SLOTS else "audio"}
-            out_img, out_aud = None, None   
+            out_img, out_aud = None, None
             try:
                 if slot is None:
                     raise KeyError("empty slot")
@@ -807,12 +842,12 @@ class ElementRefConvert(io.ComfyNode):
                     out_img = _load_image_slot(mat, edit)
                     entry = {"has": True, "kind": "image", "w": int(out_img.shape[2]), "h": int(out_img.shape[1])}
                 elif sid.startswith("ref_video_"):
-                    vt, _va = _load_video_slot(mat, edit)   
+                    vt, _va = _load_video_slot(mat, edit)
                     if vt is None or not torch.is_tensor(vt) or vt.ndim != 4:
                         raise RuntimeError("no frames decoded")
                     out_img = vt
-                    entry = {"has": True, "kind": "video",
-                             "frames": int(vt.shape[0]), "w": int(vt.shape[2]), "h": int(vt.shape[1])}
+                    entry = {"has": True, "kind": "video", "frames": int(vt.shape[0]),
+                             "w": int(vt.shape[2]), "h": int(vt.shape[1])}
                 else:
                     out_aud = _load_audio_slot(mat, edit)
                     entry = {"has": True, "kind": "audio",
@@ -830,9 +865,10 @@ class ElementRefConvert(io.ComfyNode):
                 auds.append(out_aud)
             manifest[sid] = entry
 
-        info_out = json.dumps({"version": 1, "producer": "ElementRefConvert",
-                               "slots": manifest, "missing": missing_slots})
-        return io.NodeOutput(*imgs, *auds, info_out)
+        info_out = json.dumps({"version": 2, "producer": "ElementRefConvert", "slots": manifest,
+                               "missing": missing_slots, "prompt": prompt_out})
+        return io.NodeOutput(*imgs, *auds, prompt_out, info_out)
+
 
 
 NODE_CLASS_MAPPINGS = {"ElementMultiRef": ElementMultiRef, "ElementRefConvert": ElementRefConvert}
@@ -1055,3 +1091,65 @@ async def emr_audio_handler(request):
         return web.Response(body=body, content_type=ctype, headers=headers)
     except Exception as e:
         return web.Response(status=500, text=str(e))
+
+@PromptServer.instance.routes.get("/element_multi_ref/raw_file")
+async def emr_raw_file_handler(request):
+    """原始文件转发，仅供前端 Collect and Export 打包用。
+    安全限制：只允许 element_multi_ref 的 input / output 目录。"""
+    try:
+        p = request.rel_url.query.get("p", "")
+        if not p:
+            return web.json_response({"error": "missing p"}, status=400)
+        real = os.path.realpath(p)
+        allowed_roots = [
+            os.path.realpath(_emr_input_dir()),
+            os.path.realpath(os.path.join(folder_paths.get_output_directory(), "element_multi_ref")),
+        ]
+        if not any(real == r or real.startswith(r + os.sep) for r in allowed_roots):
+            return web.json_response({"error": "path not allowed"}, status=403)
+        if not os.path.isfile(real):
+            return web.json_response({"error": "not found"}, status=404)
+        resp = web.FileResponse(real)
+        resp.headers["Cache-Control"] = "private, max-age=300"
+        return resp
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+        
+@PromptServer.instance.routes.get("/element_multi_ref/export_base")
+async def emr_export_base_handler(request):
+    """给前端提供默认导出根目录（ComfyUI output 目录）。"""
+    try:
+        return web.json_response({"output": folder_paths.get_output_directory()})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+@PromptServer.instance.routes.post("/element_multi_ref/collect_write")
+async def emr_collect_write_handler(request):
+    """Collect and Export：把单个文件写到用户指定目录（服务端写盘，浏览器无权限弹窗）。
+    表单：folder=目标根目录(建议绝对路径)  rel=包内相对路径(如 01_镜头/media/a.mp4)  file=文件内容"""
+    try:
+        data = await request.post()
+        folder = (data.get("folder") or "").strip()
+        rel = (data.get("rel") or "").strip()
+        file = data.get("file")
+        if not folder or not rel or file is None:
+            return web.json_response({"error": "missing folder/rel/file"}, status=400)
+        if len(folder) > 400:
+            return web.json_response({"error": "folder path too long"}, status=400)
+        if ".." in folder.replace("\\", "/").split("/"):
+            return web.json_response({"error": "bad folder path"}, status=400)
+        parts = [p for p in rel.replace("\\", "/").split("/") if p not in ("", ".", "..")]
+        if not parts or len(parts) > 8:
+            return web.json_response({"error": "bad rel path"}, status=400)
+        os.makedirs(os.path.join(folder, *parts[:-1]), exist_ok=True)
+        target = os.path.join(folder, *parts)
+        with open(target, "wb") as out:
+            while True:
+                block = file.file.read(1 << 20)
+                if not block:
+                    break
+                out.write(block)
+        return web.json_response({"path": target})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+

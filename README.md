@@ -37,12 +37,11 @@
 ## v1.5.5
 
 - 增加Element Multi REF和辅助节点Element ref convert。
-- 为 MiniMax-H3 等需要多路参考输入的视频生成模型设计的素材管理方案；配有简易图像编辑器和音视频编辑器，每个参考卡片的编辑器参数独立。
+- 为 MiniMax-H3 等需要多路参考输入的视频生成模型设计的素材管理方案；配有简易图像编辑器和音视频编辑器，每个参考卡片的编辑器参数独立；支持存储、调用、载入、导出以及收集导出等预设操作。
 - [中文版详细说明](Element_multi_ref_zh.md)
 - [英文版详细说明](Element_multi_ref_en.md)
 
-<img width="1520" height="1083" alt="image" src="https://github.com/user-attachments/assets/a25dd0eb-77b2-4111-a60e-5ab787dac767" />
-
+<img width="1959" height="1094" alt="image" src="https://github.com/user-attachments/assets/d0179da2-04b6-403a-aad0-82c08c3e62ef" />
 
 ## v1.5.4
 

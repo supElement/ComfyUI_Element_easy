@@ -74,7 +74,7 @@
   - L-alpha：用于载入图像alpha到画布。
   - Return：在缩略图面板和编辑面板之间切换。
   - 图像编辑模式下，支持ctrl+v 粘贴图像，支持鼠标拖入图像（例如：从网页或资源管理器拖入）。
-  - \ComfyUI\input目录常驻节点中，folder path的指定做为增加的目录。
+  - ComfyUI的input目录常驻节点中，folder path的指定做为增加的目录。
 
   <img width="1453" height="913" alt="image" src="https://github.com/user-attachments/assets/ed8d3d43-b18d-482b-84f1-6c0f6b87add5" />
 

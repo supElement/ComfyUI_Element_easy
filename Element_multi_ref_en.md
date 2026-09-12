@@ -64,6 +64,8 @@ The bottom bar has 4 zone toggle icons (bottom-left): reference images / first-l
   - With only the first/last frame zone visible (± Prompt), the frame cards stretch to fill their area;
   - When the video/audio zone is hidden and both reference images and frames are visible, the frame row moves above the image grid, spanning the full width, with heights split ≈1:3; re-enabling A/V restores the two-column layout.
 
+<img width="1653" height="844" alt="image" src="https://github.com/user-attachments/assets/8b3d2a38-d5c6-4e4d-8827-8cc6b1b11ea0" />
+
 Bottom buttons stay on one row (no wrapping): when the node gets too narrow the gaps shrink first; if they still don't fit, buttons hide one by one from Collect and Export leftwards, and reappear when widened; hover an icon for its tooltip.
 
 | Icon | Action |

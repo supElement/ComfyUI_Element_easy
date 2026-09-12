@@ -1,34 +1,31 @@
 <div align="center">
 
-[![中文](https://img.shields.io/badge/Language-Simplified%20Chinese-red?style=for-the-badge)](./README.md)
+[![Chinese](https://img.shields.io/badge/Language-Simplified%20Chinese-red?style=for-the-badge)](./README.md)
 [![English](https://img.shields.io/badge/Language-English-blue?style=for-the-badge)](./README.en.md)
 
 </div>
 
 # ComfyUI_Element_easy
 
-
-This extension focuses on providing convenient nodes for visual UI interfaces and easy interaction. It includes: Element Multi REF, Element Load and Edit Video, Minimax_H3-LatentUpscaler, Smart merge images, LoadImage_Preview, Element_SigmaGraph, Element ImageCurve, Element HueSat, Element HueBright, Element HueHue, Frame Calculator, ImageSize Div, black_white_color, chessboard, empty_image_rgb, image_pad_blur, mask_noise_element, mask_stroke, random_chars, text_line_break.
+The main direction of this extension is to provide convenient nodes for visual UI interfaces and easy interaction. It includes: Element Multi REF, Element Load and Edit Video, Minimax_H3-LatentUpscaler, Smart merge images, LoadImage_Preview, Element_SigmaGraph, Element ImageCurve, Element HueSat, Element HueBright, Element HueHue, Frame Calculator, ImageSize Div, black_white_color, chessboard, empty_image_rgb, image_pad_blur, mask_noise_element, mask_stroke, random_chars, text_line_break.
 
 
 ## Installation
 
 ### Manual Installation<br>
 
-   Enter the ./ComfyUI/custom_nodes directory and run the following code:<br>
+   Navigate to the ./ComfyUI/custom_nodes directory and run the following commands:<br>
 
       git clone https://github.com/supElement/ComfyUI_Element_easy.git
       cd ComfyUI_Element_easy
       pip install -r requirements.txt
   Optional: ffmpeg
-  The **video export (with audio)** function of the node requires ffmpeg to be installed on the system. Download from <a href="https://www.gyan.dev/ffmpeg/builds/">ffmpeg</a>, unzip, and add the bin directory to PATH
-  All other functions will work normally without ffmpeg installed, only exporting as silent video
-
-
+  The node's **video export (with audio)** feature requires the system to have ffmpeg installed. For Windows, download ffmpeg from <a href="https://www.gyan.dev/ffmpeg/builds/">ffmpeg</a>, extract it, and add the bin directory to PATH.
+  All other features work normally without ffmpeg, but video export will be silent.
 
 ### Install using Manager<br>
 
-  - Search for ComfyUI_Element_easy in the ComfyUI manager, then install using --.
+  - Search for ComfyUI_Element_easy in comfyUI manager, then install it.
 
 
 ## Update
@@ -36,47 +33,48 @@ This extension focuses on providing convenient nodes for visual UI interfaces an
 ## v1.5.7
 
 - Added Element Multi REF and auxiliary node Element ref convert.
-- Designed materials and prompt management plans for video or image inference models that require multi-reference input for MiniMax-H3, ltx, wan, klein, qwen, etc.;
-- Equipped with a simple image editor and a video editor, each reference card has independent editor parameters;
-- Supports multiple preset storage, calling, loading, exporting, and collecting and classifying all references and prompts.
-- The value of the run_preset_NUM parameter corresponds to the number in the preset list. When receiving input from the comfyUI prompt queue, it can be used with the sampling inference node to achieve continuous generation or editing of multiple images or videos.
-- In the bottom-left corner of the panel's footer, there are four toggle icons (Reference Image, Start/End Frames, Audio/Video, and Prompt); you can freely configure the panel to suit different needs, or even use this node as a prompt preset node.
-- [Detailed instructions in Chinese](Element_multi_ref_zh.md)
-- [Detailed instructions in English](Element_multi_ref_en.md)
+- Designed material and prompt management solutions for video or image inference models that require multi-reference inputs, such as MiniMax-H3, ltx, wan, klein, qwen, etc.;
+- Equipped with a simple image editor and audio-video editor, with independent parameters for each reference card's editor;
+- Supports storing, calling, loading, exporting, and categorizing all references and prompts.
+- The run_preset_NUM parameter value corresponds to the index in the preset list. When receiving comfyUI input that changes with the prompt queue, combined with sampling inference nodes, it achieves continuous generation or editing of multiple images or videos.
+- The bottom bar of the panel has 4 area switch icons (reference, first/last frame, audio-video, Prompt); you can freely combine the panel to meet different needs, or even use this node as a prompt preset node.
+- 
+- [Chinese version details](Element_multi_ref_zh.md)
+- [English version details](Element_multi_ref_en.md)
 
 <img width="1691" height="874" alt="image" src="https://github.com/user-attachments/assets/e8c32036-3a21-4864-93eb-228ffce3c82b" />
 
 ## v1.5.4
 
-- Added Element Load and Edit Video node for video loading, simple single-track editing, and related auxiliary nodes Element Video Clip and Element Video Info.
-- "Visual single-track video editor" node: manually trim, reorder, and preview segments on the interactive timeline.
-- [Detailed instructions in Chinese](Element_scene_detection.zh.md)
-- [Detailed instructions in English](Element_scene_detection.en.md)
+- Added Element Load and Edit Video video loading and simple single-track editing node, and related auxiliary nodes Element Video Clip and Element Video Info.
+- "Visual single-track video editor" node: manually trim, rearrange, and preview clips on an interactive timeline.
+- [Chinese version details](Element_scene_detection.zh.md)
+- [English version details](Element_scene_detection.en.md)
 
 <img width="2147" height="1104" alt="image" src="https://github.com/user-attachments/assets/5ba547a7-31c8-4323-bf40-7ec58f1b548e" />
 
 ## v1.5.0
   
-Added Minimax_H3-LatentUpscaler node for latent space scaling of videos, which does not process audio and outputs to Minimax H3 latent.
-Added Minimax_H3-LatentUpscaler_Adv node with verification for latent space scaling. Introduces conditional scaling mode, which can be selected to ignore (pass_through), align without scaling (NO_refs), or scale (refs). The quality is best with the scale (refs) mode.
+Added Minimax_H3-LatentUpscaler latent space upscaling node, which only upscals the video's latent space without any audio processing, with the output port being Minimax H3 latent.
+Added Minimax_H3-LatentUpscaler_Adv  advanced latent space upscaling node with validation. Introduced conditional upscaling modes, including ignore (pass_through), align without upscaling (NO_refs), and upscale (refs), with the best quality being the upscale (refs) mode.
 
 ## v1.4.3（Optimized in V1.4.8）
   
-  Added Smart merge images node; intelligently merge images when there are sufficient common features between the two images.
-  - Optimal solution: original_image + edited_crop_B + original_crop_A. Here, original_crop_A is the unmodified or deformed image cut from original_image, and edited_crop_B is the edited or redrawn image.
-  - Added support for block merging. When multiple images are input to the edited_crop_B port, the output is a single merged image. Note: The input images to the edited_crop_B port must be Batch rather than list. If it is a list, it must be converted to a Batch through the Image List To Batch node.
+  Added node Smart merge images; intelligently merges images when they have enough common features.
+  - Optimal solution: original_image + edited_crop_B + original_crop_A. Here, original_crop_A is the unmodified or untransformed image from original_image, and edited_crop_B is the edited or redrawn image.
+  - Added support for block-based merging. That is, when multiple images are input to the edited_crop_B port, the output is a single final merged image. Note: Images input to the edited_crop_B port must be Batch, not list; if it's a list, it needs to be converted using the Image List To Batch node.
 
   <img width="2121" height="963" alt="image" src="https://github.com/user-attachments/assets/0e341594-8b59-45af-8ece-59382ace50e4" />
 
 ## v1.3.5 （Optimized in v1.5.6）
   
   Added LoadImage_Preview node.
-  - Main function: browse image files in the specified path, select one and enter the editing panel for simple editing. Includes: free drawing lines, masks, boxes, circles, cropping images.
-  - Shift+left click: draw straight lines, squares, or circles.
-  - L-alpha: used to load image alpha to the canvas.
+  - Main function: browse image files under a specified path, select one, and enter the editing panel to perform simple edits. Includes: freehand drawing lines, masks, boxes, circles, cropping images.
+  - shift+left click: draw straight lines, squares, or perfect circles.
+  - L-alpha: used to load the image alpha into the canvas.
   - Return: switch between the thumbnail panel and the editing panel.
-  - In image editing mode, support ctrl+v to paste images, and support dragging images with the mouse (for example, dragging from a web page or file explorer).
-  - The ComfyUI input directory is a resident node, and the folder path is specified as an added directory.
+  - In image editing mode, supports ctrl+v to paste images, and supports dragging images with the mouse (e.g., from a webpage or file explorer).
+  - The LoadImage_Preview node is permanently placed in the ComfyUI input directory, with the folder path specified as an added directory.
 
   <img width="1453" height="913" alt="image" src="https://github.com/user-attachments/assets/ed8d3d43-b18d-482b-84f1-6c0f6b87add5" />
 
@@ -84,26 +82,26 @@ Added Minimax_H3-LatentUpscaler_Adv node with verification for latent space scal
 
 ## v1.3.1 （Optimized in V1.4.5）
   
-  Added Element HueBright (Hue vs Brightness) and Element HueHue (Hue vs Hue) nodes, curve adjustment, real-time preview supports single and sequence frame images. Click to add points, right-click to remove points.
+  Added Element HueBright (Hue vs Brightness) and Element HueHue (Hue vs Hue) nodes, curve adjustment, real-time preview supporting single and sequence frame images. Single-click to add points, right-click to remove points.
 
 ## v1.3.0 （Optimized in V1.4.5）
   
-  Added Element HueSat node, curve adjustment (Hue vs Saturation), real-time preview supports single and sequence frame images. Click to add points, right-click to remove points.<br>
-  - Note: Do not add points at both ends of the curve at the same time, as this will not cause any errors, but will make the other point invalid. In real-time, a top-end point can complete the color adjustment because the curves at both ends are closed loops.
+  Added Element HueSat node, curve adjustment (Hue vs Saturation), real-time preview supporting single and sequence frame images. Single-click to add points, right-click to remove points.<br>
+  - Note: Do not add points at both ends of the curve simultaneously, although it won't cause an error, it will make the other point invalid. Realistically, having one endpoint with a point is sufficient, as the two ends of the curve are closed.
 
   <img width="1695" height="891" alt="Image" src="https://github.com/user-attachments/assets/627e1951-244b-4b13-937c-23c8d98748e8" />
 
 ## v1.2.7 （Optimized in V1.4.5）
   
-  Added Element ImageCurve node, curve color adjustment, real-time preview supports single and sequence frame images. Click to add points, right-click to remove points.
+  Added Element ImageCurve node, curve color adjustment, real-time preview supporting single and sequence frame images. Single-click to add points, right-click to remove points.
 
   <img width="1767" height="1008" alt="Image" src="https://github.com/user-attachments/assets/f3bcfd71-eaba-4933-aa97-01ee6eefad62" />
 
 ## v1.2.4 （add "P" button in V1.5.3）
   
-  Added Element_SigmaGraph node with custom sigma.
-  - Mouse click to add control points at the position of the curve (click to add points, right-click to delete).
-  - P button behavior: when the number of points is less than steps+1, the x of the first n-1 points is rearranged to 0, 1/steps, 2/steps, ..., (n-2)/steps, and y remains unchanged; the last point (x, y) is retained as is. When the number of points is not less than steps+1, the first steps+1 points are taken, and x is evenly distributed as 0, 1/steps, ..., 1, and y remains unchanged. PS: What is the use? It increases the sampling steps (increases detail) for the later steps without changing the step size of the previous steps.
+  Added custom sigma, Element_SigmaGraph node.
+  - Click on the curve to add or remove control points (single-click to add, right-click to delete)
+  - P button behavior: When the number of points is less than steps+1, the x values of the first n-1 points are reordered to 0, 1/steps, 2/steps, ..., (n-2)/steps, y values remain unchanged; the last point (x, y) is kept as is. When the number of points is at least steps+1, take the first steps+1 points, with x values evenly distributed as 0, 1/steps, ..., 1, y values remain unchanged. PS: What's the use? Without changing the step size of the front steps, it allows adding more sampling steps (adding details) for the latter.
 
   <img width="1176" height="794" alt="image" src="https://github.com/user-attachments/assets/a8741609-cbe7-4ec8-a88d-5cae79b031a8" />
 
@@ -116,49 +114,49 @@ Added Minimax_H3-LatentUpscaler_Adv node with verification for latent space scal
 
 ## v1.2.2
   
-  Added Frame Calculator node to calculate frame numbers, with the result being "rounded up" + 1.
+  Added Frame Calculator node, which calculates the result as "rounded" + 1.
 
   <img width="1043" height="578" alt="image" src="https://github.com/user-attachments/assets/0a922590-c3bb-4504-8708-443476c3ac03" />
 
 
 ## v1.1.3
   
-  Added Black White Color node, the mask at the input port is added by the node by ADD operation.
-  To suppress the pixel offset problem after style conversion in qwenEdit, convert the style of the mask area first, then convert the invert mask area. Try to make the area of black and white regions average to reduce the problem of inconsistent hue.
+  Added Black White Color node, the mask at the input port will perform ADD operation with the mask generated by the node.
+  To suppress pixel offset issues during style conversion in qwenEdit, first convert the style of the mask area, then convert the invert mask area. Try to make the black and white areas roughly equal in size to reduce tonal inconsistencies.
   
   <img width="1596" height="1084" alt="image" src="https://github.com/user-attachments/assets/c715e5e6-1ff3-46ff-9d48-a0a87d2506df" />
 
 
 ## v0.0.9
 
-  Added ChessboardPattern node to create black and white chessboard images.
+  Added ChessboardPattern node, to create black and white checkerboard images.
 
   <img width="1714" height="608" alt="image" src="https://github.com/user-attachments/assets/466bc026-adc5-42cd-abe5-c28f323dd482" />
 
 
 ## v0.0.8
 
-  Added Image Noise Using Mask node, which is convenient to add random noise to the mask area of the image.
-  Added Image Pad & Blur node, target width and target height can be selected, and alignment mode (center alignment, left alignment, right alignment, top alignment, bottom alignment, top-left alignment, bottom-left alignment, top-right alignment, bottom-right alignment) can be selected.
-  Pad mode can be selected as constant, reflect, or edge, which is the same as reflect. When the constant mode is selected, feathering controls the overall blurring degree, and content_blur controls the blurring degree of the expanded area of the original image. When the constant mode is selected, the background_color parameter takes effect, compatible with rgb color and HEX color code (16-bit color code).
+  Added Image Noise Using Mask node, to easily add random noise to the mask area of an image.
+  Added Image Pad & Blur node, with target width and target height, and alignment mode selection (center alignment, left alignment, right alignment, top alignment, bottom alignment, top-left alignment, top-right alignment, bottom-left alignment, bottom-right alignment).
+  pad mode can choose constant, reflect, edge, with the other effect being the same as reflect. When choosing constant mode, feathering controls the overall blur level, and content_blur controls the blur level of the original image's extended area. In constant mode, the background_color parameter takes effect, compatible with RGB color and HEX color codes (16-bit color codes).
 
-<img width="1724" height="878" alt="屏幕截图 2026-01-17 134457" src="https://github.com/user-attachments/assets/17b9af6d-e8d2-4c35-9e13-6822e6bfa266" />
-<img width="2147" height="1092" alt="屏幕截图 2026-01-17 134251" src="https://github.com/user-attachments/assets/e864a294-c70c-4409-9573-c357b6437158" />
+<img width="1724" height="878" alt="Screenshot 2026-01-17 134457" src="https://github.com/user-attachments/assets/17b9af6d-e8d2-4c35-9e13-6822e6bfa266" />
+<img width="2147" height="1092" alt="Screenshot 2026-01-17 134251" src="https://github.com/user-attachments/assets/e864a294-c70c-4409-9573-c357b6437158" />
 
   
 
   
 ## v0.0.7
 
-  Added Mask Stroke node, mask edge, which supports independent control of inner and outer edge width and blurring degree, and supports the overall addition of weight to the non-edge area (to make the output mask have no weight of 0 area).
+  Added Mask Stroke node, to stroke the mask, with independent control of inner and outer stroke width and blur, and support for adding overall weight to non-stroke areas (ensuring that the output mask has no areas with a weight of 0).
   
-  <img width="1295" height="731" alt="节点截图 2025-12-05 011534" src="https://github.com/user-attachments/assets/56b86fb6-758a-4d6c-8fa1-997b6bc9ee9d" />
+  <img width="1295" height="731" alt="Screenshot 2025-12-05 011534" src="https://github.com/user-attachments/assets/56b86fb6-758a-4d6c-8fa1-997b6bc9ee9d" />
 
   
 ## v0.0.6
 
-Empty Image RGB: Supports RGB and 16-bit color information input.
-Text Line Break: Breaks input text into lines based on character count, supports punctuation avoidance at the beginning and end of lines.
-Random Chars (Append): Adds invalid special characters to the input text (characters and number can be customized),
-                       
-<img width="1590" height="1080" alt="节点截图 2025-12-04 164008" src="https://github.com/user-attachments/assets/1cdacfe2-7c7a-4434-9f48-1ec571bb19ab" />
+Empty Image RGB：supports RGB and 16-bit color information input.
+Text Line Break： wraps input text by character count, supporting punctuation avoidance at the beginning and end.
+Random Chars (Append)： appends invalid special characters to the input text (customizable characters and count),
+
+<img width="1590" height="1080" alt="Screenshot 2025-12-04 164008" src="https://github.com/user-attachments/assets/1cdacfe2-7c7a-4434-9f48-1ec571bb19ab" />

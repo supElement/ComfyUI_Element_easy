@@ -44,7 +44,7 @@
 - [中文版详细说明](Element_multi_ref_zh.md)
 - [英文版详细说明](Element_multi_ref_en.md)
 
-<img width="1959" height="1094" alt="image" src="https://github.com/user-attachments/assets/d0179da2-04b6-403a-aad0-82c08c3e62ef" />
+<img width="1691" height="874" alt="image" src="https://github.com/user-attachments/assets/e8c32036-3a21-4864-93eb-228ffce3c82b" />
 
 ## v1.5.4
 

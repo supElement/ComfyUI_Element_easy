@@ -1910,6 +1910,7 @@ class MultiRefUI {
             const q1 = Math.max(q0 + 1e-4, Math.min(1, (tr[1] / fps) / dur));
             drawWaveCanvas(cv, pts.slice(Math.floor(q0 * (pts.length - 1)), Math.max(2, Math.ceil(q1 * (pts.length - 1)))));
           };
+		  cv._redraw = draw; 
           if (vm._wave?.length) draw();
           else fetch(`/element_multi_ref/media_info?p=${encodeURIComponent(vm.path)}`)
             .then(r => r.json()).then(d => { vm._wave = d.waveform || []; if (!this.slots[id]) draw(); })
@@ -1941,29 +1942,62 @@ class MultiRefUI {
         const u = `${previewUrl(mat.path, f, 256)}&v=${this._editVer?.[id] || 0}`;
         media.innerHTML = `<img class="emr-thumb" src="${u}" draggable="false" onerror="this.style.opacity=.2">`;
       } else {
-        media.innerHTML = `<canvas width="240" height="64" style="width:100%;height:64px;border-radius:6px;background:#0d1119;display:block"></canvas>`;
+        media.innerHTML = `<canvas style="width:100%;height:64px;border-radius:6px;background:#0d1119;display:block"></canvas>`;
         const cv = media.querySelector("canvas");
         const drawW = (pts) => {
-          const ctx = cv.getContext("2d"), W = cv.width, H = cv.height;
-          ctx.clearRect(0, 0, W, H);
+          const dpr = Math.max(1, window.devicePixelRatio || 1);
+          const w = Math.max(1, cv.clientWidth || 240), h = 64;
+          const W = Math.max(1, Math.round(w * dpr)), H = Math.max(1, Math.round(h * dpr));
+          if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+          const ctx = cv.getContext("2d");
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          ctx.clearRect(0, 0, w, h);
           if (!pts?.length) return;
           const total = Math.max(0.01, mat.media.duration || 1);
           const tr = slot.edit?.trim || [0, total];
           const a = Math.max(0, Math.min(1, tr[0] / total)), b = Math.max(a + 0.01, Math.min(1, tr[1] / total));
           const i0 = Math.floor(a * (pts.length - 1)), i1 = Math.ceil(b * (pts.length - 1));
-          const n = Math.max(2, i1 - i0), mid = H / 2, amp = H / 2 - 3;
+          const n = Math.max(2, i1 - i0), mid = h / 2, amp = h / 2 - 3;
+          
+          const outPts = Math.max(2, Math.floor(w / 2));   // w/4 每4像素取1个
+          const step = n / outPts;                      
+          
+          const sample = (j) => {
+            const s0 = i0 + Math.floor(j * step), s1 = Math.min(i1 - 1, i0 + Math.floor((j + 1) * step) - 1);
+            let m = 0;
+            for (let k = s0; k <= s1; k++) m = Math.max(m, Math.abs(pts[k] || 0));
+            return m;
+          };
+          
           ctx.beginPath();
-          for (let i = 0; i < n; i++) { const x = i / (n - 1) * W, y = mid - (pts[i0 + i] || 0) * amp; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
-          for (let i = n - 1; i >= 0; i--) { const x = i / (n - 1) * W, y = mid + (pts[i0 + i] || 0) * amp; ctx.lineTo(x, y); }
-          ctx.closePath(); ctx.fillStyle = "rgba(90,173,90,.45)"; ctx.fill();
-          ctx.strokeStyle = "#5aad5a"; ctx.stroke();
+          for (let j = 0; j < outPts; j++) {
+            const x = j / (outPts - 1) * w, y = mid - sample(j) * amp;
+            j ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+          }
+          for (let j = outPts - 1; j >= 0; j--) {
+            const x = j / (outPts - 1) * w, y = mid + sample(j) * amp;
+            ctx.lineTo(x, y);
+          }
+          ctx.closePath();
+          ctx.fillStyle = "rgba(90,173,90,.45)";
+          ctx.fill();
+          ctx.strokeStyle = "#5aad5a";
+          ctx.stroke();
         };
+        cv._redraw = () => drawW(mat._wave || []);                      
         if (mat._wave?.length) drawW(mat._wave);
         else fetch(`/element_multi_ref/media_info?p=${encodeURIComponent(mat.path)}`)
           .then(r => r.json()).then(d => { mat._wave = d.waveform || []; drawW(mat._wave); }).catch(() => {});
       }
     }
   }
+  
+  redrawWaves() {
+    for (const cv of this.root.querySelectorAll("canvas")) {
+      if (typeof cv._redraw === "function") cv._redraw();
+    }
+  }
+
   updateState() {
     const nodeId = this.node.__nodeId !== undefined ? this.node.__nodeId : this.node.id;
     const payload = { version: 3, _node_id: nodeId, materials: this.mats, slots: this.slots,
@@ -3075,7 +3109,12 @@ app.registerExtension({
       } catch (_) { return false; }
     };
 
-    const MIN_W = 400, MIN_H = 450, MIN_DOM_H = 380, NEW_W = 720, NEW_H = 680;
+    const purgeInputSlot = (node, name) => {
+        const i = node.inputs?.findIndex(s => s.name === name);
+        if (i >= 0) node.inputs.splice(i, 1);
+    };
+
+    const MIN_W = 400, MIN_H = 450, NEW_W = 720, NEW_H = 680;
 
     const origCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function () {
@@ -3095,6 +3134,8 @@ app.registerExtension({
         }
       };
       hideWidget(this.widgets?.find(w => w.name === "refs_data"));
+	  purgeInputSlot(this, "refs_data");
+	  
       const root = document.createElement("div");
       root.addEventListener("wheel", (e) => {
         const t = e.target;
@@ -3138,38 +3179,35 @@ app.registerExtension({
 
 
       root.style.width = "100%";
-      root.style.height = MIN_DOM_H + "px";
-      domWidget.computeSize = () => [400, 4];
-      const applyDomH = () => {
-        const nodeH = Math.round(this.size?.[1] || 0);
-        const topOff = Number.isFinite(domWidget.last_y) ? Math.round(domWidget.last_y) : 30;
-        const h = Math.max(60, nodeH - topOff - 20);          // ★ 严格不超出节点底边20
-        if (Math.abs((parseFloat(root.style.height) || 0) - h) > 0.5) root.style.height = h + "px";
+      root.style.height = "100%";                    
+      
+      if (domWidget.element) {
+          domWidget.element.style.width   = "100%";
+          domWidget.element.style.height  = "100%";
+          domWidget.element.style.display = "flex";
+      }
+      setTimeout(() => {
+          const parent = domWidget.element?.parentElement;
+          if (parent) {
+              parent.style.flex = "1";
+              parent.style.display = "flex";
+              parent.style.flexDirection = "column";
+              parent.style.overflow = "hidden";      
+          }
+      }, 50);
+      
+    
+      const applyAll = () => {                       
+          this.__emr?._queueHead?.();
+          this.__emr?._queueBtnrow?.();
+		  this.__emr?.redrawWaves?.();
+          this.setDirtyCanvas?.(true, true);
       };
-
-      this.__applyDomH = applyDomH;
-      applyDomH();
-      this.__applyDomH = applyDomH;
-      const applyAll = () => {                     
-        applyDomH();
-        this.__emr?._queueHead?.();
-        this.__emr?._queueBtnrow?.();
-      };
-      applyDomH();
-      this.onResize = applyAll;                                
-
-      const origComputeSize = this.computeSize;
-      this.computeSize = function () {
-        const size = origComputeSize ? origComputeSize.apply(this, arguments) : [MIN_W, MIN_H];
-        if (size[0] < MIN_W) size[0] = MIN_W;
-        if (size[1] < MIN_H) size[1] = MIN_H;
-        return size;
-      };
-
+      this.onResize = applyAll;
+      
       try { this.__emr._ro?.disconnect(); } catch (_) {}
-      this.__emr._ro = new ResizeObserver(applyAll);
+      this.__emr._ro = new ResizeObserver(applyAll); 
       this.__emr._ro.observe(root);
-      this.__emrH = setInterval(applyAll, 250);
 
       if (typeof this.id !== "number" || this.id < 0) this.size = [NEW_W, NEW_H];
       return result;
@@ -3179,7 +3217,8 @@ app.registerExtension({
     nodeType.prototype.onConfigure = function () {
       const r = origConfigure?.apply(this, arguments);
       this.__nodeId = this.id;
-      this.__applyDomH?.();
+	  purgeInputSlot(this, "refs_data");
+
       if (this.__emr) setTimeout(() => {
         this.__emr.reloadFromWidget();
         const rp = this.widgets?.find(w => w.name === "run_preset_NUM");
@@ -3197,7 +3236,7 @@ app.registerExtension({
           EMR_LAST_REMOVED = { value: w.value, t: Date.now() };
         }
       } catch (_) {}
-      clearInterval(this.__emrH);
+
       if (this.__emr) {
         try { this.__emr._ro?.disconnect(); } catch (_) {}
         this.__emr = null;

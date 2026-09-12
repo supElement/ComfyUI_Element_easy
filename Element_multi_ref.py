@@ -15,7 +15,7 @@ from aiohttp import web
 from comfy_api.latest import io
 
 # ================= 常量与缓存 =================
-WAVEFORM_POINTS = 1500
+WAVEFORM_POINTS = 3000
 MAX_OUT_FRAMES = 1200          # 单视频槽输出帧数硬上限
 IMG_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 VID_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
@@ -152,7 +152,6 @@ def _decode_audio_wave_ffmpeg(path: str, max_seconds: float = 600.0):
         return [], 44100, dur
     pcm = np.frombuffer(proc.stdout, dtype=np.float32).copy()
     return _audio_to_waveform(torch.from_numpy(pcm)), 44100, dur
-
 
 def _probe_media(path: str) -> dict:
     ext = os.path.splitext(path)[1].lower()
@@ -426,8 +425,6 @@ def _extract_audio_media(video_path: str):
             pass
     return None
 
-
-
 # ================= 片段级音频读取 =================
 def _read_audio_range(video_path: str, start_frame: int, end_frame: int, fps: float):
     """只解码 [start_frame, end_frame) 的音频。★ 输出长度恒为 (t1-t0)*sr：
@@ -497,7 +494,6 @@ def _read_audio_range(video_path: str, start_frame: int, end_frame: int, fps: fl
     except Exception as e:
         print(f"[EMR] audio range read failed: {e}")
         return None, 44100
-
 
 # ================= 视频区间索引解码（含 LRU） =================
 def _decode_range(path: str, s: int, e: int) -> dict:

@@ -40,10 +40,11 @@ This extension focuses on providing convenient nodes for visual UI interfaces an
 - Equipped with a simple image editor and a video editor, each reference card has independent editor parameters;
 - Supports multiple preset storage, calling, loading, exporting, and collecting and classifying all references and prompts.
 - The value of the run_preset_NUM parameter corresponds to the number in the preset list. When receiving input from the comfyUI prompt queue, it can be used with the sampling inference node to achieve continuous generation or editing of multiple images or videos.
+- In the bottom-left corner of the panel's footer, there are four toggle icons (Reference Image, Start/End Frames, Audio/Video, and Prompt); you can freely configure the panel to suit different needs, or even use this node as a prompt preset node.
 - [Detailed instructions in Chinese](Element_multi_ref_zh.md)
 - [Detailed instructions in English](Element_multi_ref_en.md)
 
-<img width="1959" height="1094" alt="image" src="https://github.com/user-attachments/assets/d0179da2-04b6-403a-aad0-82c08c3e62ef" />
+<img width="1691" height="874" alt="image" src="https://github.com/user-attachments/assets/e8c32036-3a21-4864-93eb-228ffce3c82b" />
 
 ## v1.5.4
 

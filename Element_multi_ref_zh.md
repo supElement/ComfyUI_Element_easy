@@ -66,6 +66,8 @@ pip install scenedetect              # 可选：Auto Split 镜头检测更准更
   - 只保留首尾帧（±Prompt）时首尾帧卡拉伸填满所在区域；
   - 音视频区隐藏且参考图 + 首尾帧同时显示时，首尾帧自动移到参考图上方并跨全宽，两区按约 1:3 分配高度；重新打开音视频区即恢复双列布局。
 
+<img width="1653" height="844" alt="image" src="https://github.com/user-attachments/assets/8b3d2a38-d5c6-4e4d-8827-8cc6b1b11ea0" />
+
 | 图标 | 功能 |
 |---|---|
 | 九宫格 / 胶片 / 摄像机 / 三横线 | 区域开关：参考图 / 首尾帧 / 音视频 / Prompt |

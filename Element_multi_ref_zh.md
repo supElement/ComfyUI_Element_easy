@@ -30,6 +30,8 @@ pip install scenedetect              # 可选：Auto Split 镜头检测更准更
 
 ## 三、Element Multi REF（素材面板）
 
+
+
 ### 3.1 槽位一览（共 21 个）
 
 | 分组 | 槽位 ID | 类型 |
@@ -46,6 +48,10 @@ pip install scenedetect              # 可选：Auto Split 镜头检测更准更
 - 图像：.png .jpg .jpeg .webp .bmp
 - 视频：.mp4 .mov .avi .mkv .webm .m4v
 - 音频：.mp3 .wav .flac .ogg .oga .m4a .m4b .aac .opus .wma .aif .aiff .aifc .mka .weba .caf
+
+
+<img width="959" height="1018" alt="image" src="https://github.com/user-attachments/assets/bca44ef0-954f-4e9a-bea0-5ee5e771be69" />
+
 
 ### 3.2 Prompt
 
@@ -72,6 +78,10 @@ pip install scenedetect              # 可选：Auto Split 镜头检测更准更
 
 ### 3.5 图像编辑器
 
+
+<img width="999" height="900" alt="image" src="https://github.com/user-attachments/assets/5de32290-4068-4ab5-b53c-61179d25c8b3" />
+
+
 点击图像槽位 ✎ 打开：
 
 **Crop 裁剪**：
@@ -97,6 +107,10 @@ pip install scenedetect              # 可选：Auto Split 镜头检测更准更
 - 笔迹以透明 PNG 叠加保存；paint 模式下裁剪框与压暗区域仍然可见。
 
 ### 3.6 音视频编辑器（时间线）
+
+
+<img width="1085" height="814" alt="image" src="https://github.com/user-attachments/assets/a5349cb9-7d6d-46e0-afa2-18629a14e9ba" />
+
 
 **蓝色选区或选择分段 = 最终输出范围**：
 
@@ -152,6 +166,11 @@ pip install scenedetect              # 可选：Auto Split 镜头检测更准更
 - 点击/右键联动槽可：打开关联视频编辑器 / 替换为独立音频。
 
 ### 3.8 预设（快照与批量播放）
+
+
+<img width="1272" height="802" alt="image" src="https://github.com/user-attachments/assets/7663b2ad-c531-447f-9780-d4c6f868fe66" />
+
+
 
 每个预设保存一份完整快照（素材 + 槽位编辑 + prompt）和一张面板缩略图。
 

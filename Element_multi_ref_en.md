@@ -51,7 +51,32 @@ Supported formats:
 <img width="959" height="1018" alt="image" src="https://github.com/user-attachments/assets/bca44ef0-954f-4e9a-bea0-5ee5e771be69" />
 
 
-### 3.2 Prompt
+### 3.2 Panel Layout & Zone Toggles
+
+The bottom bar has 4 zone toggle icons (bottom-left): reference images / first-last frames / video-audio / Prompt.
+
+- Click to show/hide a zone; a hidden zone's icon turns semi-transparent with a red slash;
+- Toggle states are saved with the workflow and inside every preset snapshot;
+- Toggles affect display only — filled slots in hidden zones still take part in the run output;
+- Adaptive layout:
+  - Hiding Prompt removes the textarea while the button row stays exactly in place; freed space goes to the reference area above;
+  - With only Prompt visible, the reference grid collapses and the textarea fills the full height;
+  - With only the first/last frame zone visible (± Prompt), the frame cards stretch to fill their area;
+  - When the video/audio zone is hidden and both reference images and frames are visible, the frame row moves above the image grid, spanning the full width, with heights split ≈1:3; re-enabling A/V restores the two-column layout.
+
+Bottom buttons stay on one row (no wrapping): when the node gets too narrow the gaps shrink first; if they still don't fit, buttons hide one by one from Collect and Export leftwards, and reappear when widened; hover an icon for its tooltip.
+
+| Icon | Action |
+|---|---|
+| grid / film / camera / lines | Zone toggles: images / frames / A/V / Prompt |
+| ⏮ ◀ ▶ ⏭ | Apply first / previous / next / last preset |
+| Presets | Open the presets modal |
+| floppy | Save Preset |
+| folder | Export folder settings |
+| package | Collect and Export |
+
+The top bar (title · hint · status · Clear) stays on one line: when narrow, the "Drop files…" hint hides first, long status messages truncate to …; title and Clear never hide.
+
 
 Below the slot grid is a prompt textarea:
 

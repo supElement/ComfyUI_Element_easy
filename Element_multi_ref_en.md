@@ -53,7 +53,7 @@ Supported formats:
 
 ### 3.2 Panel Layout & Zone Toggles
 
-The bottom bar has 4 zone toggle icons (bottom-left): reference images / first-last frames / video-audio / Prompt.
+The bottom bar has 4 zone toggle icons (bottom-left): reference images / first-last frames / video-audio / Prompt.You can freely configure the panel to meet various needs, or even use this node as a prompt preset node.
 
 - Click to show/hide a zone; a hidden zone's icon turns semi-transparent with a red slash;
 - Toggle states are saved with the workflow and inside every preset snapshot;

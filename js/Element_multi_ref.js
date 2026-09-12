@@ -58,6 +58,13 @@ const ICONS = {
   play: '<path d="M7 4.5v15l13-7.5z" fill="currentColor" stroke="none"/>',
   stop: '<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/>',
   folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  zone_img: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
+  zone_frame: '<rect x="3" y="4" width="18" height="16" rx="2"/><line x1="7.5" y1="4" x2="7.5" y2="20"/><line x1="16.5" y1="4" x2="16.5" y2="20"/>',
+  zone_av: '<path d="m22 8-6 4 6 4V8Z"/><rect x="2" y="6" width="14" height="12" rx="2"/>',
+  zone_prompt: '<line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="16" y2="12"/><line x1="4" y1="18" x2="10" y2="18"/>',
+  save: '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>',
+  package: '<line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>',
+
 };
 
 const NAV_ICONS = {
@@ -76,11 +83,15 @@ function installStyles() {
     background:#14171e;color:#dfe6f2;border-radius:9px;overflow:hidden;font:12px/1.4 Inter,Segoe UI,sans-serif;user-select:none}
   .emr *{box-sizing:border-box}
   .emr-head{display:flex;align-items:center;gap:8px;padding:7px 10px;background:#1b2029;border-bottom:1px solid #2b3342;flex-shrink:0}
+  .emr-head{flex-wrap:nowrap;overflow:hidden}
+  .emr-head .emr-title,.emr-head .emr-hint,.emr-head .emr-btn{flex:0 0 auto;white-space:nowrap}
+  .emr-head .emr-status{flex:0 1 auto;min-width:0}
+  .emr-hinthide{display:none}
   .emr-title{font-weight:700;color:#eaf0fa}
-  .emr-status{margin-left:auto;color:#8d97a8;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .emr-status{margin-left:auto;color:#8d97a8;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; min-width:0}
   .emr-btn{height:24px;padding:0 9px;border:1px solid #3b4558;border-radius:5px;background:#252d3a;color:#dce5f5;cursor:pointer;display:inline-flex;align-items:center;gap:4px}
   .emr-btn:hover{background:#303a4b}
-  .emr-grid{flex:1 1 480px;min-height:280px;display:grid;grid-template-columns:minmax(280px,1fr) minmax(160px,1.1fr);gap:10px;padding:10px;min-height:0}   /* 参考图最小总宽280，首尾帧卡最小总宽260 */
+  .emr-grid{flex:1 1 480px;min-height:280px;display:grid;grid-template-columns:minmax(180px,1fr) minmax(160px,1.1fr);gap:10px;padding:10px;min-height:0}   /* 参考图最小总宽180，首尾帧卡最小总宽160 */
   .emr-col{display:flex;flex-direction:column;gap:8px;min-height:0}
   .emr-col-img{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr);gap:8px;min-height:0}
   .emr-row{display:grid;gap:8px;min-height:0}
@@ -132,6 +143,9 @@ function installStyles() {
   .emr-canvaswrap{background:#0b0e14;border:1px solid #2a3242;border-radius:6px;display:flex;align-items:center;justify-content:center;min-height:300px;position:relative;overflow:hidden}
   .emr-canvaswrap canvas{max-width:100%;cursor:crosshair}
   .emr-foot{display:flex;align-items:center;gap:8px;justify-content:flex-end}
+  .emr-foot.emr-foot-fit{flex-wrap:nowrap;overflow:hidden;min-width:0;justify-content:flex-start}
+  .emr-foot.emr-foot-fit > *{flex:0 0 auto;white-space:nowrap}
+  .emr-foot.emr-foot-fit .emr-pmsg{flex:0 1 auto;min-width:0}
   .emr-pbtn{background:#2a4b7a;border-color:#4e7fc0}
   .emr-pmsg{font-size:12px;color:#7ee2a8;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .emr-btn.danger{background:#8c2f39;border-color:#c0392b;color:#ffd9d9}
@@ -207,7 +221,9 @@ function installStyles() {
     background:#0d1118;border:1px solid #333d50;border-radius:6px;color:#e5ecf8;padding:6px 8px;
     font:12px/1.5 Inter,Segoe UI,sans-serif;box-sizing:border-box;outline:none}
   .emr-prompt:focus{border-color:#4e7fc0}
-  .emr-btnrow{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;flex-shrink:0}
+  .emr-btnrow{display:flex;gap:8px;flex-wrap:nowrap;flex-shrink:0;min-width:0;overflow:hidden}
+  .emr-btnrow .emr-btn{flex:0 0 auto;white-space:nowrap}
+  .emr-btnhide{display:none}
   /* --- Presets 弹窗（卡片宽度由 --pcard-w 控制，可在弹窗里调） --- */
   .emr-pgrid{--pcard-font:14px;flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;display:grid;grid-auto-rows:min-content; /* --- Presets 卡片文字字号 --- */
     grid-template-columns:repeat(auto-fill,minmax(var(--pcard-w,180px),1fr));gap:10px;align-content:start;
@@ -224,14 +240,23 @@ function installStyles() {
     font-size:calc(var(--pcard-font,14px) - 3px);font-weight:700;border-radius:4px;padding:1px 6px}
   .emr-pcard .th{height:calc(var(--pcard-w,180px) * .75);flex-shrink:0;background:#0d1119;border-radius:4px;overflow:hidden;
     display:flex;align-items:center;justify-content:center;color:#4d5870;font-size:calc(var(--pcard-font,14px) - 4px)}
-  .emr-pcard .th img{width:100%;height:100%;object-fit:cover;display:block}
+  .emr-pcard .th img{object-fit:contain;background:#0d1119;display:block}
   .emr-pcard .nm{width:100%;background:#0d1118;border:1px solid #333d50;border-radius:4px;
     color:#e5ecf8;font:var(--pcard-font,14px)/1.5 Inter,Segoe UI,sans-serif;padding:3px 6px;user-select:text;
     resize:vertical;min-height:calc(4 * 1.5em + 8px);box-sizing:border-box;outline:none}
   .emr-save-th{height:180px;display:flex;align-items:center;justify-content:center;background:#0b0e14;
     border:1px solid #2a3242;border-radius:6px;overflow:hidden}
   .emr-save-th img{max-width:100%;max-height:100%;object-fit:contain}
-
+  /* --- ★ 左下角区域显示开关 --- */
+  .emr-toggles{display:flex;gap:6px;margin-right:auto}
+  .emr-sqbtn{width:26px;min-width:26px;padding:0;justify-content:center;flex:0 0 auto}
+  .emr-zonebtn{position:relative;justify-content:center}
+  .emr-zonebtn svg{pointer-events:none}
+  .emr-zonebtn.off{opacity:.42}
+  .emr-zonebtn.off::after{content:"";position:absolute;left:5px;right:5px;top:50%;height:2px;margin-top:-1px; border-radius:1px;background:#ff737d;transform:rotate(-30deg)}
+  .emr-bottom.emr-noprompt{flex:0 0 auto;min-height:0}
+  /* 编辑器内按钮行：靠右 */
+  .emr-btnrow.emr-row-end{justify-content:flex-end}
   `;
   document.head.appendChild(st);
 }
@@ -352,11 +377,11 @@ class ImageEditor {
       ring.style.display = "block";
     }
     function hideRing() { ring.style.display = "none"; }
-	
+    
     function applyCursor() { 
       canvas.style.cursor = (mode !== "paint") ? "" : (shapeMode ? "crosshair" : "none");
     }
-	
+    
     wrap.addEventListener("pointermove", (e) => { if (!painting) updateRing(e); });
     wrap.addEventListener("pointerleave", hideRing);
     q('[data-f="size"]').addEventListener("input", () => { if (lastMouseEv) updateRing(lastMouseEv); });
@@ -534,8 +559,8 @@ class ImageEditor {
     const setShape = (s) => {
       shapeMode = (shapeMode === s) ? null : s;
       ov.querySelectorAll("[data-a='box'],[data-a='circle']").forEach(b => b.classList.toggle("emr-pbtn", b.dataset.a === shapeMode));
-	  applyCursor();
-	  hideRing();
+      applyCursor();
+      hideRing();
     };
     q('[data-a="box"]').onclick = () => setShape("box");
     q('[data-a="circle"]').onclick = () => setShape("circle");
@@ -743,7 +768,7 @@ class AVEditor {
           <label>Thr<input type="number" data-f="thr" value="40" step="1" style="width:56px"></label>
           <button class="emr-btn" data-a="manual" title="Click track to split (M)">Manual</button>
           ${isVideo ? '<label><input type="checkbox" data-f="snapcut" ' + (edit.snap_cut ? "checked" : "") + '>Snap</label>' : ""}
-		  <button class="emr-btn" data-a="clearedit" title="Reset all edits to defaults">Clear</button>
+          <button class="emr-btn" data-a="clearedit" title="Reset all edits to defaults">Clear</button>
         </div>
         <div class="emr-tbar">
           <label>Preset<select data-f="preset">${PRESETS.map((p, i) => `<option value="${i}">${p.name}</option>`).join("")}</select></label>
@@ -766,7 +791,7 @@ class AVEditor {
           <div class="emr-sel"><div class="h l"></div><div class="h r"></div></div>
           <div class="emr-playhead"></div>
         </div></div>
-		
+        
         ${isVideo ? "" : `
         <div class="emr-transport">
           <button class="emr-btn" data-a="start" title="Timeline start">${PB.start}</button>
@@ -777,7 +802,7 @@ class AVEditor {
           <button class="emr-btn" data-a="end" title="Timeline end">${PB.end}</button>
         </div>`}
 
-		
+        
         <div class="emr-foot">
           <button class="emr-btn" data-a="cancel">Cancel</button>
           <button class="emr-btn emr-pbtn" data-a="apply">Apply</button>
@@ -805,7 +830,7 @@ class AVEditor {
     let marking = false, trimDrag = null, pendSel = null, reorder = null, insertEl = null;
     let playing = false, playAllMode = false, playQ = [], playFrame = edit.playhead ?? sel.s,
         raf = 0, acc = 0, lastT = 0, seq = 0, probe = null, lastPrevAt = 0;
-	let audioMaster = false;
+    let audioMaster = false;
     if (isVideo) playFrame = Math.round(playFrame);
     playFrame = Math.max(0, Math.min(total - minLen(), playFrame));
 
@@ -1050,8 +1075,8 @@ class AVEditor {
       if (playAllMode) for (let j = i + 1; j < order.length; j++) playQ.push({ s: order[j].start, e: order[j].end, i: j });
       playing = true; audioMaster = false; acc = 0; lastT = performance.now();
       const arm = () => { if (!playing) return; audioMaster = true; const p = audioEl?.play?.();
-	  if (p && p.catch) p.catch(() => { audioMaster = false; });
-	  if (raf) cancelAnimationFrame(raf); raf = requestAnimationFrame(playTick); };
+      if (p && p.catch) p.catch(() => { audioMaster = false; });
+      if (raf) cancelAnimationFrame(raf); raf = requestAnimationFrame(playTick); };
 
       try { audioEl.currentTime = Math.max(0, Math.min(toSec(from), (audioEl.duration || toSec(from)) - 0.01)); } catch (_) {}
       if (audioEl.seeking || audioEl.readyState < 2) {
@@ -1068,10 +1093,10 @@ class AVEditor {
 
     function stopPlayback() {
       playing = false;
-	  audioMaster = false;
+      audioMaster = false;
       if (raf) { cancelAnimationFrame(raf); raf = 0; }
       playQ = [];
-	  pendingPlay = null;
+      pendingPlay = null;
       if (bufTimer) { clearTimeout(bufTimer); bufTimer = 0; }
       try { audioEl?.pause?.(); } catch (_) {}
       q('[data-a="play"]').innerHTML = PB.play;
@@ -1083,8 +1108,8 @@ class AVEditor {
 
     function playTick(now) {
       raf = 0; 
-	  if (!playing) return;
-	  if (audioMaster && audioEl.ended) audioMaster = false;   
+      if (!playing) return;
+      if (audioMaster && audioEl.ended) audioMaster = false;   
       const dt = Math.min(0.25, (now - lastT) / 1000); lastT = now;
       const r = playQ[0];
       if (!r) { stopPlayback(); return; }
@@ -1112,7 +1137,7 @@ class AVEditor {
       raf = requestAnimationFrame(playTick);
     }
 
-	
+    
     // ---- 播放组 / 工具 ----
     const stepLen = () => isVideo ? 1 : 0.05;
     q('[data-a="start"]').onclick = () => { setPlayhead(order[0]?.start ?? 0); syncAudio(playFrame, true); };
@@ -1129,7 +1154,7 @@ class AVEditor {
     q('[data-a="playall"]').onclick = () => playing ? stopPlayback() : startPlayback(true);
     q('[data-a="full"]').onclick = () => { sel = { s: 0, e: total }; q('[data-f="usesel"]').checked = true; applyUseSel(); updateSel(); };
     q('[data-a="fit"]').onclick = () => { fitZoom(); layoutAll(); };
-	q('[data-a="clearedit"]').onclick = () => {
+    q('[data-a="clearedit"]').onclick = () => {
       stopPlayback();
       cuts = []; rebuildOrder();          
       selIdx = []; selAnchor = null;      
@@ -1159,7 +1184,7 @@ class AVEditor {
     };
     // ---- 切 / 选 / 合 / 修 / 排序 ----
     function splitAt(f) {
-	  if (isVideo) f = Math.round(f);
+      if (isVideo) f = Math.round(f);
       const i = order.findIndex(s => f > s.start && f < s.end);
       if (i < 0) return;
       const s = order[i];
@@ -1334,7 +1359,7 @@ class AVEditor {
       const up = () => { phEl.removeEventListener("pointermove", mv); phEl.removeEventListener("pointerup", up); syncAudio(playFrame, true); };
       phEl.addEventListener("pointermove", mv); phEl.addEventListener("pointerup", up);
     });
-	
+    
     let dragSel = null;
     const scrubPH = (e) => {                 
       selEl.setPointerCapture(e.pointerId);
@@ -1469,6 +1494,8 @@ class MultiRefUI {
     this.slots = saved.slots || {};
     this.prompt = typeof saved.prompt === "string" ? saved.prompt : "";
     this.presets = Array.isArray(saved.presets) ? saved.presets : [];
+    this.zones = Object.assign({ img: true, frame: true, av: true, prompt: true },
+      (saved.zones && typeof saved.zones === "object") ? saved.zones : {});
     this._ensurePids();
     this._wsSrcPid = typeof saved._ws_src_pid === "string" ? saved._ws_src_pid : null;
     this._waves = {};
@@ -1476,11 +1503,22 @@ class MultiRefUI {
     this._editVer = {};
     this.build();
     this.render();
-    this._ro = new ResizeObserver(() => { this.node.onResize?.(); this.node.setDirtyCanvas?.(true, true); });
+    this._ro = new ResizeObserver(() => {
+      this.node.onResize?.();
+      this.node.setDirtyCanvas?.(true, true);
+      this._queueBtnrow?.();
+      this._queueHead?.();        
+    });
+
     setTimeout(() => this._ro.observe(root), 100);
   }
 
-  status(t) { const el = this.root.querySelector(".emr-status"); if (el) el.textContent = t; }
+  status(t) {
+    const el = this.root.querySelector(".emr-status");
+    if (el) el.textContent = t;
+    this._queueHead?.();
+  }
+
   defaultEdit(kind, mat) {
     if (kind === "image") return { crop: null, out_w: 0, out_h: 0, lock_ratio: true, div_by: 32, paint_file: null };
     if (kind === "video") {
@@ -1495,7 +1533,7 @@ class MultiRefUI {
   build() {
     this.root.className = "emr";
     const card = (d) => `<div class="emr-slot g-${d.group}" data-slot="${d.id}" draggable="false">
-        <div class="emr-media"><span class="emr-empty">Drop/click</span></div>
+      <div class="emr-media"><span class="emr-empty">Drop/click</span></div>
         <span class="emr-tag">${d.id}</span>
         <button class="emr-iconbtn emr-edit" title="Edit">${svgIcon(ICONS.edit, 12)}</button>
         <button class="emr-iconbtn emr-del" title="Remove">${svgIcon(ICONS.x, 11)}</button>
@@ -1509,7 +1547,7 @@ class MultiRefUI {
     this.root.innerHTML = `
       <div class="emr-head">
         <span class="emr-title">Element Multi REF</span>
-        <span style="color:#66718a;font-size:11px">Drop files · drag to swap · ✎ edit</span>
+        <span class="emr-hint" style="color:#66718a;font-size:11px">Drop files · drag to swap · ✎ edit</span>
         <span class="emr-status">Ready</span>
         <button class="emr-btn" data-a="clearall">Clear</button>
       </div>
@@ -1526,14 +1564,20 @@ class MultiRefUI {
       <div class="emr-bottom">
         <textarea class="emr-prompt" rows="3" placeholder="Prompt…"></textarea>
         <div class="emr-btnrow">
-          <button class="emr-btn" data-a="pfirst" title="Apply first preset">${svgIcon(NAV_ICONS.first)}</button>
-          <button class="emr-btn" data-a="pprev" title="Apply previous preset">${svgIcon(NAV_ICONS.prev)}</button>
-          <button class="emr-btn" data-a="pnext" title="Apply next preset">${svgIcon(NAV_ICONS.next)}</button>
-          <button class="emr-btn" data-a="plast" title="Apply last preset">${svgIcon(NAV_ICONS.last)}</button>
+          <div class="emr-toggles">
+            <button class="emr-btn emr-sqbtn emr-zonebtn" data-zone="img" title="Toggle image refs">${svgIcon(ICONS.zone_img, 14)}</button>
+            <button class="emr-btn emr-sqbtn emr-zonebtn" data-zone="frame" title="Toggle first/last frame">${svgIcon(ICONS.zone_frame, 14)}</button>
+            <button class="emr-btn emr-sqbtn emr-zonebtn" data-zone="av" title="Toggle video/audio">${svgIcon(ICONS.zone_av, 14)}</button>
+            <button class="emr-btn emr-sqbtn emr-zonebtn" data-zone="prompt" title="Toggle prompt">${svgIcon(ICONS.zone_prompt, 14)}</button>
+          </div>
+          <button class="emr-btn emr-sqbtn" data-a="pfirst" title="Apply first preset">${svgIcon(NAV_ICONS.first)}</button>
+          <button class="emr-btn emr-sqbtn" data-a="pprev" title="Apply previous preset">${svgIcon(NAV_ICONS.prev)}</button>
+          <button class="emr-btn emr-sqbtn" data-a="pnext" title="Apply next preset">${svgIcon(NAV_ICONS.next)}</button>
+          <button class="emr-btn emr-sqbtn" data-a="plast" title="Apply last preset">${svgIcon(NAV_ICONS.last)}</button>
           <button class="emr-btn" data-a="presets">Presets</button>
-          <button class="emr-btn" data-a="savepreset">Save Preset</button>
-		  <button class="emr-btn" data-a="expdir" title="Export folder settings (remembered, silent writes)">${svgIcon(ICONS.folder, 13)}</button>
-          <button class="emr-btn" data-a="collectexport" title="Export presets + ALL referenced media files (video/audio/overlays/thumbs)">Collect and Export</button>
+          <button class="emr-btn emr-sqbtn" data-a="savepreset" title="Save Preset">${svgIcon(ICONS.save, 14)}</button>
+          <button class="emr-btn emr-sqbtn" data-a="expdir" title="Export folder settings (remembered, silent writes)">${svgIcon(ICONS.folder, 14)}</button>
+          <button class="emr-btn emr-sqbtn" data-a="collectexport" title="Export presets + ALL referenced media files (video/audio/overlays/thumbs)">${svgIcon(ICONS.package, 14)}</button>
         </div>
       </div>
       <input type="file" hidden accept="image/*,video/*,audio/*">`;
@@ -1549,7 +1593,7 @@ class MultiRefUI {
 
     this.root.querySelector('[data-a="clearall"]').onclick = () => {
       this.mats = {}; this.slots = {}; this._waves = {}; this.prompt = "";
-	  this._wsSrcPid = null;
+      this._wsSrcPid = null;
       const t = this.root.querySelector(".emr-prompt"); if (t) t.value = "";
       this.updateState(); this.render(); this.status("Cleared (presets kept)");
     };
@@ -1572,7 +1616,12 @@ class MultiRefUI {
     this.root.querySelector('[data-a="pprev"]').onclick = () => this.navPreset("prev");
     this.root.querySelector('[data-a="pnext"]').onclick = () => this.navPreset("next");
     this.root.querySelector('[data-a="plast"]').onclick = () => this.navPreset("last");
-
+    this.root.querySelectorAll(".emr-zonebtn").forEach(b => b.onclick = () => {
+      const z = b.dataset.zone;
+      this.zones[z] = !this.zones[z];
+      this.applyZones();
+      this.updateState();
+    });
 
     const grid = this.root.querySelector(".emr-grid");
     grid.addEventListener("dragenter", (e) => { e.preventDefault(); });
@@ -1660,8 +1709,8 @@ class MultiRefUI {
         }
       });
     }
+    this.applyZones();
   }
-
 
   showMenu(x, y, items) {
     document.querySelectorAll(".emr-menu").forEach(m => m.remove());
@@ -1752,6 +1801,87 @@ class MultiRefUI {
     else AVEditor.open(mat, slot, apply);
   }
 
+  applyZones() {
+    const root = this.root;
+    const set = (sel, on) => { const el = root.querySelector(sel); if (el) el.style.display = on ? "" : "none"; };
+    const img = !!this.zones.img, frame = !!this.zones.frame, av = !!this.zones.av, prompt = !!this.zones.prompt;
+  
+    const stacked = !av && img && frame;
+    const grid = root.querySelector(".emr-grid");
+    const colImg = root.querySelector(".emr-col-img");
+    const col = root.querySelector(".emr-col");
+    const framesRow = root.querySelector(".emr-row-frames");
+    if (stacked) {
+      if (framesRow && framesRow.parentElement !== grid) grid.insertBefore(framesRow, colImg);
+    } else if (framesRow && framesRow.parentElement !== col) {
+      col.insertBefore(framesRow, col.firstChild);   
+    }
+  
+    set(".emr-col-img", img);
+    set(".emr-row-frames", frame);
+    set(".emr-row-video", av);
+    set(".emr-row-vau", av);
+    set(".emr-row-aud", av);
+    set(".emr-row-drive", av);
+    set(".emr-prompt", prompt);
+    set(".emr-col", (!stacked && frame) || av);      
+  
+    const anyRight = frame || av;
+    const gridEmpty = !img && !anyRight;             
+    grid.style.gridTemplateColumns = (img && anyRight && !stacked) ? "" : "1fr";
+    grid.style.gridTemplateRows = stacked ? "minmax(0,1fr) minmax(0,3fr)" : "";
+    grid.style.minHeight = gridEmpty ? "0" : "";
+    grid.style.padding = gridEmpty ? "0" : "";
+    grid.style.flex = gridEmpty ? "0 0 0" : "";
+  
+    if (framesRow) framesRow.style.flex = (frame && !av && !stacked) ? "1 1 0%" : "";
+  
+    const bottom = root.querySelector(".emr-bottom");
+    if (bottom) bottom.classList.toggle("emr-noprompt", !prompt);
+  
+    root.querySelectorAll(".emr-zonebtn").forEach(b => b.classList.toggle("off", !this.zones[b.dataset.zone]));
+    this.node.onResize?.();
+    this.node.setDirtyCanvas?.(true, true);
+    this._queueHead?.();
+    this._queueBtnrow?.();
+  }
+  
+
+  _layoutHead() {
+    const head = this.root.querySelector(".emr-head");
+    const hint = head?.querySelector(".emr-hint");
+    if (!head || !hint) return;
+    hint.classList.remove("emr-hinthide");
+    if (head.scrollWidth <= head.clientWidth + 1) return;
+    hint.classList.add("emr-hinthide");
+  }
+  _queueHead() {
+    if (this._headRaf) return;
+    this._headRaf = requestAnimationFrame(() => { this._headRaf = 0; this._layoutHead(); });
+  }
+
+  
+  _layoutBtnrow() {
+    const row = this.root.querySelector(".emr-btnrow");
+    if (!row) return;
+    const btns = [...row.children].filter(el => el.tagName === "BUTTON");
+    btns.forEach(b => b.classList.remove("emr-btnhide"));
+    row.style.gap = "";
+    if (row.scrollWidth <= row.clientWidth + 1) return;   
+    row.style.gap = "4px";                                
+    if (row.scrollWidth <= row.clientWidth + 1) return;
+    let i = btns.length - 1;                             
+    while (i >= 0 && row.scrollWidth > row.clientWidth + 1) {
+      btns[i].classList.add("emr-btnhide");
+      i--;
+    }
+  }
+  _queueBtnrow() {
+    if (this._btnrowRaf) return;
+    this._btnrowRaf = requestAnimationFrame(() => { this._btnrowRaf = 0; this._layoutBtnrow(); });
+  }
+
+
   render() {
     const useCount = {};
     for (const s of Object.values(this.slots)) if (s?.mat) useCount[s.mat] = (useCount[s.mat] || 0) + 1;
@@ -1760,7 +1890,7 @@ class MultiRefUI {
       const slot = this.slots[id];
       el.draggable = !!slot;
       el.querySelector(".emr-badge")?.remove();
-	  el.querySelector(".emr-del").style.display = "";
+      el.querySelector(".emr-del").style.display = "";
       const media = el.querySelector(".emr-media");
       if (!slot) {
         const pv = this._pairedVideoSlotId(id);
@@ -1837,7 +1967,7 @@ class MultiRefUI {
   updateState() {
     const nodeId = this.node.__nodeId !== undefined ? this.node.__nodeId : this.node.id;
     const payload = { version: 3, _node_id: nodeId, materials: this.mats, slots: this.slots,
-                      prompt: this.prompt, presets: this.presets, _ws_src_pid: this._wsSrcPid || null };
+                      prompt: this.prompt, presets: this.presets, _ws_src_pid: this._wsSrcPid || null, zones: { ...this.zones }};
     const mats = JSON.parse(JSON.stringify(payload.materials));
     for (const m of Object.values(mats)) delete m._wave;
     payload.materials = mats;
@@ -1855,10 +1985,14 @@ class MultiRefUI {
     this.slots = saved.slots || this.slots;
     this.prompt = typeof saved.prompt === "string" ? saved.prompt : this.prompt;
     if (Array.isArray(saved.presets)) this.presets = saved.presets;
-	this._ensurePids();
+    this._ensurePids();
     this._wsSrcPid = typeof saved._ws_src_pid === "string" ? saved._ws_src_pid : null;
     const ta = this.root.querySelector(".emr-prompt");
     if (ta) ta.value = this.prompt;
+    if (saved.zones && typeof saved.zones === "object") {
+      this.zones = Object.assign({ img: true, frame: true, av: true, prompt: true }, saved.zones);
+      this.applyZones();
+    }
     this.render();
   }
 
@@ -1943,10 +2077,9 @@ class MultiRefUI {
   }
 
 
-  async _pickDir() {
+  async _pickDir(mode = "readwrite") {
     if (!window.showDirectoryPicker) return false;
-    try { return await window.showDirectoryPicker({ mode: "readwrite" }); }
-    catch (_) { return null; }
+    try { return await window.showDirectoryPicker({ mode }); } catch (_) { return null; }
   }
   
 
@@ -2000,18 +2133,31 @@ class MultiRefUI {
 
 
   async snapshotThumb() {
-    const root = this.root, rr = root.getBoundingClientRect();
+    const root = this.root;
+    const grid = root.querySelector(".emr-grid");
+    const ta = root.querySelector(".emr-prompt");
+    const rects = [];
+    for (const el of [grid, ta]) {
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width > 2 && r.height > 2) rects.push(r);
+    }
+    if (!rects.length) return null;
+    let L = Infinity, T = Infinity, R = -Infinity, B = -Infinity;
+    for (const r of rects) { L = Math.min(L, r.left); T = Math.min(T, r.top); R = Math.max(R, r.right); B = Math.max(B, r.bottom); }
     const imgs = [...root.querySelectorAll("img.emr-thumb")];
-    await Promise.all(imgs.map(im => im.complete ? 0 :
-      new Promise(r => { im.onload = im.onerror = r; })));
-    const TW = 640, scale = TW / Math.max(1, rr.width);
+    await Promise.all(imgs.map(im => im.complete ? 0 : new Promise(r => { im.onload = im.onerror = r; })));
+    const TW = 640, scale = TW / Math.max(1, Math.max(R - L, B - T));   
     const cv = document.createElement("canvas");
-    cv.width = TW; cv.height = Math.max(80, Math.round(rr.height * scale));
+    cv.width = Math.max(1, Math.round((R - L) * scale));
+    cv.height = Math.max(1, Math.round((B - T) * scale));
     const ctx = cv.getContext("2d");
     ctx.fillStyle = "#14171e"; ctx.fillRect(0, 0, cv.width, cv.height);
     for (const el of root.querySelectorAll(".emr-slot")) {
+      if (!el.offsetWidth && !el.offsetHeight) continue;
       const r = el.getBoundingClientRect();
-      const x = (r.left - rr.left) * scale, y = (r.top - rr.top) * scale, w = r.width * scale, h = r.height * scale;
+      if (r.right < L || r.left > R || r.bottom < T || r.top > B) continue;
+      const x = (r.left - L) * scale, y = (r.top - T) * scale, w = r.width * scale, h = r.height * scale;
       const cs = getComputedStyle(el);
       ctx.fillStyle = cs.backgroundColor; ctx.fillRect(x, y, w, h);
       const img = el.querySelector("img.emr-thumb");
@@ -2031,11 +2177,28 @@ class MultiRefUI {
         ctx.fillStyle = "#cdd7e5"; ctx.font = `${11 * scale}px sans-serif`;
         ctx.fillText(tag.textContent, x + 4, y + h - 5);
       }
-      ctx.strokeStyle = cs.borderColor; ctx.lineWidth = 1.5 * scale; ctx.strokeRect(x, y, w, h);
+      ctx.strokeStyle = cs.borderColor; ctx.lineWidth = 1.5 * scale;
+      ctx.strokeRect(x, y, w, h);
+    }
+    const tr = ta && ta.getBoundingClientRect();
+    if (tr && tr.width > 2 && tr.height > 2) {
+      const x = (tr.left - L) * scale, y = (tr.top - T) * scale, w = tr.width * scale, h = tr.height * scale;
+      ctx.fillStyle = "#0d1118"; ctx.fillRect(x, y, w, h);
+      ctx.strokeStyle = "#333d50"; ctx.lineWidth = 1; ctx.strokeRect(x + .5, y + .5, w - 1, h - 1);
+      ctx.save(); ctx.beginPath(); ctx.rect(x + 4, y + 2, w - 8, h - 4); ctx.clip();
+      ctx.fillStyle = "#e5ecf8"; ctx.textBaseline = "top";
+      ctx.font = `${Math.max(9, Math.round(11 * scale))}px Inter,'Segoe UI',sans-serif`;
+      let ty = y + 5;
+      for (const ln of String(this.prompt || "").split("\n")) {
+        if (ty > y + h - 12) break;
+        ctx.fillText(ln, x + 6, ty);
+        ty += Math.max(11, Math.round(14 * scale));
+      }
+      ctx.restore();
     }
     return await new Promise(res => cv.toBlob(res, "image/jpeg", 0.85));
   }
-
+  
 
   _collectRefs() {
     const mats = {};
@@ -2165,11 +2328,11 @@ class MultiRefUI {
           <span data-fs style="color:#9aa6ba;min-width:36px"></span></label>
       </div>
       <div class="emr-pgrid"></div>
-      <div class="emr-foot" style="flex-wrap:wrap">
+      <div class="emr-foot emr-foot-fit">
         <button class="emr-btn" data-a="load" title="Import presets from JSON/ZIP">Load…</button>
         <button class="emr-btn" data-a="export" title="Export all presets to JSON">Export…</button>
         <span style="width:12px"></span>
-        <span style="color:#9aa6ba;font-size:12px;white-space:nowrap">Re-sort:</span>
+        <span data-hidable style="color:#9aa6ba;font-size:12px;white-space:nowrap">Re-sort:</span>
         <button class="emr-btn" data-a="sortNum" title="Sort by leading number">Num</button>
         <button class="emr-btn" data-a="sortAZ" title="Sort by name A→Z">A-Z</button>
         <button class="emr-btn" data-a="sortZA" title="Sort by name Z→A">Z-A</button>
@@ -2182,7 +2345,27 @@ class MultiRefUI {
     document.body.appendChild(ov);
     const q = (s) => ov.querySelector(s);
     const grid = q(".emr-pgrid");
-	this._pmsgEl = q('[data-a="pmsg"]');
+
+    const foot = q(".emr-foot");
+    const HIDE_SEQ = ['[data-a="clearallp"]', '[data-a="del"]', '[data-a="sortZA"]',
+      '[data-a="sortAZ"]', '[data-a="sortNum"]', '[data-hidable]',
+      '[data-a="export"]', '[data-a="load"]'];
+    const layoutFoot = () => {
+      if (!foot) return;
+      foot.querySelectorAll(".emr-btnhide").forEach(b => b.classList.remove("emr-btnhide"));
+      foot.style.gap = "";
+      const fit = () => foot.scrollWidth <= foot.clientWidth + 1;
+      if (fit()) return;
+      foot.style.gap = "4px";
+      if (fit()) return;
+      for (const sel of HIDE_SEQ) {
+        const el = foot.querySelector(sel);
+        if (el) el.classList.add("emr-btnhide");
+        if (fit()) return;
+      }
+    };
+
+    this._pmsgEl = q('[data-a="pmsg"]');
     const box = q(".emr-box");
     const BKEY = "emr_presets_box";
     let lastW = 0, lastH = 0, roT = 0, fs = false, preFs = null;
@@ -2200,12 +2383,13 @@ class MultiRefUI {
       }
     } catch (_) {}
     const ro = new ResizeObserver(() => {
-      lastW = box.offsetWidth; lastH = box.offsetHeight;  
+      lastW = box.offsetWidth; lastH = box.offsetHeight;
+      layoutFoot();                        
       if (fs) return;
-      clearTimeout(roT);
-      roT = setTimeout(persistBox, 300);
+      clearTimeout(roT); roT = setTimeout(persistBox, 300);
     });
     ro.observe(box);
+    layoutFoot();  
     q('[data-a="fs"]').onclick = () => {
       fs = !fs;
       if (fs) {
@@ -2279,7 +2463,7 @@ class MultiRefUI {
         grid.appendChild(card);
       });
     };
-	
+    
     q('[data-a="load"]').onclick = (e) => {
       const r = e.currentTarget.getBoundingClientRect();
       this.showMenu(r.left, r.bottom + 4, [
@@ -2289,14 +2473,14 @@ class MultiRefUI {
     };
 
     q('[data-a="export"]').onclick = () => this.exportPresets();
-	
+    
     q('[data-a="del"]').onclick = () => {
       if (sel < 0) return;
       this.presets.splice(sel, 1); sel = -1;
       this.updateState(); render();
     };
-	
-	const clearBtn = q('[data-a="clearallp"]');
+    
+    const clearBtn = q('[data-a="clearallp"]');
     let clearArm = 0, clearT = 0;
     const disarm = () => { clearArm = 0; clearTimeout(clearT); clearBtn.textContent = "Clear all"; clearBtn.classList.remove("danger"); };
     clearBtn.onclick = () => {
@@ -2317,7 +2501,7 @@ class MultiRefUI {
       this._pmsg("All presets cleared");
     };
 
-	
+    
     const num = (p) => { const n = presetNumKey(p.name); return n == null ? Number.MAX_SAFE_INTEGER : n; };
     const sortBtns = { num: q('[data-a="sortNum"]'), az: q('[data-a="sortAZ"]'), za: q('[data-a="sortZA"]') };
     const doSort = (key) => {
@@ -2357,7 +2541,6 @@ class MultiRefUI {
     }, 200);
   }
 
-
   navPreset(dir) {
     const n = this.presets.length;
     if (!n) { this.status("No presets yet"); return; }
@@ -2377,8 +2560,6 @@ class MultiRefUI {
     this.applyPreset(i);
   }
 
-
-
   applyPreset(i) {
     const p = this.presets[i];
     if (!p) return;
@@ -2386,13 +2567,17 @@ class MultiRefUI {
     this.mats = JSON.parse(JSON.stringify(snap.materials || {}));
     this.slots = JSON.parse(JSON.stringify(snap.slots || {}));
     this.prompt = snap.prompt || "";
+    this.zones = Object.assign({ img: true, frame: true, av: true, prompt: true },
+      (snap.zones && typeof snap.zones === "object") ? snap.zones : {});
     this._editVer = {};
     if (!p.pid) p.pid = this._newPid();
     this._wsSrcPid = p.pid;                        
     const ta = this.root.querySelector(".emr-prompt");
     if (ta) ta.value = this.prompt;
-    this.updateState(); this.render();
-	const rp = this._runPresetWidget();
+    this.applyZones();
+    this.updateState();
+    this.render();
+    const rp = this._runPresetWidget();
     if (rp && Math.round(+rp.value) !== i + 1) rp.value = i + 1;
     this.status(`Applied preset #${i + 1} — Save Preset now overwrites it`);
   }
@@ -2435,7 +2620,7 @@ class MultiRefUI {
       return {
         name: nm.value.trim() || (cur?.name || `Preset ${num}`),
         thumb: ov.dataset.custom || thumbPath,
-        snapshot: { materials: mats, slots: JSON.parse(JSON.stringify(this.slots)), prompt: this.prompt || "" },
+        snapshot: { materials: mats, slots: JSON.parse(JSON.stringify(this.slots)), prompt: this.prompt || "", zones: { ...this.zones }},
       };
     };
     ov.querySelector('[data-a="pick"]').onclick = () => {
@@ -2490,7 +2675,7 @@ class MultiRefUI {
 
 
   async loadCollectFolder(onDone) {
-    const picked = await this._pickDir();
+    const picked = await this._pickDir("read");
     if (picked) {
       try {
         const fh = await picked.getFileHandle("emr_package.json");
@@ -2604,7 +2789,8 @@ class MultiRefUI {
       let thumb = p.thumb;
       if (thumb && !thumb.startsWith("data:")) thumb = fixPath(thumb);
       tryPush({ pid: p.pid || null, name: p.name || "Imported", thumb: thumb || null,
-        snapshot: { materials: ms, slots: importSlots(p.snapshot.slots), prompt: p.snapshot.prompt ?? "" } });
+        snapshot: { materials: ms, slots: importSlots(p.snapshot.slots), prompt: p.snapshot.prompt ?? "",
+          zones: (p.snapshot.zones && typeof p.snapshot.zones === "object") ? { ...p.snapshot.zones } : undefined } });
     }
     if (pkg.workspace && pkg.workspace.slots) {
       const ms = {};
@@ -2615,12 +2801,12 @@ class MultiRefUI {
       let wthumb = pkg.workspace.thumb;
       if (wthumb && !wthumb.startsWith("data:")) wthumb = fixPath(wthumb);
       tryPush({ pid: null, name: "workspace · imported", thumb: wthumb || null,
-        snapshot: { materials: ms, slots: importSlots(pkg.workspace.slots), prompt: pkg.workspace.prompt ?? "" } });
+        snapshot: { materials: ms, slots: importSlots(pkg.workspace.slots), prompt: pkg.workspace.prompt ?? "",
+          zones: (pkg.workspace.zones && typeof pkg.workspace.zones === "object") ? { ...pkg.workspace.zones } : undefined } });
     }
     this.updateState();
     this._pmsg(`Imported ${n} preset(s)` + (dup ? `, skipped${dup} duplicate(s)` : "") + (entries ? " (+media files)" : ""));
   }
-
 
 
   async exportPresets() {
@@ -2659,7 +2845,6 @@ class MultiRefUI {
   }
 
 
-
    _askExportFolder(defVal) {
     return new Promise((resolve) => {
       const ov = document.createElement("div");
@@ -2695,11 +2880,11 @@ class MultiRefUI {
       if (/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(t)) t = "_" + t;
       return t || "preset";
     };
-	
+    
     const hasWs = Object.values(this.slots || {}).some(v => v?.mat) || !!(this.prompt || "").trim();
     const groups = [];
     if (hasWs) groups.push({ folder: "00_workspace", slots: this.slots, matsSrc: this.mats, thumb: null });
-	
+    
     this.presets.forEach((p, i) => {
       const snap = p.snapshot || {};
       groups.push({ folder: `${String(i + 1).padStart(2, "0")}_${safeSeg(p.name)}`,
@@ -2740,7 +2925,7 @@ class MultiRefUI {
         files.push({ rel, blob: await r.blob() });
       } catch (e) { failed++; console.warn("[EMR] collect fetch failed:", p, e); }
     };
-	
+    
     let wsThumbPath = null;
     if (hasWs) {
       try {
@@ -2752,7 +2937,7 @@ class MultiRefUI {
       } catch (e) { console.warn("[EMR] workspace thumb failed:", e); }
     }
 
-	
+    
     for (const g of groups) {
       for (const v of Object.values(g.slots || {})) {
         if (!v || !v.mat) continue;
@@ -2784,7 +2969,8 @@ class MultiRefUI {
       }
       return { pid: p.pid || null, name: p.name || "",
         thumb: (p.thumb && mediaMap[p.thumb]) || (p.thumb?.startsWith("data:") ? p.thumb : null),
-        snapshot: { materials: ms, slots: remapSlots(snap.slots), prompt: snap.prompt ?? "" } };
+        snapshot: { materials: ms, slots: remapSlots(snap.slots), prompt: snap.prompt ?? "",
+          zones: (snap.zones && typeof snap.zones === "object") ? { ...snap.zones } : undefined } };
     });
 
     const pkg = { version: 1, kind: "element_multi_ref_collect", created: new Date().toISOString(), presets: presetsOut };
@@ -2796,13 +2982,13 @@ class MultiRefUI {
         wsMats[id] = c;
       }
       pkg.workspace = { thumb: (wsThumbPath && mediaMap[wsThumbPath]) || null,
-        materials: wsMats, slots: remapSlots(this.slots), prompt: this.prompt || "" };
+        materials: wsMats, slots: remapSlots(this.slots), prompt: this.prompt || "", zones: { ...this.zones } };
     }
 
 
     const pkgBlob = new Blob([JSON.stringify(pkg)], { type: "application/json" });
     if (failed) this.status(`Collect: ${failed} file(s) failed — package may be incomplete`);
-	
+    
     if (dh) {
       const wf = async (rel, blob) => {
         const parts = String(rel).split("/").filter(Boolean);
@@ -2877,7 +3063,19 @@ app.registerExtension({
   async beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData.name !== "ElementMultiRef") return;
     installStyles();
-    const MIN_W = 520, MIN_H = 560, MIN_DOM_H = 480, NEW_W = 720, NEW_H = 680;
+    
+    /* ★ 最近一次被移除的 EMR 节点状态（供右键 Reload Node / 重建后恢复） */
+    let EMR_LAST_REMOVED = null;
+    const emrStateHasData = (str) => {
+      try {
+        const s = JSON.parse(str);
+        return !!((s.materials && Object.keys(s.materials).length) ||
+                  (s.slots && Object.keys(s.slots).length) ||
+                  (s.presets && s.presets.length) || (s.prompt || ""));
+      } catch (_) { return false; }
+    };
+
+    const MIN_W = 400, MIN_H = 450, MIN_DOM_H = 380, NEW_W = 720, NEW_H = 680;
 
     const origCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function () {
@@ -2898,9 +3096,39 @@ app.registerExtension({
       };
       hideWidget(this.widgets?.find(w => w.name === "refs_data"));
       const root = document.createElement("div");
+      root.addEventListener("wheel", (e) => {
+        const t = e.target;
+        if (t && /^(TEXTAREA|INPUT|SELECT)$/.test(t.tagName)) return;  
+        if (!app.canvasEl) return;
+        const fwd = new WheelEvent("wheel", { clientX: e.clientX, clientY: e.clientY,
+          deltaX: e.deltaX, deltaY: e.deltaY, deltaMode: e.deltaMode,
+          ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey });
+        app.canvasEl.dispatchEvent(fwd);
+        e.preventDefault(); e.stopPropagation();
+      }, { passive: false });
+
       const domWidget = this.addDOMWidget("multi_ref_ui", "div", root, { serialize: false, hideOnZoom: false });
       const widget = this.widgets?.find(w => w.name === "refs_data");
       this.__emr = new MultiRefUI(this, root, widget);
+      
+      /* ★ Reload Node 兼容 */
+      const tryLateRestore = () => {
+        try {
+          const ui = this.__emr;
+          if (!ui) return;
+          const uiEmpty = !Object.keys(ui.mats).length && !Object.keys(ui.slots).length &&
+                          !ui.presets.length && !(ui.prompt || "");
+          if (!uiEmpty) return;                                     
+          if (emrStateHasData(widget?.value)) { ui.reloadFromWidget(); return; }  
+          if (EMR_LAST_REMOVED && Date.now() - EMR_LAST_REMOVED.t < 3000) {       
+            widget.value = EMR_LAST_REMOVED.value;
+            ui.reloadFromWidget();
+            EMR_LAST_REMOVED = null;
+          }
+        } catch (_) {}
+      };
+      [300, 800, 1500, 2500].forEach(ms => setTimeout(tryLateRestore, ms));
+
 
       const rpW = this.widgets?.find(w => w.name === "run_preset_NUM");
       if (rpW) {
@@ -2912,14 +3140,23 @@ app.registerExtension({
       root.style.width = "100%";
       root.style.height = MIN_DOM_H + "px";
       domWidget.computeSize = () => [400, 4];
-      const fixedH = Math.max(0, this.computeSize()[1] - 4);  
       const applyDomH = () => {
-        const h = Math.max(MIN_DOM_H, Math.round((this.size?.[1] || 0) - fixedH - 8)); //底边距
+        const nodeH = Math.round(this.size?.[1] || 0);
+        const topOff = Number.isFinite(domWidget.last_y) ? Math.round(domWidget.last_y) : 30;
+        const h = Math.max(60, nodeH - topOff - 20);          // ★ 严格不超出节点底边20
         if (Math.abs((parseFloat(root.style.height) || 0) - h) > 0.5) root.style.height = h + "px";
       };
+
       this.__applyDomH = applyDomH;
       applyDomH();
-      this.onResize = applyDomH;                
+      this.__applyDomH = applyDomH;
+      const applyAll = () => {                     
+        applyDomH();
+        this.__emr?._queueHead?.();
+        this.__emr?._queueBtnrow?.();
+      };
+      applyDomH();
+      this.onResize = applyAll;                                
 
       const origComputeSize = this.computeSize;
       this.computeSize = function () {
@@ -2930,9 +3167,9 @@ app.registerExtension({
       };
 
       try { this.__emr._ro?.disconnect(); } catch (_) {}
-      this.__emr._ro = new ResizeObserver(applyDomH);
+      this.__emr._ro = new ResizeObserver(applyAll);
       this.__emr._ro.observe(root);
-      this.__emrH = setInterval(applyDomH, 250);
+      this.__emrH = setInterval(applyAll, 250);
 
       if (typeof this.id !== "number" || this.id < 0) this.size = [NEW_W, NEW_H];
       return result;
@@ -2954,6 +3191,12 @@ app.registerExtension({
 
     const origRemoved = nodeType.prototype.onRemoved;
     nodeType.prototype.onRemoved = function () {
+      try {                                                         
+        const w = this.widgets?.find(x => x.name === "refs_data");
+        if (w && typeof w.value === "string" && emrStateHasData(w.value)) {
+          EMR_LAST_REMOVED = { value: w.value, t: Date.now() };
+        }
+      } catch (_) {}
       clearInterval(this.__emrH);
       if (this.__emr) {
         try { this.__emr._ro?.disconnect(); } catch (_) {}

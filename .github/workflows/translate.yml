@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}  # 使用你的 token
-          fetch-depth: 0  # 获取完整历史，便于 rebase
+          fetch-depth: 0  
 
       - name: Translate with Zhipu (Free Forever)
         env:
@@ -24,7 +24,6 @@ jobs:
           python << 'PYEOF'
           import requests, os, json
           
-          # 读取中文README
           with open('README.md', 'r', encoding='utf-8') as f:
               text = f.read()
           
@@ -39,7 +38,22 @@ jobs:
                       {"role": "user", "content": text}
                   ]
               }
-          ).json()
+          )
+          
+          if resp.status_code != 200:
+              print(f"HTTP错误: {resp.status_code}")
+              print(f"响应内容: {resp.text}")
+              exit(1)
+          
+          resp = resp.json()
+          
+          if "error" in resp:
+              print(f"API错误: {resp['error']}")
+              exit(1)
+          
+          if "choices" not in resp or len(resp["choices"]) == 0:
+              print(f"响应格式异常: {resp}")
+              exit(1)
           
           content = resp['choices'][0]['message']['content']
           
@@ -48,14 +62,12 @@ jobs:
           if content.startswith('```markdown'):
               content = content[11:].strip()
           elif content.startswith('```'):
-              # 找到第一个换行，去掉开头的 ``` 和语言标记
               first_newline = content.find('\n')
               if first_newline != -1:
                   content = content[first_newline+1:].strip()
           if content.endswith('```'):
               content = content[:-3].strip()
           
-          # 写入英文README
           with open('README.en.md', 'w', encoding='utf-8') as f:
               f.write(content)
           PYEOF
@@ -67,6 +79,6 @@ jobs:
           git add README.en.md
           git diff --staged --quiet || (
             git commit -m "docs: auto translate" &&
-            git pull --rebase origin main &&  # 先拉取最新，避免冲突
+            git pull --rebase origin main &&  
             git push
           )

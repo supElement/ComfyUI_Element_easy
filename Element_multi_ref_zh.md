@@ -50,7 +50,7 @@ pip install scenedetect              # 可选：Auto Split 镜头检测更准更
 - 音频：.mp3 .wav .flac .ogg .oga .m4a .m4b .aac .opus .wma .aif .aiff .aifc .mka .weba .caf
 
 
-<img width="959" height="1018" alt="image" src="https://github.com/user-attachments/assets/bca44ef0-954f-4e9a-bea0-5ee5e771be69" />
+<img width="1118" height="851" alt="image" src="https://github.com/user-attachments/assets/70053049-703e-45b9-8fa9-f5b9f3405244" />
 
 
 ### 3.2 面板布局与区域开关

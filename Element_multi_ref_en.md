@@ -47,6 +47,10 @@ Supported formats:
 - Video: .mp4 .mov .avi .mkv .webm .m4v
 - Audio: .mp3 .wav .flac .ogg .oga .m4a .m4b .aac .opus .wma .aif .aiff .aifc .mka .weba .caf
 
+
+<img width="959" height="1018" alt="image" src="https://github.com/user-attachments/assets/bca44ef0-954f-4e9a-bea0-5ee5e771be69" />
+
+
 ### 3.2 Prompt
 
 Below the slot grid is a prompt textarea:
@@ -71,6 +75,10 @@ Below the slot grid is a prompt textarea:
 - Top bar **Clear All**: wipes all materials, edits and the prompt — **presets are kept**.
 
 ### 3.5 Image Editor
+
+
+<img width="999" height="900" alt="image" src="https://github.com/user-attachments/assets/5de32290-4068-4ab5-b53c-61179d25c8b3" />
+
 
 Open via ✎ on an image slot:
 
@@ -97,6 +105,10 @@ Open via ✎ on an image slot:
 - Strokes are saved as a transparent PNG overlay; the crop box and dimming remain visible in paint mode.
 
 ### 3.6 Audio/Video Editor (Timeline)
+
+
+<img width="1085" height="814" alt="image" src="https://github.com/user-attachments/assets/a5349cb9-7d6d-46e0-afa2-18629a14e9ba" />
+
 
 **Blue selection area or selected segments = final output range**:
 
@@ -152,6 +164,10 @@ Open via ✎ on an image slot:
 - Click / right-click the paired slot to: open the paired video editor / replace with an independent audio file.
 
 ### 3.8 Presets (snapshots & batch playback)
+
+
+<img width="1272" height="802" alt="image" src="https://github.com/user-attachments/assets/7663b2ad-c531-447f-9780-d4c6f868fe66" />
+
 
 Each preset stores a full snapshot (materials + slot edits + prompt) and a panel thumbnail.
 

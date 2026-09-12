@@ -32,10 +32,24 @@ jobs:
               "https://open.bigmodel.cn/api/paas/v4/chat/completions",
               headers={"Authorization": f"Bearer {os.environ['ZHIPU_KEY']}"},
               json={
-                  "model": "glm-4-flash",
+                  "model": "glm-4-flash-250414",
+                  "max_tokens": 16000,
+                  "temperature": 0.1,
                   "messages": [
-                      {"role": "system", "content": "将中文README翻译成英文。要求：1.保留原始markdown格式；2.代码块内的注释可翻译，代码本身不翻译；3.图片链接格式 ![描述](url) 保持原样；4.不要添加任何代码块标记包裹整个输出；5.直接返回翻译后的markdown文本"},
-                      {"role": "user", "content": text}
+                      {
+                          "role": "system", 
+                          "content": "你是一个专业的技术文档翻译员。请将用户提供的中文 Markdown 内容翻译成英文。"
+                      },
+                      {
+                          "role": "user", 
+                          "content": "请将以下 Markdown 内容翻译为英文。严格遵守以下要求："
+                          "1. 完整保留 Markdown 格式（标题、列表、代码块、链接等）。"
+                          "2. 代码块内的注释可以翻译，但代码逻辑、变量名保持不变。"
+                          "3. 保持图片链接格式 ![描述](url) 原样。"
+                          "4. 不要在输出内容的开头或结尾添加 Markdown 代码块标记（如 \\`\\`\\`markdown 或 \\`\\`\\`）。"
+                          "5. 不要输出任何开场白或结束语（如'以下是翻译结果'），直接输出正文。\n\n"
+                          "原文内容：\n" + text
+                      }
                   ]
               }
           )
@@ -56,7 +70,10 @@ jobs:
               exit(1)
           
           content = resp['choices'][0]['message']['content']
-          
+          if not content or not content.strip():
+            print("翻译结果为空")
+            exit(1)
+            
           # 后处理：去掉模型可能错误添加的外层代码块
           content = content.strip()
           if content.startswith('```markdown'):

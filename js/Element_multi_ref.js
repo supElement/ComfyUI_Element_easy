@@ -240,7 +240,7 @@ function installStyles() {
     font-size:calc(var(--pcard-font,14px) - 3px);font-weight:700;border-radius:4px;padding:1px 6px}
   .emr-pcard .th{height:calc(var(--pcard-w,180px) * .75);flex-shrink:0;background:#0d1119;border-radius:4px;overflow:hidden;
     display:flex;align-items:center;justify-content:center;color:#4d5870;font-size:calc(var(--pcard-font,14px) - 4px)}
-  .emr-pcard .th img{object-fit:contain;background:#0d1119;display:block}
+  .emr-pcard .th img{width:100%;height:100%;object-fit:contain;background:#0d1119;display:block}
   .emr-pcard .nm{width:100%;background:#0d1118;border:1px solid #333d50;border-radius:4px;
     color:#e5ecf8;font:var(--pcard-font,14px)/1.5 Inter,Segoe UI,sans-serif;padding:3px 6px;user-select:text;
     resize:vertical;min-height:calc(4 * 1.5em + 8px);box-sizing:border-box;outline:none}

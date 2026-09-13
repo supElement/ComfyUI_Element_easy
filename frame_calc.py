@@ -1,5 +1,12 @@
 import math
 
+MODEL_PRESETS = {
+    "MiniMax H3": {"div": 17, "offset": 5, "fps": 24},
+    "LTX-2":      {"div": 8,  "offset": 1, "fps": 24},
+    "Wan":        {"div": 4,  "offset": 1, "fps": 16},
+    "Custom":     None,
+}
+
 class FrameCalculator:
     def __init__(self):
         pass
@@ -8,35 +15,41 @@ class FrameCalculator:
     def INPUT_TYPES(cls):
         return {
             "required": {
+                "Model": (list(MODEL_PRESETS.keys()), {"default": "Custom"}),
                 "Type": (["Seconds", "Frames"], {"default": "Seconds"}),
                 "Time": ("INT", {"default": 5, "min": 1, "max": 99999, "step": 1, "display": "number"}),
-                "Div_by": ("INT", {"default": 8, "min": 1, "max": 1024, "step": 1, "display": "number"}),
+                "Div_by": ("INT", {"default": 17, "min": 1, "max": 1024, "step": 1, "display": "number"}),
+                "Offset": ("INT", {"default": 5, "min": 0, "max": 1024, "step": 1, "display": "number"}),
                 "Fps": ("INT", {"default": 24, "min": 1, "max": 240, "step": 1, "display": "number"}),
                 "Rounding": (["Ceil", "Floor"], {"default": "Ceil"}),
             }
         }
 
-    RETURN_TYPES = ("INT", "INT", "FLOAT")
-    RETURN_NAMES = ("Frame Count", "FPS(Int)", "FPS(Float)")
+    RETURN_TYPES = ("INT", "INT", "FLOAT", "FLOAT", "INT")
+    RETURN_NAMES = ("Frame Count", "FPS(Int)", "FPS(Float)", "Seconds(Float)", "Seconds(Int)")
     FUNCTION = "calculate"
     CATEGORY = "Element_easy"
-    
     OUTPUT_NODE = True
 
-    def calculate(self, Type, Time, Div_by, Fps, Rounding):
+    def calculate(self, Model, Type, Time, Div_by, Offset, Fps, Rounding):
+        if MODEL_PRESETS[Model] is not None:
+            div = MODEL_PRESETS[Model]["div"]
+            offset = MODEL_PRESETS[Model]["offset"]
+        else:
+            div = Div_by
+            offset = Offset
+
         if Type == "Seconds":
             base_frames = Time * Fps
         else:
             base_frames = Time
 
-        k_float = (base_frames - 1) / Div_by
-
-        if Rounding == "Ceil":
-            k_int = math.ceil(k_float)
+        if base_frames <= offset:
+            k = 0
         else:
-            k_int = math.floor(k_float)
-
-        final_frames = k_int * Div_by + 1
+            k_float = (base_frames - offset) / div
+            k = math.ceil(k_float) if Rounding == "Ceil" else math.floor(k_float)
+        final_frames = k * div + offset
 
         diff = final_frames - base_frames
         if diff > 0:
@@ -45,15 +58,17 @@ class FrameCalculator:
             diff_str = f"{diff}"
         else:
             diff_str = "0"
-            
-        final_seconds = round(final_frames / Fps, 2)
+
+        seconds_float = round(final_frames / Fps, 2)
+        seconds_int = int(round(final_frames / Fps))
 
         ui_text = (
-            # f"Base Frames: {base_frames}\n"
+            f"Model: {Model}\n"
             f"Final Frames: {final_frames} ({diff_str})\n"
-            f"Seconds: {final_seconds}"
+            f"Seconds: {seconds_float}"
         )
-        
-        float_Fps = float(Fps)
 
-        return {"ui": {"text": [ui_text]}, "result": (final_frames, Fps, float_Fps)}
+        return {
+            "ui": {"text": [ui_text]},
+            "result": (final_frames, Fps, float(Fps), seconds_float, seconds_int),
+        }

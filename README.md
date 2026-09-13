@@ -248,20 +248,22 @@ mask 描边：内外描边宽度和模糊度单独控制，支持非描边区域
 <a id="empty_image_rgb"></a>
 ## empty_image_rgb
 
-<sub>v0.0.6 新增</sub>
+<sub>v0.0.6 新增，v1.5.9优化 </sub>
 
-创建空白图像，支持 RGB 和 16 位色码输入。
+创建单色图像，色彩从色轮上选择，明度滑条控制亮度；吸管可在屏幕任意位置取色，如果浏览器非 Chrome / Edge 96+，吸管可能不可用，可改用旁边的调色板按钮中的吸管。
+
+<img width="1329" height="904" alt="image" src="https://github.com/user-attachments/assets/9dd2957b-e261-40ce-8041-87a83df33880" />
 
 ---
 
 <a id="frame-calculator"></a>
 ## Frame Calculator
 
-<sub>v1.2.2 新增</sub>
+<sub>v1.2.2 新增，v1.5.9优化 </sub>
 
-帧数计算节点，计算结果为"取整"后 +1。
+帧数计算节点，提供minimax H3、ltx2、wan合法预设，可通过div_by和offset自定义。
 
-<img width="1043" height="578" alt="Frame Calculator" src="https://github.com/user-attachments/assets/6f53211f-f695-4db6-9483-9da984d193ef" />
+<img width="1154" height="655" alt="image" src="https://github.com/user-attachments/assets/9a99acc7-96b3-43e8-a3c7-1b4fd2ab93f4" />
 
 ---
 
@@ -290,9 +292,9 @@ mask 描边：内外描边宽度和模糊度单独控制，支持非描边区域
 
 <sub>v0.0.6 新增</sub>
 
-将输入的文本按字符数量换行，支持标点符号避首尾。
+将输入的文本按字符数量换行，支持标点符号避首尾，标点挤压、悬挂。最终效果取决于输出载体。
 
-<img width="1590" height="1080" alt="节点截图 2025-12-04 164008" src="https://github.com/user-attachments/assets/1cdacfe2-7c7a-4434-9f48-1ec571bb19ab" />
+<img width="1693" height="981" alt="image" src="https://github.com/user-attachments/assets/62b3f66a-6cec-4d10-904a-5a33a102ba92" />
 
 ---
 

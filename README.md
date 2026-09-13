@@ -62,7 +62,9 @@
 <a id="element-multi-ref"></a>
 ## Element Multi REF
 
-<sub>v1.5.7 新增 · 详细说明：[中文](Element_multi_ref_zh.md) | [English](Element_multi_ref_en.md)</sub>
+<sub>v1.5.7 新增
+
+详细说明：[中文](Element_multi_ref_zh.md) | [English](Element_multi_ref_en.md)</sub>
 
 为 MiniMax-H3、LTXV、Wan、Klein、Qwen 等需要多路参考输入的视频/图像模型设计的素材及提示词管理方案：
 
@@ -81,7 +83,9 @@
 <a id="element-load-and-edit-video"></a>
 ## Element Load and Edit Video
 
-<sub>v1.5.4 新增 · 详细说明：[中文](Element_scene_detection.zh.md) | [English](Element_scene_detection.en.md)</sub>
+<sub>v1.5.4 新增 · 
+
+详细说明：[中文](Element_scene_detection.zh.md) | [English](Element_scene_detection.en.md)</sub>
 
 可视化的单轨视频剪辑器节点：
 

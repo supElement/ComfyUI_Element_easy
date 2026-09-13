@@ -7,166 +7,306 @@
 
 # ComfyUI_Element_easy
 
+一个以**可视化界面、方便交互**为主要方向的 ComfyUI 扩展。这个包里的节点不太一样：不是一个滑杆配一个数字，而是把完整的小工具直接搬进了节点里。
 
-一些方便使用的节点，可视化UI界面，便于交互是这个扩展的主要方向。包括：Element Multi REF, Element Load and Edit Video，Minimax_H3-LatentUpscaler, Smart merge images,LoadImage_Preview,Element_SigmaGraph,Element ImageCurve,Element HueSat,Element HueBright,Element HueHue,Frame Calculator,ImageSize Div,black_white_color, chessboard, empty_image_rgb, image_pad_blur, mask_noise_element, mask_stroke, random_chars, text_line_break.
+## 你能得到什么
 
+**🎬 视频剪辑（Element Load and Edit Video）**
+不用离开 ComfyUI 就能在节点上剪视频：自动检测镜头切换点，也可以手动切、剪短、调顺序，边剪边看，剪完直接输出画面和声音。
+
+**🗂 多参考素材面板（Element Multi REF）**
+给需要"参考图 + 首尾帧 + 参考视频 + 音频"一起输入的视频模型（MiniMax-H3、LTXV、Wan 等）用的素材台。每个素材都能裁剪、涂刷标注、掐时间段，还能存成预设——配合队列可以一次跑完多套素材和提示词，不用来回换图。
+
+**🎛 曲线调色（HueSat / HueBright / HueHue / ImageCurve）**
+像修图软件里的曲线一样调色，曲线直接画在图像上，拖一下立刻看到效果，视频也一样实时预览。
+
+**📐 自定义采样曲线（Element_SigmaGraph）**
+手动画采样器的 sigma 曲线，想在前段少花步数、后段多加细节时特别方便。
+
+**🧩 还有 20 多个实用小节点**
+图像智能合并、遮罩描边、图像加边模糊、帧数计算等等。
+
+## 需要说明的劣势
+
+- **上手需要一点时间**：面板式节点功能多，第一次打开会有"这按钮是干嘛的"的时刻，建议配合各节点的详细说明文档使用；
+- **部分功能依赖外部程序**：视频导出带声音需要系统装 ffmpeg，自动分镜建议装 scenedetect，不装也能用，只是相应功能受限；
+- **兼容性依赖较新的 ComfyUI 版本**（Multi REF 用了新版节点 API），老版本 ComfyUI 可能装不上；
+- **节点多但彼此独立**：如果你只需要一两个功能，这个包对你来说可能偏大。
+
+## 📦 节点导航
+
+**🎬 视频与素材管理**
+
+- [Element Multi REF](#element-multi-ref)（含辅助节点 Element ref convert）
+- [Element Load and Edit Video](#element-load-and-edit-video)（含辅助节点 Element Video Clip / Element Video Info）
+- [Minimax_H3-LatentUpscaler](#minimax_h3-latentupscaler)（含 Adv 版本）
+
+**🎛 曲线调色**
+
+- [Element ImageCurve](#element-imagecurve) · [Element HueSat](#element-huesat) · [Element HueBright](#element-huebright) · [Element HueHue](#element-huehue)
+
+**🖌 图像编辑与遮罩**
+
+- [LoadImage_Preview](#loadimage_preview) · [Smart merge images](#smart-merge-images) · [black_white_color](#black_white_color) · [mask_noise_element](#mask_noise_element) · [mask_stroke](#mask_stroke) · [image_pad_blur](#image_pad_blur)
+
+**📐 图像生成与采样控制**
+
+- [Element_SigmaGraph](#element_sigmagraph) · [chessboard](#chessboard) · [empty_image_rgb](#empty_image_rgb)
+
+**🔧 数值与文本小工具**
+
+- [Frame Calculator](#frame-calculator) · [ImageSize Div](#imagesize-div) · [random_chars](#random_chars) · [text_line_break](#text_line_break)
+
+---
+
+<a id="element-multi-ref"></a>
+## Element Multi REF
+
+<sub>v1.5.7 新增 · 详细说明：[中文](Element_multi_ref_zh.md) | [English](Element_multi_ref_en.md)</sub>
+
+为 MiniMax-H3、LTXV、Wan、Klein、Qwen 等需要多路参考输入的视频/图像模型设计的素材及提示词管理方案：
+
+- 21 个类型化槽位：参考图 ×9、参考视频 ×3，以及首尾帧、各类音频和 Prompt 卡片；
+- 每个卡片配有独立的简易图像编辑器（裁剪、笔刷标注）和音视频时间线编辑器（按 17n+5、8n+1 等规则量化对齐）；
+- 支持多个预设的存储、调用、载入、导出，以及收集归类所有参考和提示词；
+- `run_preset_NUM` 参数对应预设列表中的序号，接收随提示词队列变化的输入时，配合采样推理节点可实现连续生成或编辑多张图像/视频；
+- 面板底栏左下角有 4 个区域开关图标（参考图、首尾帧、音视频、Prompt），可自由组合面板以应对不同需求，甚至可以当作提示词预设节点使用。
+
+辅助节点 **Element ref convert** 用于参考数据的格式转换。
+
+<img width="1691" height="874" alt="Element Multi REF" src="https://github.com/user-attachments/assets/e8c32036-3a21-4864-93eb-228ffce3c82b" />
+
+---
+
+<a id="element-load-and-edit-video"></a>
+## Element Load and Edit Video
+
+<sub>v1.5.4 新增 · 详细说明：[中文](Element_scene_detection.zh.md) | [English](Element_scene_detection.en.md)</sub>
+
+可视化的单轨视频剪辑器节点：
+
+- PySceneDetect 自动检测镜头切换点，也可在交互式时间线上手动切分、修剪、重排片段；
+- 画面与音频同步预览；
+- 直接输出片段帧序列与精确对应的音频，支持导出带音频的 mp4（需要 ffmpeg）。
+
+辅助节点 **Element Video Clip**、**Element Video Info** 配合使用。
+
+<img width="2147" height="1104" alt="Element Load and Edit Video" src="https://github.com/user-attachments/assets/5ba547a7-31c8-4323-bf40-7ec58f1b548e" />
+
+---
+
+<a id="minimax_h3-latentupscaler"></a>
+## Minimax_H3-LatentUpscaler
+
+<sub>v1.5.0 新增 · Adv 版本同期添加</sub>
+
+只缩放视频潜空间的专用节点，不处理音频，输出端口为 Minimax H3 latent。
+
+**Adv 版本**带校验，引入三种条件缩放模式：
+
+| 模式 | 行为 |
+|---|---|
+| pass_through | 忽略校验直接通过 |
+| NO_refs | 只对齐，不缩放 |
+| refs | 缩放（质量最好） |
+
+---
+
+<a id="element-imagecurve"></a>
+<a id="element-huesat"></a>
+<a id="element-huebright"></a>
+<a id="element-huehue"></a>
+## 曲线调色系列
+
+<sub>v1.2.7 ~ v1.3.1 陆续添加 · v1.4.5 优化</sub>
+
+四个节点都是同一种交互方式：**曲线直接画在图像上实时预览，单击加点、右键减点**，支持单张和序列帧图像。
+
+| 节点 | 曲线类型 |
+|---|---|
+| Element ImageCurve | RGB / R / G / B 通道曲线 |
+| Element HueSat | 色相 → 饱和度 |
+| Element HueBright | 色相 → 亮度 |
+| Element HueHue | 色相 → 色相 |
+
+> ⚠️ 除了Element ImageCurve以外，不要在曲线两端同时加点：两端的曲线是闭环的，同时加点会使其中一个点无效，实际上一个端点就足够完成调色。
+
+<img width="1695" height="891" alt="Element HueSat" src="https://github.com/user-attachments/assets/627e1951-244b-4b13-937c-23c8d98748e8" />
+<img width="1767" height="1008" alt="Element ImageCurve" src="https://github.com/user-attachments/assets/f3bcfd71-eaba-4933-aa97-01ee6eefad62" />
+
+---
+
+<a id="loadimage_preview"></a>
+## LoadImage_Preview
+
+<sub>v1.3.5 新增 · v1.5.6 优化</sub>
+
+浏览指定路径下的图像文件，选中后进入编辑面板进行简单编辑：自由绘制线条、mask、方框、圆，以及裁剪图像。
+
+- `Shift + 左键`：画直线、正方形或正圆
+- `L-alpha`：载入图像 alpha 通道到画布
+- `Return`：在缩放面板和编辑面板之间切换
+- 编辑模式下支持 `Ctrl+V` 粘贴图像，支持从网页或资源管理器直接拖入
+- ComfyUI 的 input 目录常驻节点中，folder path 指定的目录作为额外增加的目录
+
+<img width="1453" height="913" alt="LoadImage_Preview" src="https://github.com/user-attachments/assets/ed8d3d43-b18d-482b-84f1-6c0f6b87add5" />
+
+---
+
+<a id="smart-merge-images"></a>
+## Smart merge images
+
+<sub>v1.4.3 新增 · v1.4.8 优化</sub>
+
+两张图像有足够的共同特征时，智能合并图像，适合把局部重绘的结果拼回原图：
+
+- **最优输入方案**：original_image + edited_crop_B + original_crop_A。其中 original_crop_A 是从原图中剪切的没有修改或变形的图像，edited_crop_B 是经过编辑或重绘的图像；
+- 支持分块合并：edited_crop_B 端口输入多张图像时，输出为最终合并后的单张图像。注意输入必须是 **Batch 而非 list**，如果是 list，要经过 Image List To Batch 节点转换。
+
+<img width="2121" height="963" alt="image" src="https://github.com/user-attachments/assets/0e341594-8b59-45af-8ece-59382ace50e4" />
+
+---
+
+<a id="black_white_color"></a>
+## black_white_color
+
+<sub>v1.1.3 新增</sub>
+
+黑白分区的风格转换节点，用于在 qwenEdit 风格转换时抑制转换后的像素偏移问题：先转换 mask 区域风格，再转换 invert mask 区域；尽量使黑白区域面积平均，以减少色调不一致的问题。
+
+输入端口的 mask 会与节点生成的 mask 做 ADD 运算。
+
+<img width="1596" height="1084" alt="black_white_color" src="https://github.com/user-attachments/assets/c715e5e6-1ff3-46ff-9d48-a0a87d2506df" />
+
+---
+
+<a id="mask_noise_element"></a>
+## mask_noise_element
+
+<sub>v0.0.8 新增（Image Noise Using Mask）</sub>
+
+方便在图像的 mask 区域添加随机噪点。
+
+<img width="1724" height="878" alt="屏幕截图 2026-01-17 134457" src="https://github.com/user-attachments/assets/17b9af6d-e8d2-4c35-9e13-6822e6bfa266" />
+
+---
+
+<a id="mask_stroke"></a>
+## mask_stroke
+
+<sub>v0.0.7 新增</sub>
+
+mask 描边：内外描边宽度和模糊度单独控制，支持非描边区域整体添加权重（使输出的 mask 没有权重为 0 的区域）。
+
+<img width="1295" height="731" alt="mask_stroke" src="https://github.com/user-attachments/assets/56b86fb6-758a-4d6c-8fa1-997b6bc9ee9d" />
+
+---
+
+<a id="image_pad_blur"></a>
+## image_pad_blur
+
+<sub>v0.0.8 新增</sub>
+
+图像加边框并可选模糊：
+
+- target width / target height，9 种对齐模式（中心、左、右、上、下、左上、左下、右上、右下）
+- pad 模式：constant / reflect / edge（另一选项与 reflect 效果相同）
+- constant 模式下：feathering 控制整体模糊程度，content_blur 控制原图像扩展出的区域模糊度，background_color 参数生效（兼容 RGB 色和 HEX 色码）
+
+<img width="2147" height="1092" alt="image_pad_blur 对齐模式" src="https://github.com/user-attachments/assets/e864a294-c70c-4409-9573-c357b6437158" />
+
+---
+
+<a id="element_sigmagraph"></a>
+## Element_SigmaGraph
+
+<sub>v1.2.4 新增 · v1.5.3 增加 P 按钮</sub>
+
+在节点上直接绘制自定义 sigma 曲线：单击加点、右键删点。
+
+**P 按钮**：重排控制点的 x 坐标——当点数少于 steps+1 时，前 n-1 个点的 x 重排为 0, 1/steps, ..., (n-2)/steps，y 不变，最后一个点原样保留；当点数不少于 steps+1 时，取前 steps+1 个点均匀分布。简单说：**在不改变前面步数步幅的前提下，为后段增加采样步数（增加细节）**。
+
+<img width="1176" height="794" alt="Element_SigmaGraph" src="https://github.com/user-attachments/assets/a8741609-cbe7-4ec8-a88d-5cae79b031a8" />
+
+---
+
+<a id="chessboard"></a>
+## chessboard
+
+<sub>v0.0.9 新增（ChessboardPattern）</sub>
+
+创建黑白棋盘格图像。
+
+<img width="1714" height="608" alt="image" src="https://github.com/user-attachments/assets/466bc026-adc5-42cd-abe5-c28f323dd482" />
+
+---
+
+<a id="empty_image_rgb"></a>
+## empty_image_rgb
+
+<sub>v0.0.6 新增</sub>
+
+创建空白图像，支持 RGB 和 16 位色码输入。
+
+---
+
+<a id="frame-calculator"></a>
+## Frame Calculator
+
+<sub>v1.2.2 新增</sub>
+
+帧数计算节点，计算结果为"取整"后 +1。
+
+<img width="1043" height="578" alt="Frame Calculator" src="https://github.com/user-attachments/assets/6f53211f-f695-4db6-9483-9da984d193ef" />
+
+---
+
+<a id="imagesize-div"></a>
+## ImageSize Div
+
+<sub>v1.2.3 新增</sub>
+
+尺寸对齐计算。
+
+<img width="1317" height="596" alt="ImageSize Div" src="https://github.com/user-attachments/assets/6f53211f-f695-4db6-9483-9da984d193ef" />
+
+---
+
+<a id="random_chars"></a>
+## random_chars
+
+<sub>v0.0.6 新增（Random Chars Append）</sub>
+
+为输入的文本追加无效的特殊字符（可以自定义字符和个数）。
+
+---
+
+<a id="text_line_break"></a>
+## text_line_break
+
+<sub>v0.0.6 新增</sub>
+
+将输入的文本按字符数量换行，支持标点符号避首尾。
+
+<img width="1590" height="1080" alt="节点截图 2025-12-04 164008" src="https://github.com/user-attachments/assets/1cdacfe2-7c7a-4434-9f48-1ec571bb19ab" />
+
+---
 
 ## Installation
 
-### 手动安装（Manual Installation）<br>
+### Manager 安装
 
-   进入 ./ComfyUI/custom_nodes目录，运行以下代码：<br>
+在 ComfyUI Manager 中搜索 **ComfyUI_Element_easy**，然后 Install。
 
-      git clone https://github.com/supElement/ComfyUI_Element_easy.git
-      cd ComfyUI_Element_easy
-      pip install -r requirements.txt
-  可选：ffmpeg
-  节点的**视频导出（带音频）**功能需要系统安装 ffmpeg，Windows从 <a href="https://www.gyan.dev/ffmpeg/builds/">ffmpeg</a>下载，解压后将 bin 目录加入 PATH
-  未安装 ffmpeg 时其余功能均正常，仅导出为无声视频
+### 手动安装
 
+进入 `./ComfyUI/custom_nodes` 目录，运行：
 
+    git clone https://github.com/supElement/ComfyUI_Element_easy.git
+    cd ComfyUI_Element_easy
+    pip install -r requirements.txt
+### 可选依赖：ffmpeg
 
-### 管理器中安装（Install using Manager）<br>
+节点的**视频导出（带音频）**功能需要系统安装 ffmpeg。Windows 用户从 [ffmpeg](https://www.gyan.dev/ffmpeg/builds/) 下载，解压后将 bin 目录加入 PATH。
 
-  - 在comfyUI manager 中搜索 ComfyUI_Element_easy, --然后install。
- 
-
-
-## Update
-
-## v1.5.7
-
-Element Multi REF 是一个面向多路参考输入模型的多模态参考素材与提示词预设管理节点，配套辅助节点 Element ref convert。
-它适用于 MiniMax-H3、LTX、Wan、Klein、Qwen 等需要多路参考输入的图像/视频推理模型，用于集中管理参考图像、音频、视频和提示词预设组合。
-
-主要功能：
-- 支持加载并编辑图像、音频、视频，统一管理参考素材与提示词预设组合。
-- 内置简易图像编辑器和音视频编辑器；每个参考卡片的编辑参数独立保存，互不影响。
-- 支持多组预设的保存、调用、载入、导出，并可集中归类所有参考素材和提示词。
-- run_preset_NUM 对应预设列表中的序号。当它接收 ComfyUI 中随提示词队列变化的输入，并配合采样/推理节点时，可连续生成或编辑多个图像/视频。
-- 面板底栏左下角有 4 个区域开关：参考图、首尾帧、音视频、Prompt。你可以自由组合面板，以适应不同需求；只保留 Prompt 时，也可以把它当作提示词预设节点使用。
-- 辅助节点 Element ref convert：用于配合主节点完成参考素材的转换/接入。
-
-- [中文版详细说明](Element_multi_ref_zh.md)
-- [英文版详细说明](Element_multi_ref_en.md)
-
-<img width="1691" height="874" alt="image" src="https://github.com/user-attachments/assets/e8c32036-3a21-4864-93eb-228ffce3c82b" />
-
-## v1.5.4
-
-- 增加 Element Load and Edit Video 视频载入、简单单轨编辑节点，和相关辅助节点Element Video Clip 和 Element Video Info。
-- "可视化单轨视频剪辑器"节点：在交互式时间线上手动修剪、重排、预览片段。
-- [中文版详细说明](Element_scene_detection.zh.md)
-- [英文版详细说明](Element_scene_detection.en.md)
-
-<img width="2147" height="1104" alt="image" src="https://github.com/user-attachments/assets/5ba547a7-31c8-4323-bf40-7ec58f1b548e" />
-
-## v1.5.0
-  
-添加 Minimax_H3-LatentUpscaler 潜空间缩放节点，只缩放视频的潜空间，没有对音频做任何处理，输出端口为Minimax H3 latent。
-添加 Minimax_H3-LatentUpscaler_Adv  带校验的潜空间缩放节点。引入条件缩放模式，可选择忽略（pass_through）、只对齐不缩放（NO_refs）、缩放(refs)三种模式，质量最好的是缩放(refs)模式。
-
-## v1.4.3（Optimized in V1.4.8）
-  
-  添加节点 Smart merge images; 两张图像有足够的共同特征时，智能合并图像。
-  - 最优方案：original_image + edited_crop_B + original_crop_A。其中 original_crop_A 是从original_image中剪切的没有修改或变形的图像，edited_crop_B是经过编辑或重绘的图像。
-  - 增对分块合并的支持。即edited_crop_B端口输入多张图像时，输出为最终合并后的单张图像。注意：要求输入到edited_crop_B端口的图像是 Batch 而非 list，如果是list，要经过 Image List To Batch 节点转换。
-
-  <img width="2121" height="963" alt="image" src="https://github.com/user-attachments/assets/0e341594-8b59-45af-8ece-59382ace50e4" />
-
-## v1.3.5 （Optimized in v1.5.6）
-  
-  添加 LoadImage_Preview 节点。
-  - 主要功能：浏览指定路径下的图像文件，选择其中一张后进入编辑面板进行简单编辑。包括：自由绘制线条、mask、方框、圆，裁剪图像。
-  - shift+左键：画直线、正方形或正圆。
-  - L-alpha：用于载入图像alpha到画布。
-  - Return：在缩略图面板和编辑面板之间切换。
-  - 图像编辑模式下，支持ctrl+v 粘贴图像，支持鼠标拖入图像（例如：从网页或资源管理器拖入）。
-  - ComfyUI的input目录常驻节点中，folder path的指定做为增加的目录。
-
-  <img width="1453" height="913" alt="image" src="https://github.com/user-attachments/assets/ed8d3d43-b18d-482b-84f1-6c0f6b87add5" />
-
-
-
-## v1.3.1 （Optimized in V1.4.5）
-  
-  添加 Element HueBright（色相 VS 亮度）和 Element HueHue（色相 VS 色相）节点, 曲线调整，实时预览支持单张和序列帧图像。单击加点，右键减点。
-
-## v1.3.0 （Optimized in V1.4.5）
-  
-  添加 Element HueSat 节点, 曲线调整（色相 VS 饱和度），实时预览支持单张和序列帧图像。单击加点，右键减点。<br>
-  - 注意：不要在曲线两端同时加点，虽然不会发生错误，但会使另一个点无效，实时上端点有一个就能完成调色了,因为两端的曲线是闭环的。
-
-  <img width="1695" height="891" alt="Image" src="https://github.com/user-attachments/assets/627e1951-244b-4b13-937c-23c8d98748e8" />
-
-## v1.2.7 （Optimized in V1.4.5）
-  
-  添加 Element ImageCurve 节点, 曲线调色，实时预览支持单张和序列帧图像。单击加点，右键减点。
-
-  <img width="1767" height="1008" alt="Image" src="https://github.com/user-attachments/assets/f3bcfd71-eaba-4933-aa97-01ee6eefad62" />
-
-## v1.2.4 （add "P" button in V1.5.3）
-  
-  添加自定义sigma，Element_SigmaGraph 节点。
-  - 鼠标点击曲线的位置增减控制点（单击加点，右键删除）
-  - P 按钮行为：当点数少于 steps+1 时，前 n-1 个点的 x 重排为 0, 1/steps, 2/steps, ..., (n-2)/steps，y 不变；最后一个点（x, y）原样保留。当点数不少于 steps+1 时，取前 steps+1 个点，x 均匀分布为 0, 1/steps, ..., 1，y 不变。PS：有什么用？在不改变前面步数的步幅时，为后面增加采样步数（增加细节）。
-
-  <img width="1176" height="794" alt="image" src="https://github.com/user-attachments/assets/a8741609-cbe7-4ec8-a88d-5cae79b031a8" />
-
-## v1.2.3
-  
-  添加 ImageSize Div 节点。
-
-<img width="1317" height="596" alt="image" src="https://github.com/user-attachments/assets/6f53211f-f695-4db6-9483-9da984d193ef" />
-
-
-## v1.2.2
-  
-  添加帧数计算节点 Frame Calculator，计算结果为“取整”后+1。
-
-  <img width="1043" height="578" alt="image" src="https://github.com/user-attachments/assets/0a922590-c3bb-4504-8708-443476c3ac03" />
-
-
-## v1.1.3
-  
-  添加 Black White Color 节点,输入端口的mask会与由节点生成的mask做 ADD 运算。
-  为了在qwenEdit中风格转换时，抑制转换后的像素偏移问题，先转换mask区域风格，再转换invert mask区域。尽量使黑白区域的面积平均，以减少色调不一致的问题。
-  
-  <img width="1596" height="1084" alt="image" src="https://github.com/user-attachments/assets/c715e5e6-1ff3-46ff-9d48-a0a87d2506df" />
-
-
-## v0.0.9
-
-  添加 ChessboardPattern 节点，创建黑白棋盘格图像。
-
-  <img width="1714" height="608" alt="image" src="https://github.com/user-attachments/assets/466bc026-adc5-42cd-abe5-c28f323dd482" />
-
-
-## v0.0.8
-
-  添加Image Noise Using Mask节点，方便在图像的mask区域添加随机噪点。
-  添加Image Pad & Blur节点， target width 和 target height，可选择对齐模式（中心对齐、左对齐、右对齐、上对齐、下对齐、左上对齐、左下对齐、右上对齐、右下对齐）。
-  pad模式可选择constant、reflect、edge，另一个和reflect效果相同。当选择constant模式时，feathering控制整体模糊程度，content_blur控制原图像扩展出的区域模糊度。constant模式时，background_color参数生效，兼容rgb色和HEX色码（16位色码）。
-
-<img width="1724" height="878" alt="屏幕截图 2026-01-17 134457" src="https://github.com/user-attachments/assets/17b9af6d-e8d2-4c35-9e13-6822e6bfa266" />
-<img width="2147" height="1092" alt="屏幕截图 2026-01-17 134251" src="https://github.com/user-attachments/assets/e864a294-c70c-4409-9573-c357b6437158" />
-
-  
-
-  
-## v0.0.7
-
-  添加Mask Stroke节点，mask描边，支持内外描边宽度和模糊度单独控制,支持非描边区域整体添加权重（使输出的mask没有权重为0的区域）。
-  
-  <img width="1295" height="731" alt="节点截图 2025-12-05 011534" src="https://github.com/user-attachments/assets/56b86fb6-758a-4d6c-8fa1-997b6bc9ee9d" />
-
-  
-## v0.0.6
-
-Empty Image RGB：支持RGB和16位色彩信息输入。
-Text Line Break： 将输入的文本按字符数量换行，支持标点符号避首尾。
-Random Chars (Append)：为输入的文本添加无效的特殊字符（可以自定义字符和个数），
-                       
-<img width="1590" height="1080" alt="节点截图 2025-12-04 164008" src="https://github.com/user-attachments/assets/1cdacfe2-7c7a-4434-9f48-1ec571bb19ab" />
-
-
+未安装 ffmpeg 时其余功能均正常，仅视频导出为无声视频。

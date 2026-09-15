@@ -32,27 +32,122 @@ jobs:
           SYSTEM_PROMPT = (
               "你是一个专业的技术文档翻译员。将用户提供的中文 Markdown 翻译为英文，严格遵守：\n\n"
               "【格式完整性（最高优先级）】\n"
-              "1. 所有链接必须保持完整语法 [文本](目标)：只翻译方括号内的文本，圆括号内的 URL、文件路径、#锚点 逐字保留，一个字符都不能删除或修改。严禁把 [文本](目标) 简写成 [文本]。\n"
-              "2. 图片语法 ![描述](url)、HTML 标签、表格的竖线分隔结构、标题层级原样保留。\n"
-              "3. 代码块内的注释可以翻译，但代码逻辑、变量名、路径保持不变。\n"
-              "4. 输出的开头和结尾都不得出现三连反引号代码围栏，不得有任何开场白或结束语，直接输出译文正文。\n\n"
+              "1. 保持 Markdown 结构：标题层级、列表、表格竖线分隔、HTML 标签、代码块原样保留；链接的方括号和圆括号结构必须保留。\n"
+              "2. 代码块内的注释可以翻译，但代码逻辑、变量名、路径保持不变。\n"
+              "3. 输出的开头和结尾都不得出现三连反引号代码围栏，不得有任何开场白或结束语，直接输出译文正文。\n\n"
+              "【受保护标记】\n"
+              "4. 形如 %%L1%%、%%L2%% 的占位符是链接位置的受保护标记：必须原样留在原位置，禁止翻译、改写大小写、增删百分号、删除或移动。\n\n"
               "【翻译完整性】\n"
-              "5. 逐句完整翻译，禁止跳过或省略。除代码块、行内代码、URL、文件路径外，译文中不得残留任何中文字符。\n\n"
+              "5. 逐句完整翻译，禁止跳过、缩译、省略。除代码块、行内代码、占位符外，译文中不得残留任何中文字符。\n\n"
               "【标点】\n"
-              "6. 散文部分的中文全角标点（，。：；（）等）转为英文半角（, . : ; ( ) 等），但链接目标、路径、代码、锚点内的所有字符（含标点）必须逐字保留。"
+              "6. 散文部分的中文全角标点（，。：；（）等）转为英文半角（, . : ; ( ) 等）。"
           )
 
-          def call_translate():
+          # ---------- 事前防：把链接目标抽成占位符，模型接触不到 ----------
+          LINK_RE = re.compile(r'\]\(([^()\n]*)\)')
+
+          def mask_links(text):
+              targets = []
+              def _m(m):
+                  targets.append(m.group(1))
+                  return '](%%L%d%%)' % len(targets)
+              return LINK_RE.sub(_m, text), targets
+
+          def unmask_links(text, targets):
+              def _m(m):
+                  i = int(m.group(1))
+                  return '](%s)' % targets[i - 1] if 1 <= i <= len(targets) else m.group(0)
+              return re.sub(r'\(%%[Ll](\d+)%%\)', _m, text)
+
+          # ---------- 事后修：机械找回被模型丢弃的占位符 ----------
+          def normalize_tokens(text):
+              # 容忍模型把 %%L1%% 写成 %L1% / %%l1%% 等变体，先归一化
+              return re.sub(r'%{1,2}[Ll](\d+)%{1,2}', lambda m: '(JUNK%sJUNK)' % m.group(1), text) if False else re.sub(r'%{1,2}[Ll](\d+)%{1,2}', lambda m: '%%L%s%%' % m.group(1), text)
+
+          def repair_links(text, n_targets):
+              # 找出被丢掉的占位符编号；若正文中恰好存在同样数量的"裸[文本]"，
+              # 按顺序把占位符回填回去（机械修复）。对不上则放弃修复。
+              ids = set(re.findall(r'%%[Ll](\d+)%%', text))
+              missing = [i for i in range(1, n_targets + 1) if str(i) not in ids]
+              if not missing:
+                  return text
+              bare = list(re.finditer(r'\[([^\]\n]*)\](?!\s*\()', text))
+              if len(bare) != len(missing):
+                  return None  # 无法机械修复，交给重试
+              parts, last = [], 0
+              for m, i in zip(bare, missing):
+                  parts.append(text[last:m.end()])
+                  parts.append('(%%L%d%%)' % i)
+                  last = m.end()
+              parts.append(text[last:])
+              return ''.join(parts)
+
+          # ---------- 校验 ----------
+          def validate_masked(text, n_targets):
+              ids = sorted(int(x) for x in re.findall(r'%%[Ll](\d+)%%', text))
+              if ids != list(range(1, n_targets + 1)):
+                  return f"占位符不完整: 期望 {n_targets} 个, 实际 {len(ids)} 个"
+              t = re.sub(FENCE + r'.*?' + FENCE, '', text, flags=re.S)
+              t = re.sub(r'`[^`]*`', '', t)
+              cjk = re.findall(r'[\u4e00-\u9fff]+', t)
+              if cjk:
+                  return "译文存在中文残留: " + ", ".join(cjk[:10])
+              return None
+
+          def validate_final(out):
+              a = re.findall(r'\]\(([^()\n]*)\)', src)
+              b = re.findall(r'\]\(([^()\n]*)\)', out)
+              if len(a) != len(b):
+                  return f"整体链接数量不一致: 源 {len(a)} / 译 {len(b)}"
+              bad = [(x, y) for x, y in zip(a, b) if x != y]
+              if bad:
+                  return "整体链接目标不一致: " + "; ".join(f"{x} -> {y}" for x, y in bad[:5])
+              t = re.sub(FENCE + r'.*?' + FENCE, '', out, flags=re.S)
+              t = re.sub(r'`[^`]*`', '', t)
+              cjk = re.findall(r'[\u4e00-\u9fff]+', t)
+              if cjk:
+                  return "整体中文残留: " + ", ".join(cjk[:10])
+              return None
+
+          # ---------- 分段（代码块内不切）----------
+          def split_doc(text):
+              MIN, HARD = 3000, 7000
+              lines = text.split('\n')
+              chunks, cur, in_fence, size = [], [], False, 0
+
+              def flush():
+                  nonlocal cur, size
+                  if cur:
+                      chunks.append('\n'.join(cur))
+                      cur, size = [], 0
+
+              for ln in lines:
+                  s = ln.strip()
+                  if s.startswith(FENCE):
+                      in_fence = not in_fence
+                  if not in_fence and size >= MIN and (ln.startswith('## ') or ln.startswith('# ')):
+                      flush()
+                  elif not in_fence and size >= HARD and s == '':
+                      cur.append(ln)
+                      size += len(ln) + 1
+                      flush()
+                      continue
+                  cur.append(ln)
+                  size += len(ln) + 1
+              flush()
+              return chunks
+
+          def call_translate(chunk, temperature):
               resp = requests.post(
                   "https://open.bigmodel.cn/api/paas/v4/chat/completions",
                   headers={"Authorization": f"Bearer {os.environ['ZHIPU_KEY']}"},
                   json={
                       "model": "glm-4-flash-250414",
                       "max_tokens": 16000,
-                      "temperature": 0.1,
+                      "temperature": temperature,
                       "messages": [
                           {"role": "system", "content": SYSTEM_PROMPT},
-                          {"role": "user", "content": "请将以下 Markdown 内容翻译为英文。直接输出译文正文，不要任何解释。\n\n原文内容：\n" + src}
+                          {"role": "user", "content": "请将以下 Markdown 片段翻译为英文。片段中所有 %%数字%% 占位符必须原样保留。直接输出译文正文，不要任何解释。\n\n" + chunk}
                       ]
                   }
               )
@@ -67,7 +162,7 @@ jobs:
               if "choices" not in resp or len(resp["choices"]) == 0:
                   print(f"响应格式异常: {resp}")
                   exit(1)
-              return resp
+              return resp['choices'][0]
 
           def strip_fence(content):
               content = content.strip()
@@ -81,51 +176,52 @@ jobs:
                   content = content[:-len(FENCE)].strip()
               return content
 
-          def validate(content):
-              # 链接数量校验：丢锚点会导致整条链接匹配不上
-              src_links = re.findall(r'\]\(([^)]*)\)', src)
-              out_links = re.findall(r'\]\(([^)]*)\)', content)
-              if len(src_links) != len(out_links):
-                  return f"链接数量不一致: 源 {len(src_links)} / 译 {len(out_links)}"
-              # 链接目标逐字校验：URL/路径/锚点不允许任何改动
-              bad = [(a, b) for a, b in zip(src_links, out_links) if a != b]
-              if bad:
-                  return "链接目标被改动: " + "; ".join(f"[{a}] -> [{b}]" for a, b in bad[:5])
-              # 中文残留校验（剔除代码块和行内代码后扫描）
-              t = re.sub(FENCE + r'.*?' + FENCE, '', content, flags=re.S)
-              t = re.sub(r'`[^`]*`', '', t)
-              cjk = re.findall(r'[\u4e00-\u9fff]+', t)
-              if cjk:
-                  return "译文存在中文残留: " + ", ".join(cjk[:10])
-              return None
+          chunks = split_doc(src)
+          print(f"文档共 {len(src)} 字符，分为 {len(chunks)} 段: {[len(c) for c in chunks]}")
 
-          content = None
-          for attempt in range(1, 3):
-              resp = call_translate()
-              choice = resp['choices'][0]
-              text = choice.get('message', {}).get('content', '')
-              if not text or not text.strip():
-                  print(f"第{attempt}次翻译结果为空")
-                  continue
-              reason = choice.get('finish_reason')
-              if reason != 'stop':
-                  print(f"第{attempt}次翻译被截断: finish_reason={reason}")
-                  continue
-              text = strip_fence(text)
-              err = validate(text)
-              if err:
-                  print(f"第{attempt}次翻译校验失败: {err}")
-                  continue
-              content = text
-              break
+          parts = []
+          for i, chunk in enumerate(chunks, 1):
+              masked, targets = mask_links(chunk)
+              done = None
+              # 温度递进：0.1 -> 0.3 -> 0.5，摆脱确定性复读
+              for attempt, temp in ((1, 0.1), (2, 0.3), (3, 0.5)):
+                  choice = call_translate(masked, temp)
+                  text = choice.get('message', {}).get('content', '')
+                  if not text or not text.strip():
+                      print(f"[段{i}/第{attempt}次] 翻译结果为空")
+                      continue
+                  reason = choice.get('finish_reason')
+                  if reason != 'stop':
+                      print(f"[段{i}/第{attempt}次] 翻译被截断: finish_reason={reason}")
+                      continue
+                  text = normalize_tokens(strip_fence(text))
+                  fixed = repair_links(text, len(targets))
+                  if fixed is None:
+                      print(f"[段{i}/第{attempt}次] 占位符丢失且无法机械修复: 源 {len(targets)} 个 / 译出 {len(set(re.findall(r'%%[Ll](\\d+)%%', text)))} 个")
+                      print(f"  译段开头: {text[:80].strip()!r}")
+                      continue
+                  err = validate_masked(fixed, len(targets))
+                  if err:
+                      print(f"[段{i}/第{attempt}次] 校验失败: {err}")
+                      print(f"  译段开头: {fixed[:80].strip()!r}")
+                      continue
+                  done = unmask_links(fixed, targets)
+                  break
+              if done is None:
+                  print(f"第 {i} 段三次尝试均未通过，已中止，不写入 README.en.md")
+                  exit(1)
+              parts.append(done)
+              print(f"[段{i}] 通过（含 {len(targets)} 条链接）")
 
-          if content is None:
-              print("两次翻译均未通过校验，已中止，不写入 README.en.md")
+          content = '\n'.join(parts)
+          err = validate_final(content)
+          if err:
+              print(f"整体校验失败: {err}")
               exit(1)
 
           with open('README.en.md', 'w', encoding='utf-8') as f:
               f.write(content)
-          print("校验通过，README.en.md 已更新")
+          print(f"全部 {len(chunks)} 段通过，README.en.md 已更新")
           PYEOF
 
       - name: Push changes

@@ -4,98 +4,133 @@ on:
   push:
     branches: ['main']
     paths:
-      - 'README.md'  # 只在 README.md 变化时触发，避免死循环
+      - 'README.md' # 只在 README.md 变化时触发，避免死循环
 
 jobs:
   translate:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # 确保有写入权限
+      contents: write # 确保有写入权限
     steps:
       - uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}  # 使用你的 token
-          fetch-depth: 0  
+          token: ${{ secrets.GITHUB_TOKEN }} # 使用你的 token
+          fetch-depth: 0
 
       - name: Translate with Zhipu (Free Forever)
         env:
           ZHIPU_KEY: ${{ secrets.ZHIPU_API_KEY }}
         run: |
           python << 'PYEOF'
-          import requests, os, json
-          
+          import requests, os, re
+
+          FENCE = '`' * 3  # 三连反引号，用于清理模型可能添加的代码围栏
+
           with open('README.md', 'r', encoding='utf-8') as f:
-              text = f.read()
-          
-          # 调用智谱 GLM-4-Flash
-          resp = requests.post(
-              "https://open.bigmodel.cn/api/paas/v4/chat/completions",
-              headers={"Authorization": f"Bearer {os.environ['ZHIPU_KEY']}"},
-              json={
-                  "model": "glm-4-flash-250414",
-                  "max_tokens": 16000,
-                  "temperature": 0.1,
-                  "messages": [
-                      {
-                          "role": "system", 
-                          "content": "你是一个专业的技术文档翻译员。请将用户提供的中文 Markdown 内容翻译成英文。"
-                      },
-                      {
-                          "role": "user", 
-                          "content": "请将以下 Markdown 内容翻译为英文。严格遵守以下要求："
-                          "1. 完整保留 Markdown 格式（标题、列表、代码块、链接等）。"
-                          "2. 代码块内的注释可以翻译，但代码逻辑、变量名保持不变。"
-                          "3. 保持图片链接格式 ![描述](url) 原样。"
-                          "4. 不要在输出内容的开头或结尾添加 Markdown 代码块标记（如 \\`\\`\\`markdown 或 \\`\\`\\`）。"
-                          "5. 不要输出任何开场白或结束语（如'以下是翻译结果'），直接输出正文。\n\n"
-                          "原文内容：\n" + text
-                      }
-                  ]
-              }
+              src = f.read()
+
+          SYSTEM_PROMPT = (
+              "你是一个专业的技术文档翻译员。将用户提供的中文 Markdown 翻译为英文，严格遵守：\n\n"
+              "【格式完整性（最高优先级）】\n"
+              "1. 所有链接必须保持完整语法 [文本](目标)：只翻译方括号内的文本，圆括号内的 URL、文件路径、#锚点 逐字保留，一个字符都不能删除或修改。严禁把 [文本](目标) 简写成 [文本]。\n"
+              "2. 图片语法 ![描述](url)、HTML 标签、表格的竖线分隔结构、标题层级原样保留。\n"
+              "3. 代码块内的注释可以翻译，但代码逻辑、变量名、路径保持不变。\n"
+              "4. 输出的开头和结尾都不得出现三连反引号代码围栏，不得有任何开场白或结束语，直接输出译文正文。\n\n"
+              "【翻译完整性】\n"
+              "5. 逐句完整翻译，禁止跳过或省略。除代码块、行内代码、URL、文件路径外，译文中不得残留任何中文字符。\n\n"
+              "【标点】\n"
+              "6. 散文部分的中文全角标点（，。：；（）等）转为英文半角（, . : ; ( ) 等），但链接目标、路径、代码、锚点内的所有字符（含标点）必须逐字保留。"
           )
-          
-          if resp.status_code != 200:
-              print(f"HTTP错误: {resp.status_code}")
-              print(f"响应内容: {resp.text}")
+
+          def call_translate():
+              resp = requests.post(
+                  "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+                  headers={"Authorization": f"Bearer {os.environ['ZHIPU_KEY']}"},
+                  json={
+                      "model": "glm-4-flash-250414",
+                      "max_tokens": 16000,
+                      "temperature": 0.1,
+                      "messages": [
+                          {"role": "system", "content": SYSTEM_PROMPT},
+                          {"role": "user", "content": "请将以下 Markdown 内容翻译为英文。直接输出译文正文，不要任何解释。\n\n原文内容：\n" + src}
+                      ]
+                  }
+              )
+              if resp.status_code != 200:
+                  print(f"HTTP错误: {resp.status_code}")
+                  print(f"响应内容: {resp.text}")
+                  exit(1)
+              resp = resp.json()
+              if "error" in resp:
+                  print(f"API错误: {resp['error']}")
+                  exit(1)
+              if "choices" not in resp or len(resp["choices"]) == 0:
+                  print(f"响应格式异常: {resp}")
+                  exit(1)
+              return resp
+
+          def strip_fence(content):
+              content = content.strip()
+              if content.startswith(FENCE + 'markdown'):
+                  content = content[len(FENCE) + len('markdown'):].strip()
+              elif content.startswith(FENCE):
+                  first_newline = content.find('\n')
+                  if first_newline != -1:
+                      content = content[first_newline + 1:].strip()
+              if content.endswith(FENCE):
+                  content = content[:-len(FENCE)].strip()
+              return content
+
+          def validate(content):
+              # 链接数量校验：丢锚点会导致整条链接匹配不上
+              src_links = re.findall(r'\]\(([^)]*)\)', src)
+              out_links = re.findall(r'\]\(([^)]*)\)', content)
+              if len(src_links) != len(out_links):
+                  return f"链接数量不一致: 源 {len(src_links)} / 译 {len(out_links)}"
+              # 链接目标逐字校验：URL/路径/锚点不允许任何改动
+              bad = [(a, b) for a, b in zip(src_links, out_links) if a != b]
+              if bad:
+                  return "链接目标被改动: " + "; ".join(f"[{a}] -> [{b}]" for a, b in bad[:5])
+              # 中文残留校验（剔除代码块和行内代码后扫描）
+              t = re.sub(FENCE + r'.*?' + FENCE, '', content, flags=re.S)
+              t = re.sub(r'`[^`]*`', '', t)
+              cjk = re.findall(r'[\u4e00-\u9fff]+', t)
+              if cjk:
+                  return "译文存在中文残留: " + ", ".join(cjk[:10])
+              return None
+
+          content = None
+          for attempt in range(1, 3):
+              resp = call_translate()
+              choice = resp['choices'][0]
+              text = choice.get('message', {}).get('content', '')
+              if not text or not text.strip():
+                  print(f"第{attempt}次翻译结果为空")
+                  continue
+              reason = choice.get('finish_reason')
+              if reason != 'stop':
+                  print(f"第{attempt}次翻译被截断: finish_reason={reason}")
+                  continue
+              text = strip_fence(text)
+              err = validate(text)
+              if err:
+                  print(f"第{attempt}次翻译校验失败: {err}")
+                  continue
+              content = text
+              break
+
+          if content is None:
+              print("两次翻译均未通过校验，已中止，不写入 README.en.md")
               exit(1)
-          
-          resp = resp.json()
-          
-          if "error" in resp:
-              print(f"API错误: {resp['error']}")
-              exit(1)
-          
-          if "choices" not in resp or len(resp["choices"]) == 0:
-              print(f"响应格式异常: {resp}")
-              exit(1)
-          
-          content = resp['choices'][0]['message']['content']
-          if not content or not content.strip():
-            print("翻译结果为空")
-            exit(1)
-            
-          # 后处理：去掉模型可能错误添加的外层代码块
-          content = content.strip()
-          if content.startswith('```markdown'):
-              content = content[11:].strip()
-          elif content.startswith('```'):
-              first_newline = content.find('\n')
-              if first_newline != -1:
-                  content = content[first_newline+1:].strip()
-          if content.endswith('```'):
-              content = content[:-3].strip()
-          
+
           with open('README.en.md', 'w', encoding='utf-8') as f:
               f.write(content)
+          print("校验通过，README.en.md 已更新")
           PYEOF
-          
+
       - name: Push changes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add README.en.md
-          git diff --staged --quiet || (
-            git commit -m "docs: auto translate" &&
-            git pull --rebase origin main &&  
-            git push
-          )
+          git diff --staged --quiet || ( git commit -m "docs: auto translate" && git pull --rebase origin main && git push )

@@ -62,7 +62,7 @@
 <a id="element-multi-ref"></a>
 ## Element Multi REF
 
-<sub>v1.5.7 新增
+<sub>v1.5.7 新增 </sub>
 
 详细说明：[中文](subMd/Element_multi_ref_zh.md) | [English](subMd/Element_multi_ref_en.md)</sub>
 
@@ -83,7 +83,7 @@
 <a id="element-load-and-edit-video"></a>
 ## Element Load and Edit Video
 
-<sub>v1.5.4 新增 · 
+<sub>v1.5.4 新增 </sub>
 
 详细说明：[中文](subMd/Element_scene_detection.zh.md) | [English](subMd/Element_scene_detection.en.md)</sub>
 

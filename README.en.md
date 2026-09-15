@@ -15,13 +15,13 @@ A ComfyUI extension primarily focused on **visual interfaces and convenient inte
 Edit videos directly on the node without leaving ComfyUI: automatically detects scene cut points, or manually cut, trim, and reorder segments; preview while editing, and output both video and audio directly after finishing.
 
 **🗂 Multi Reference Material Panel (Element Multi REF)**
-A material panel for video models (MiniMax-H3, LTXV, Wan, etc.) that require "reference images + start/end frames + reference video + audio" input. Each material can be cropped, annotated with brushes, and timed; presets can be saved—paired with queues, multiple sets of materials and prompts can be run at once without switching images.
+A material station for video models (MiniMax-H3, LTXV, Wan, etc.) that require "reference images + start/end frames + reference video + audio" input. Each material can be cropped, annotated with brushes, and timed; presets can be saved—paired with queues, multiple sets of materials and prompts can be run in one go without switching images.
 
 **🎛 Curve Color Grading (HueSat / HueBright / HueHue / ImageCurve)**
-Like adjusting colors in photo editing software, the curve is drawn directly on the image, and the effect is immediately visible by dragging; the same real-time preview for videos.
+Like adjusting colors in photo editing software, the curve is drawn directly on the image, and the effect is immediately visible by dragging; the same real-time preview applies to videos.
 
 **📐 Custom Sampling Curves (Element_SigmaGraph)**
-Draw the sigma curve of the sampler by hand, especially useful when you want fewer steps in the front and more details in the back.
+Draw the sigma curve of the sampler by hand, especially useful when you want fewer steps in the beginning and more details in the end.
 
 **🧩 Over 20 Practical Nodes**
 Image smart merging, mask stroke, image edge blur, frame count calculation, etc.
@@ -29,7 +29,7 @@ Image smart merging, mask stroke, image edge blur, frame count calculation, etc.
 ## Points to Note as Disadvantages
 
 - **Requires some time to get started**: The panel-style nodes have many functions, and the first time you open them, you might wonder what each button does; it is recommended to use the detailed documentation for each node.
-- **Some functions depend on external programs**: Video export with audio requires the system to have ffmpeg installed, and automatic scene detection suggests installing scenedetect; they can still be used, but the corresponding functions will be limited.
+- **Some functions depend on external programs**: Video export with audio requires the system to have ffmpeg installed; automatic scene detection suggests installing scenedetect, but the functions will still work without them, just with limited functionality.
 - **Compatibility depends on a newer version of ComfyUI** (Multi REF uses the new node API), older versions of ComfyUI may not be installable.
 - **Nodes are numerous but independent**: If you only need one or two functions, this package might be too large for you.
 
@@ -37,9 +37,9 @@ Image smart merging, mask stroke, image edge blur, frame count calculation, etc.
 
 **🎬 Video and Material Management**
 
-- [Element Multi REF](#element-multi-ref) (including auxiliary node Element ref convert)
-- [Element Load and Edit Video](#element-load-and-edit-video) (including auxiliary nodes Element Video Clip / Element Video Info)
-- [Minimax_H3-LatentUpscaler](#minimax_h3-latentupscaler) (including Adv version)
+- [Element Multi REF](#element-multi-ref) (includes auxiliary node Element ref convert)
+- [Element Load and Edit Video](#element-load-and-edit-video) (includes auxiliary nodes Element Video Clip / Element Video Info)
+- [Minimax_H3-LatentUpscaler](#minimax_h3-latentupscaler) (includes Adv version)
 
 **🎛 Curve Color Grading**
 
@@ -69,10 +69,10 @@ Detailed Documentation: [Chinese](subMd/Element_multi_ref_zh.md) | [English](sub
 A material and prompt management solution designed for video/image models like MiniMax-H3, LTXV, Wan, Klein, Qwen that require multiple reference inputs:
 
 - 21 typed slots: reference images ×9, reference videos ×3, as well as start/end frames, various audio, and Prompt cards;
-- Each card has an independent simple image editor (crop, brush annotation) and audio/video timeline editor (quantized alignment according to rules like 17n+5, 8n+1);
+- Each card has an independent simple image editor (crop, brush annotation) and audio/video timeline editor (quantized alignment based on rules like 17n+5, 8n+1);
 - Supports storage, recall, load, and export of multiple presets, as well as categorizing all references and prompts;
-- `run_preset_NUM` parameter corresponds to the preset list index; when paired with sampling inference nodes, it can achieve continuous generation or editing of multiple images/videos with changing prompts;
-- The bottom bar of the panel has four area switch icons (reference images, start/end frames, audio/video, Prompt), which can be freely combined to meet different needs, and can even be used as a prompt preset node.
+- `run_preset_NUM` parameter corresponds to the preset list index; when paired with sampling inference nodes, it enables continuous generation or editing of multiple images/videos with changing prompts;
+- The bottom bar of the panel has four area switch icons (reference images, start/end frames, audio/video, Prompt), allowing free combination of panels to meet different needs, and even usable as a prompt preset node.
 
 The auxiliary node **Element ref convert** is used for reference data format conversion.
 
@@ -89,7 +89,7 @@ Detailed Documentation: [Chinese](subMd。Element_scene_detection.zh.md) | [Engl
 
 A visual single-track video editor node:
 
-- PySceneDetect automatically detects scene cut points, or manually split, trim, and reorder segments on the interactive timeline;
+- PySceneDetect automatically detects scene cut points, or manually split, trim, and reorder segments on an interactive timeline;
 - Synchronous preview of video and audio;
 - Directly outputs segment frame sequences with precise corresponding audio, supporting export of mp4 with audio (requires ffmpeg).
 
@@ -122,9 +122,9 @@ A dedicated node that only scales the video latent space, does not process audio
 <a id="element-huehue"></a>
 ## Curve Color Grading Series
 
-<sub>v1.2.7 ~ v1.3.1 Added Successively · v1.6.0 Optimized</sub>
+<sub>v1.2.7 ~ v1.3.1 Added陆续 · v1.6.0 Optimized</sub>
 
-All four nodes use the same interaction method: **draw the curve directly on the image for real-time preview, single-click to add points, right-click to remove points**, supporting single and sequence-frame images.
+All four nodes use the same interaction method: **draw the curve directly on the image for real-time preview, single-click to add points, right-click to remove points**, supporting both single and sequence-frame images.
 
 | Node | Curve Type |
 |---|---|
@@ -133,7 +133,7 @@ All four nodes use the same interaction method: **draw the curve directly on the
 | Element HueBright | Hue → Brightness |
 | Element HueHue | Hue → Hue |
 
-> ⚠️ Except for Element ImageCurve, do not add points at both ends of the curve simultaneously: the curves at both ends are closed loops, adding points at both ends will make one point invalid, in fact, one endpoint is sufficient to complete the color grading.
+> ⚠️ Except for Element ImageCurve, do not add points at both ends of the curve simultaneously: the curves at both ends are closed loops, adding points at both ends will make one point invalid; in fact, one endpoint is sufficient to complete the color grading.
 
 <img width="1695" height="891" alt="Element HueSat" src="https://github.com/user-attachments/assets/627e1951-244b-4b13-937c-23c8d98748e8" />
 <img width="1767" height="1008" alt="Element ImageCurve" src="https://github.com/user-attachments/assets/f3bcfd71-eaba-4933-aa97-01ee6eefad62" />
@@ -148,10 +148,10 @@ All four nodes use the same interaction method: **draw the curve directly on the
 Browse image files under a specified path, select, and enter the editing panel for simple editing: freely draw lines, masks, squares, circles, and crop images.
 
 - `Shift + Left Click`: Draw straight lines, squares, or circles
-- `L-alpha`: Load the image's alpha channel to the canvas
+- `L-alpha`: Load the image's alpha channel into the canvas
 - `Return`: Switch between the zoom panel and the editing panel
-- In edit mode, supports `Ctrl+V` to paste images, and supports dragging directly from web or file explorer
-- The ComfyUI input directory is permanently stored in the node, and the folder path specified as an additional directory
+- In editing mode, supports `Ctrl+V` to paste images, and directly drag from web or file explorer
+- The ComfyUI input directory is permanently present in the node; the folder path specified as an additional directory
 
 <img width="1453" height="913" alt="LoadImage_Preview" src="https://github.com/user-attachments/assets/ed8d3d43-b18d-482b-84f1-6c0f6b87add5" />
 
@@ -162,10 +162,10 @@ Browse image files under a specified path, select, and enter the editing panel f
 
 <sub>v1.4.3 New Addition · v1.4.8 Optimized</sub>
 
-Intelligently merge images when two images have enough common features, suitable for stitching the results of local redraws back into the original image:
+When two images have enough common features, intelligently merge images, suitable for stitching the results of local redraws back into the original image:
 
-- **Optimal input scheme**: original_image + edited_crop_B + original_crop_A. Among them, original_crop_A is an image from the original that has not been modified or distorted, and edited_crop_B is the edited or redrawn image;
-- Supports block merging: when multiple images are input to the edited_crop_B port, the output is a single image of the final merged result. Note that the input must be **Batch and not list**, if it is a list, it needs to be converted using the Image List To Batch node.
+- **Optimal input scheme**: original_image + edited_crop_B + original_crop_A. Among them, original_crop_A is the part of the original image that has not been modified or distorted, and edited_crop_B is the image that has been edited or redrawn;
+- Supports block merging: when the edited_crop_B port inputs multiple images, the output is a single image of the final merged result. Note that the input must be **Batch and not list**, if it is a list, it needs to be converted using the Image List To Batch node.
 
 <img width="2121" height="963" alt="image" src="https://github.com/user-attachments/assets/0e341594-8b59-45af-8ece-59382ace50e4" />
 
@@ -176,7 +176,7 @@ Intelligently merge images when two images have enough common features, suitable
 
 <sub>v1.1.3 New Addition</sub>
 
-A style conversion node for black and white partitioning, used to suppress pixel offset issues after style conversion in qwenEdit: first convert the style of the mask area, then convert the invert mask area; try to make the black and white areas roughly equal to reduce tonal inconsistencies.
+A style conversion node for black and white partitioning, used to suppress pixel offset issues after style conversion in qwenEdit: first convert the style of the mask area, then convert the invert mask area; try to make the black and white areas evenly sized to reduce hue inconsistency issues.
 
 The mask at the input port will be ADDed with the mask generated by the node.
 
@@ -200,7 +200,7 @@ Conveniently add random noise to the mask area of an image.
 
 <sub>v0.0.7 New Addition</sub>
 
-Mask stroke: individual control of inner and outer stroke widths and blur, supports adding overall weights to non-stroke areas (ensuring the output mask has no areas with a weight of 0).
+Mask stroke: individual control of inner and outer stroke widths and blur, supports adding overall weight to non-stroke areas (ensuring the output mask has no areas with a weight of 0).
 
 <img width="1295" height="731" alt="mask_stroke" src="https://github.com/user-attachments/assets/56b86fb6-758a-4d6c-8fa1-997b6bc9ee9d" />
 
@@ -211,9 +211,9 @@ Mask stroke: individual control of inner and outer stroke widths and blur, suppo
 
 <sub>v0.0.8 New Addition · v1.6.0 Refactored</sub>
 
-A visual interactive image edge extension node. The edges of the original image can all be individually specified for feathering (using the same feather value), custom background, freely or proportionally scale the image within the canvas, and specify the background color.
+A visual interactive image padding node (use mouse drag directly within the canvas). All edges of the original image can be individually specified for feathering (using the same feather value), custom background, freely or proportionally scale the image within the canvas, and specify background color.
 
-- The node attribute parameters retain target width / target height parameters, and add div parameters to assist in setting valid resolutions.
+- The node's attribute parameters retain target width / target height parameters, adding div parameters to assist in setting valid resolutions.
 - The 3x3 button group corresponds to 9 alignment modes (center, left, right, top, bottom, top-left, top-right, bottom-left, bottom-right)
 - pad mode: constant / reflect / edge / stretch
 
@@ -230,7 +230,7 @@ Detailed Documentation: [Chinese](subMd/image_pad_blur_zh.md) | [English](subMd/
 
 Draw custom sigma curves directly on the node: single-click to add points, right-click to delete points.
 
-**P button**: Rearrange the x-coordinates of control points—when the number of points is less than steps+1, the first n-1 points are reordered to 0, 1/steps, ..., (n-2)/steps, y remains unchanged, and the last point is kept as is; when the number of points is at least steps+1, take the first steps+1 points evenly distributed. Simply put: **Without changing the step size of the front part, add sampling steps in the back to increase details**.
+**P button**: Rearrange the x-coordinates of control points—when the number of points is less than steps+1, the first n-1 points' x are rearranged to 0, 1/steps, ..., (n-2)/steps, y remains unchanged, and the last point is kept as is; when the number of points is at least steps+1, take the first steps+1 points evenly distributed. Simply put: **without changing the step size of the first part, add more sampling steps (add details) to the later part**.
 
 <img width="1176" height="794" alt="Element_SigmaGraph" src="https://github.com/user-attachments/assets/a8741609-cbe7-4ec8-a88d-5cae79b031a8" />
 
@@ -285,7 +285,7 @@ Size alignment calculation.
 
 <sub>v0.0.6 New Addition (Random Chars Append）</sub>
 
-Append invalid special characters to the input text (characters and counts can be customized).
+Append invalid special characters to the input text (characters and count can be customized).
 
 ---
 
@@ -315,6 +315,6 @@ Enter the `./ComfyUI/custom_nodes` directory and run:
     pip install -r requirements.txt
 ### Optional Dependency: ffmpeg
 
-The node's **video export (with audio)** feature requires the system to have ffmpeg installed. Windows users can download from [ffmpeg](https://www.gyan.dev/ffmpeg/builds/) and extract, then add the bin directory to PATH.
+The node's **video export (with audio)** feature requires the system to have ffmpeg installed. Windows users can download from [ffmpeg](https://www.gyan.dev/ffmpeg/builds/) and add the bin directory to PATH after extracting.
 
-Without ffmpeg installed, all other functions work normally, only video export is silent video.
+Other functions work normally without ffmpeg installed, but video export will be silent video.

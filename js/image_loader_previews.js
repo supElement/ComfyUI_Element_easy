@@ -281,9 +281,9 @@ app.registerExtension({
 
         const container = $el("div.ee-container");
 
-        // ====== ▶ 按钮：只运行到本节点（仅编辑界面显示）======
+        // ====== ▶ 只运行到本节点：直提依赖子图（修复刷新后首次点击无效）======
         const runToNode = async () => {
-            if (!isImageConnected()) return;  
+            if (!isImageConnected()) return;
             try {
                 const p = await app.graphToPrompt();
                 const prompt = p.output;
@@ -301,42 +301,88 @@ app.registerExtension({
                     }
                 };
                 traceDependencies(selectedNodeId);
-                if (Object.keys(isolatedPrompt).length === 0) {
-                    console.warn("No dependencies found for node", selectedNodeId);
+                if (!isolatedPrompt[selectedNodeId]) {
+                    console.warn("[IsolatedPreview] node not found in prompt:", selectedNodeId);
                     return;
                 }
-                const originalGraphToPrompt = app.graphToPrompt;
-                app.graphToPrompt = async function (...args) {
-                    const originalModes = new Map();
-                    for (const n of app.graph._nodes) {
-                        originalModes.set(n.id, n.mode);
-                        if (!isolatedPrompt[String(n.id)]) {
-                            n.mode = 2;
-                        } else {
-                            n.mode = 0;
-                        }
-                    }
-                    try {
-                        return await originalGraphToPrompt.apply(this, args);
-                    } finally {
-                        for (const n of app.graph._nodes) {
-                            if (originalModes.has(n.id)) {
-                                n.mode = originalModes.get(n.id);
-                            }
-                        }
-                    }
-                };
-                try {
-                    await app.queuePrompt(0, 1);
-                } finally {
-                    if (app.graphToPrompt !== originalGraphToPrompt) {
-                        app.graphToPrompt = originalGraphToPrompt;
-                    }
+                const res = await api.fetchApi("/prompt", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        prompt: isolatedPrompt,
+                        client_id: api.clientId ?? undefined,
+                        extra_data: { front: true },
+                    }),
+                });
+                if (!res.ok) {
+                    const errText = await res.text().catch(() => "");
+                    throw new Error(`/prompt ${res.status}: ${errText.slice(0, 300)}`);
                 }
+                try {
+                    const j = await res.json();
+                    console.log("[IsolatedPreview] queued:", j?.prompt_id);
+                } catch (e) {}
             } catch (err) {
-                console.error("Failed to execute isolated node:", err);
+                console.error("[IsolatedPreview] direct run failed, trying legacy mute path:", err);
+                try {
+                    await legacyIsolatedRun();
+                } catch (e2) {
+                    console.error("[IsolatedPreview] legacy path failed:", e2);
+                }
             }
         };
+	    
+        async function legacyIsolatedRun() {
+            const p = await app.graphToPrompt();
+            const prompt = p.output;
+            const isolatedPrompt = {};
+            const traceDependencies = (nodeId) => {
+                if (!prompt[nodeId] || isolatedPrompt[nodeId]) return;
+                isolatedPrompt[nodeId] = prompt[nodeId];
+                const inputs = prompt[nodeId].inputs;
+                for (let key in inputs) {
+                    const val = inputs[key];
+                    if (Array.isArray(val) && val.length === 2) {
+                        traceDependencies(String(val[0]));
+                    }
+                }
+            };
+            traceDependencies(String(node.id));
+            const originalGraphToPrompt = app.graphToPrompt;
+            const virtualNodeTypes = [
+                "SetNode", "GetNode", "SetNodeAny", "GetNodeAny",
+                "SetImage", "GetImage", "SetLatent", "GetLatent"
+            ];
+            app.graphToPrompt = async function (...args) {
+                const originalModes = new Map();
+                for (const n of app.graph._nodes) {
+                    originalModes.set(n.id, n.mode);
+                    const isVirtual = virtualNodeTypes.some(t => n.type?.includes(t));
+                    if (!isolatedPrompt[String(n.id)] && !isVirtual) {
+                        n.mode = 2; // Mute 无关节点
+                    } else {
+                        n.mode = 0;
+                    }
+                }
+                try {
+                    return await originalGraphToPrompt.apply(this, args);
+                } finally {
+                    for (const n of app.graph._nodes) {
+                        const m = originalModes.get(n.id);
+                        if (m !== undefined) n.mode = m;
+                    }
+                }
+            };
+            try {
+                await app.queuePrompt(0, 1);
+            } finally {
+                if (app.graphToPrompt !== originalGraphToPrompt) {
+                    app.graphToPrompt = originalGraphToPrompt;
+                }
+            }
+        }
+	    
+		
         const runBtn = $el("button.ee-btn", {
             textContent: "▶",
             title: " 只运行到本节点，加载连入的图像\n Run only to this node (load the connected input image)",

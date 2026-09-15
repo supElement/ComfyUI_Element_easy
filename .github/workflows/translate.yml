@@ -14,12 +14,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }} # 使用你的 token
+          token: ${{ secrets.GITHUB_TOKEN }} # 使用你的 token（按要求保留）
           fetch-depth: 0
 
       - name: Translate with Zhipu (Free Forever)
         env:
           ZHIPU_KEY: ${{ secrets.ZHIPU_API_KEY }}
+          PYTHONIOENCODING: utf-8 # 修复：中文日志乱码
         run: |
           python << 'PYEOF'
           import requests, os, re
@@ -43,8 +44,8 @@ jobs:
               "6. 散文部分的中文全角标点（，。：；（）等）转为英文半角（, . : ; ( ) 等）。"
           )
 
-          # ---------- 事前防：把链接目标抽成占位符，模型接触不到 ----------
-          LINK_RE = re.compile(r'\]\(([^()\n]*)\)')
+          # ---------- 修复①：允许 URL 含单层圆括号（如 Wikipedia 链接） ----------
+          LINK_RE = re.compile(r'\]\(((?:[^()\n]|\([^()\n]*\))*)\)')
 
           def mask_links(text):
               targets = []
@@ -53,16 +54,16 @@ jobs:
                   return '](%%L%d%%)' % len(targets)
               return LINK_RE.sub(_m, text), targets
 
+          # ---------- 修复②：还原时替换串不再带 ']'，避免产生 [text]](url) 双中括号 ----------
           def unmask_links(text, targets):
               def _m(m):
                   i = int(m.group(1))
-                  return '](%s)' % targets[i - 1] if 1 <= i <= len(targets) else m.group(0)
+                  return '(%s)' % targets[i - 1] if 1 <= i <= len(targets) else m.group(0)
               return re.sub(r'\(%%[Ll](\d+)%%\)', _m, text)
 
-          # ---------- 事后修：机械找回被模型丢弃的占位符 ----------
           def normalize_tokens(text):
               # 容忍模型把 %%L1%% 写成 %L1% / %%l1%% 等变体，先归一化
-              return re.sub(r'%{1,2}[Ll](\d+)%{1,2}', lambda m: '(JUNK%sJUNK)' % m.group(1), text) if False else re.sub(r'%{1,2}[Ll](\d+)%{1,2}', lambda m: '%%L%s%%' % m.group(1), text)
+              return re.sub(r'%{1,2}[Ll](\d+)%{1,2}', lambda m: '%%L%s%%' % m.group(1), text)
 
           def repair_links(text, n_targets):
               # 找出被丢掉的占位符编号；若正文中恰好存在同样数量的"裸[文本]"，
@@ -71,7 +72,7 @@ jobs:
               missing = [i for i in range(1, n_targets + 1) if str(i) not in ids]
               if not missing:
                   return text
-              bare = list(re.finditer(r'\[([^\]\n]*)\](?!\s*\()', text))
+              bare = list(re.finditer(r'\[([^\]\n]*)\](?!\s*\(', text))
               if len(bare) != len(missing):
                   return None  # 无法机械修复，交给重试
               parts, last = [], 0
@@ -82,52 +83,76 @@ jobs:
               parts.append(text[last:])
               return ''.join(parts)
 
+          # ---------- 修复③：按行解析代码围栏，正确处理嵌套/不同长度的围栏 ----------
+          def fence_len(line):
+              s = line.lstrip()
+              return len(s) - len(s.lstrip('`')) if s.startswith(FENCE) else 0
+
+          def strip_code_and_inline(text):
+              """按行剥离代码块（含嵌套围栏），再剥离行内代码。"""
+              out, in_fence, open_len = [], False, 0
+              for ln in text.split('\n'):
+                  n = fence_len(ln)
+                  if n > 0:
+                      if not in_fence:
+                          in_fence, open_len = True, n
+                      elif n >= open_len and ln.strip().strip('`') == '':
+                          in_fence, open_len = False, 0
+                      continue  # 围栏行本身不算正文
+                  if not in_fence:
+                      out.append(ln)
+              t = '\n'.join(out)
+              return re.sub(r'`[^`\n]*`', '', t)
+
           # ---------- 校验 ----------
           def validate_masked(text, n_targets):
               ids = sorted(int(x) for x in re.findall(r'%%[Ll](\d+)%%', text))
               if ids != list(range(1, n_targets + 1)):
                   return f"占位符不完整: 期望 {n_targets} 个, 实际 {len(ids)} 个"
-              t = re.sub(FENCE + r'.*?' + FENCE, '', text, flags=re.S)
-              t = re.sub(r'`[^`]*`', '', t)
+              t = strip_code_and_inline(text)
               cjk = re.findall(r'[\u4e00-\u9fff]+', t)
               if cjk:
                   return "译文存在中文残留: " + ", ".join(cjk[:10])
               return None
 
+          # ---------- 修复④：查中文残留前先剥离链接目标，避免 URL/锚点中的中文被误报 ----------
           def validate_final(out):
-              a = re.findall(r'\]\(([^()\n]*)\)', src)
-              b = re.findall(r'\]\(([^()\n]*)\)', out)
+              a = LINK_RE.findall(src)
+              b = LINK_RE.findall(out)
               if len(a) != len(b):
                   return f"整体链接数量不一致: 源 {len(a)} / 译 {len(b)}"
               bad = [(x, y) for x, y in zip(a, b) if x != y]
               if bad:
                   return "整体链接目标不一致: " + "; ".join(f"{x} -> {y}" for x, y in bad[:5])
-              t = re.sub(FENCE + r'.*?' + FENCE, '', out, flags=re.S)
-              t = re.sub(r'`[^`]*`', '', t)
+              t = LINK_RE.sub('](URL)', out)  # 先剥掉链接目标再查中文
+              t = strip_code_and_inline(t)
               cjk = re.findall(r'[\u4e00-\u9fff]+', t)
               if cjk:
                   return "整体中文残留: " + ", ".join(cjk[:10])
               return None
 
-          # ---------- 分段（代码块内不切）----------
+          # ---------- 分段（代码块内不切，围栏判定与上面一致） ----------
           def split_doc(text):
               MIN, HARD = 3000, 7000
               lines = text.split('\n')
-              chunks, cur, in_fence, size = [], [], False, 0
+              chunks, cur, in_fence, open_len, size = [], [], False, 0, 0
 
               def flush():
                   nonlocal cur, size
                   if cur:
                       chunks.append('\n'.join(cur))
-                      cur, size = [], 0
+                  cur, size = [], 0
 
               for ln in lines:
-                  s = ln.strip()
-                  if s.startswith(FENCE):
-                      in_fence = not in_fence
+                  n = fence_len(ln)
+                  if n > 0:
+                      if not in_fence:
+                          in_fence, open_len = True, n
+                      elif n >= open_len and ln.strip().strip('`') == '':
+                          in_fence, open_len = False, 0
                   if not in_fence and size >= MIN and (ln.startswith('## ') or ln.startswith('# ')):
                       flush()
-                  elif not in_fence and size >= HARD and s == '':
+                  elif not in_fence and size >= HARD and ln.strip() == '':
                       cur.append(ln)
                       size += len(ln) + 1
                       flush()
@@ -147,9 +172,10 @@ jobs:
                       "temperature": temperature,
                       "messages": [
                           {"role": "system", "content": SYSTEM_PROMPT},
-                          {"role": "user", "content": "请将以下 Markdown 片段翻译为英文。片段中所有 %%数字%% 占位符必须原样保留。直接输出译文正文，不要任何解释。\n\n" + chunk}
+                          {"role": "user", "content": "请将以下 Markdown 片段翻译为英文。片段中所有 %%L1%%、%%L2%% 形式的占位符必须原样保留在原位置。直接输出译文正文，不要任何解释。\n\n" + chunk}
                       ]
-                  }
+                  },
+                  timeout=600  # 加固：避免 API 无响应时任务挂满 6 小时
               )
               if resp.status_code != 200:
                   print(f"HTTP错误: {resp.status_code}")
@@ -197,7 +223,9 @@ jobs:
                   text = normalize_tokens(strip_fence(text))
                   fixed = repair_links(text, len(targets))
                   if fixed is None:
-                      print(f"[段{i}/第{attempt}次] 占位符丢失且无法机械修复: 源 {len(targets)} 个 / 译出 {len(set(re.findall(r'%%[Ll](\\d+)%%', text)))} 个")
+                      # 修复⑤：\\d 改为 \d，并把正则移出 f-string 表达式（兼容 Python 3.11-）
+                      found = len(set(re.findall(r'%%[Ll](\d+)%%', text)))
+                      print(f"[段{i}/第{attempt}次] 占位符丢失且无法机械修复: 源 {len(targets)} 个 / 译出 {found} 个")
                       print(f"  译段开头: {text[:80].strip()!r}")
                       continue
                   err = validate_masked(fixed, len(targets))
@@ -229,4 +257,4 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add README.en.md
-          git diff --staged --quiet || ( git commit -m "docs: auto translate" && git pull --rebase origin main && git push )
+          git diff --staged --quiet || ( git commit -m "docs: auto translate" && git push )

@@ -85,7 +85,7 @@
 
 <sub>v1.5.4 新增 · 
 
-详细说明：[中文](subMd。Element_scene_detection.zh.md) | [English](subMd/Element_scene_detection.en.md)</sub>
+详细说明：[中文](subMd/Element_scene_detection.zh.md) | [English](subMd/Element_scene_detection.en.md)</sub>
 
 可视化的单轨视频剪辑器节点：
 

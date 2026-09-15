@@ -283,7 +283,7 @@ mask 描边：内外描边宽度和模糊度单独控制，支持非描边区域
 <a id="random_chars"></a>
 ## random_chars
 
-<sub>v0.0.6 新增（Random Chars Append）</sub>
+<sub>v0.0.6（Random Chars Append）</sub>
 
 为输入的文本追加无效的特殊字符（可以自定义字符和个数）。
 

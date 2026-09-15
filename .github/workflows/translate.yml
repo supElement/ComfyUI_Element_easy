@@ -20,12 +20,12 @@ jobs:
       - name: Translate with Zhipu (Free Forever)
         env:
           ZHIPU_KEY: ${{ secrets.ZHIPU_API_KEY }}
-          PYTHONIOENCODING: utf-8 # 修复：中文日志乱码
+          PYTHONIOENCODING: utf-8 # 中文日志防乱码
         run: |
           python << 'PYEOF'
           import requests, os, re
 
-          FENCE = '`' * 3  # 三连反引号，用于清理模型可能添加的代码围栏
+          FENCE = '`' * 3
 
           with open('README.md', 'r', encoding='utf-8') as f:
               src = f.read()
@@ -44,26 +44,30 @@ jobs:
               "6. 散文部分的中文全角标点（，。：；（）等）转为英文半角（, . : ; ( ) 等）。"
           )
 
-          # ---------- 修复①：允许 URL 含单层圆括号（如 Wikipedia 链接） ----------
+          # ---------- 链接抽取：允许 URL 含单层圆括号（如 Wikipedia 链接） ----------
           LINK_RE = re.compile(r'\]\(((?:[^()\n]|\([^()\n]*\))*)\)')
 
           def mask_links(text):
               targets = []
               def _m(m):
                   targets.append(m.group(1))
-                  return '](%%L%d%%)' % len(targets)
+                  # 根因A修复: 用 f-string, 避免 %% 被 %-格式化折叠成单百分号
+                  return f'](%%L{len(targets)}%%)'
               return LINK_RE.sub(_m, text), targets
 
-          # ---------- 修复②：还原时替换串不再带 ']'，避免产生 [text]](url) 双中括号 ----------
           def unmask_links(text, targets):
               def _m(m):
                   i = int(m.group(1))
-                  return '(%s)' % targets[i - 1] if 1 <= i <= len(targets) else m.group(0)
+                  return f'({targets[i - 1]})' if 1 <= i <= len(targets) else m.group(0)
               return re.sub(r'\(%%[Ll](\d+)%%\)', _m, text)
 
           def normalize_tokens(text):
-              # 容忍模型把 %%L1%% 写成 %L1% / %%l1%% 等变体，先归一化
-              return re.sub(r'%{1,2}[Ll](\d+)%{1,2}', lambda m: '%%L%s%%' % m.group(1), text)
+              # 容忍模型把 %%L1%% 写成 %L1% / %%l1%% 等变体, 归一化为双百分号
+              # 根因A修复: f-string, 归一化结果才是真正的 %%L1%%
+              return re.sub(r'%{1,2}[Ll](\d+)%{1,2}', lambda m: f'%%L{m.group(1)}%%', text)
+
+          # ---------- 根因B修复: 补上负向前瞻的收尾 ')'，并预编译 ----------
+          BARE_RE = re.compile(r'\[([^\]\n]*)\](?!\s*\()')
 
           def repair_links(text, n_targets):
               # 找出被丢掉的占位符编号；若正文中恰好存在同样数量的"裸[文本]"，
@@ -72,24 +76,23 @@ jobs:
               missing = [i for i in range(1, n_targets + 1) if str(i) not in ids]
               if not missing:
                   return text
-              bare = list(re.finditer(r'\[([^\]\n]*)\](?!\s*\(', text))
+              bare = list(BARE_RE.finditer(text))
               if len(bare) != len(missing):
                   return None  # 无法机械修复，交给重试
               parts, last = [], 0
               for m, i in zip(bare, missing):
                   parts.append(text[last:m.end()])
-                  parts.append('(%%L%d%%)' % i)
+                  parts.append(f'(%%L{i}%%)')  # 根因A修复: f-string
                   last = m.end()
               parts.append(text[last:])
               return ''.join(parts)
 
-          # ---------- 修复③：按行解析代码围栏，正确处理嵌套/不同长度的围栏 ----------
+          # ---------- 代码围栏按行解析，正确处理嵌套/不同长度的围栏 ----------
           def fence_len(line):
               s = line.lstrip()
               return len(s) - len(s.lstrip('`')) if s.startswith(FENCE) else 0
 
           def strip_code_and_inline(text):
-              """按行剥离代码块（含嵌套围栏），再剥离行内代码。"""
               out, in_fence, open_len = [], False, 0
               for ln in text.split('\n'):
                   n = fence_len(ln)
@@ -109,13 +112,16 @@ jobs:
               ids = sorted(int(x) for x in re.findall(r'%%[Ll](\d+)%%', text))
               if ids != list(range(1, n_targets + 1)):
                   return f"占位符不完整: 期望 {n_targets} 个, 实际 {len(ids)} 个"
+              # 新增加固: 占位符必须带圆括号包裹, 否则 unmask 还原不了
+              paren_ids = sorted(int(x) for x in re.findall(r'\(%%[Ll](\d+)%%\)', text))
+              if paren_ids != list(range(1, n_targets + 1)):
+                  return f"占位符缺少圆括号包裹: {paren_ids}"
               t = strip_code_and_inline(text)
               cjk = re.findall(r'[\u4e00-\u9fff]+', t)
               if cjk:
                   return "译文存在中文残留: " + ", ".join(cjk[:10])
               return None
 
-          # ---------- 修复④：查中文残留前先剥离链接目标，避免 URL/锚点中的中文被误报 ----------
           def validate_final(out):
               a = LINK_RE.findall(src)
               b = LINK_RE.findall(out)
@@ -124,7 +130,7 @@ jobs:
               bad = [(x, y) for x, y in zip(a, b) if x != y]
               if bad:
                   return "整体链接目标不一致: " + "; ".join(f"{x} -> {y}" for x, y in bad[:5])
-              t = LINK_RE.sub('](URL)', out)  # 先剥掉链接目标再查中文
+              t = LINK_RE.sub('](URL)', out)  # 先剥离链接目标, 避免 URL/锚点中的中文被误报
               t = strip_code_and_inline(t)
               cjk = re.findall(r'[\u4e00-\u9fff]+', t)
               if cjk:
@@ -175,7 +181,7 @@ jobs:
                           {"role": "user", "content": "请将以下 Markdown 片段翻译为英文。片段中所有 %%L1%%、%%L2%% 形式的占位符必须原样保留在原位置。直接输出译文正文，不要任何解释。\n\n" + chunk}
                       ]
                   },
-                  timeout=600  # 加固：避免 API 无响应时任务挂满 6 小时
+                  timeout=600
               )
               if resp.status_code != 200:
                   print(f"HTTP错误: {resp.status_code}")
@@ -223,7 +229,6 @@ jobs:
                   text = normalize_tokens(strip_fence(text))
                   fixed = repair_links(text, len(targets))
                   if fixed is None:
-                      # 修复⑤：\\d 改为 \d，并把正则移出 f-string 表达式（兼容 Python 3.11-）
                       found = len(set(re.findall(r'%%[Ll](\d+)%%', text)))
                       print(f"[段{i}/第{attempt}次] 占位符丢失且无法机械修复: 源 {len(targets)} 个 / 译出 {found} 个")
                       print(f"  译段开头: {text[:80].strip()!r}")

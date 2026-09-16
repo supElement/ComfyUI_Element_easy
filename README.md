@@ -66,7 +66,7 @@
 <a id="element-multi-ref"></a>
 ## Element Multi REF
 
-<sub>v1.5.7 新增 </sub>
+<sub>v1.5.7 新增 · v1.6.1 优化</sub>
 
 详细说明：[中文](subMd/Element_multi_ref_zh.md) | [English](subMd/Element_multi_ref_en.md)</sub>
 
@@ -88,7 +88,7 @@
 <a id="element-load-and-edit-video"></a>
 ## Element Load and Edit Video
 
-<sub>v1.5.4 新增 </sub>
+<sub>v1.5.4 新增 · v1.6.1 优化</sub>
 
 详细说明：[中文](subMd/Element_scene_detection.zh.md) | [English](subMd/Element_scene_detection.en.md)</sub>
 
@@ -127,7 +127,7 @@
 <a id="element-huehue"></a>
 ## 曲线调色系列
 
-<sub>v1.2.7 ~ v1.3.1 陆续添加 · v1.6.0 优化</sub>
+<sub>v1.2.7 ~ v1.3.1 陆续添加 · v1.6.1 优化</sub>
 
 四个节点都是同一种交互方式：**曲线直接画在图像上实时预览，单击加点、右键减点**，支持单张和序列帧图像。
 
@@ -148,7 +148,7 @@
 <a id="loadimage_preview"></a>
 ## LoadImage_Preview
 
-<sub>v1.3.5 新增 · v1.6.0 优化</sub>
+<sub>v1.3.5 新增 · v1.6.1 优化</sub>
 
 浏览指定路径下的图像文件，选中后进入编辑面板进行简单编辑：自由绘制线条、mask、方框、圆，以及裁剪图像。
 
@@ -214,7 +214,7 @@ mask 描边：内外描边宽度和模糊度单独控制，支持非描边区域
 <a id="image_pad_blur"></a>
 ## image_pad_blur
 
-<sub>v0.0.8 新增 · v1.6.0 重构</sub>
+<sub>v0.0.8 新增 · v1.6.0 重构 · v1.6.1 优化</sub>
 
 可视化交互的图像扩展边缘节点（画布内直接用鼠标拖拽图像）。原图像的边缘均可单独指定是否羽化（共用同一羽化值），自定义背景，画布内自由或等比例缩放图像，指定背景颜色。
 
@@ -231,7 +231,7 @@ mask 描边：内外描边宽度和模糊度单独控制，支持非描边区域
 <a id="element_sigmagraph"></a>
 ## Element_SigmaGraph
 
-<sub>v1.2.4 新增 · v1.5.3 增加 P 按钮</sub>
+<sub>v1.2.4 新增 · v1.5.3 增加 P 按钮 · v1.6.1 优化</sub>
 
 在节点上直接绘制自定义 sigma 曲线：单击加点、右键删点。
 
@@ -255,7 +255,7 @@ mask 描边：内外描边宽度和模糊度单独控制，支持非描边区域
 <a id="empty_image_rgb"></a>
 ## empty_image_rgb
 
-<sub>v0.0.6 新增，v1.5.9优化 </sub>
+<sub>v0.0.6 新增 · v1.6.1 优化</sub>
 
 创建单色图像，色彩从色轮上选择，明度滑条控制亮度；吸管可在屏幕任意位置取色，如果浏览器非 Chrome / Edge 96+，吸管可能不可用，可改用旁边的调色板按钮中的吸管。
 

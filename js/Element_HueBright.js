@@ -1,5 +1,7 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
+import { eeMarkForward } from "./ee_canvas_utils.js";
+
 
 app.registerExtension({
     name: "Element_easy.HueBright",
@@ -195,6 +197,7 @@ app.registerExtension({
 
             container.appendChild(viewArea);
             const ctx = canvas.getContext("2d");
+			eeMarkForward(container);
 
             // DOMWidget
             const widget = this.addDOMWidget("CurveUI", "div", container, { serialize: true, hideOnZoom: false });
@@ -439,6 +442,12 @@ app.registerExtension({
             let isPreviewPending = false;
 
             const updateLivePreview = (isDragging = false) => {
+                // 节点折叠时不预览；未选中且非拖拽中也不预览，避免多节点互相抢占后端
+                if (nodeInstance.flags?.collapsed) return;
+                if (!isDragging) {
+                    const sel = app.canvas?.selected_nodes;
+                    if (sel && !sel[nodeInstance.id]) return;
+                }
                 const now = Date.now();
                 const interval = isDragging ? 16 : 33;
 
@@ -715,30 +724,25 @@ app.registerExtension({
 
             let dragRaf = null;
             let pendingDragEvent = null;
-            
-            window.addEventListener("mousemove", (e) => {
+            const onCurveMouseMove = (e) => {
                 if (!isDragging || dragIndex === -1) return;
                 pendingDragEvent = e;
                 if (dragRaf) return;
-            
                 dragRaf = requestAnimationFrame(() => {
                     const ev = pendingDragEvent;
                     pendingDragEvent = null;
                     dragRaf = null;
                     if (!ev || !isDragging || dragIndex === -1) return;
-            
                     const [x, y] = getPos(ev);
                     const minX = dragIndex > 0 ? curvePoints[dragIndex - 1][0] + 0.01 : 0;
                     const maxX = dragIndex < curvePoints.length - 1 ? curvePoints[dragIndex + 1][0] - 0.01 : 1;
                     curvePoints[dragIndex] = [Math.max(minX, Math.min(maxX, x)), y];
-            
                     generateLUT();
                     draw();
                     updateLivePreview(true);
                 });
-            });
-
-            window.addEventListener("mouseup", () => {
+            };
+            const onCurveMouseUp = () => {
                 if (isDragging) {
                     isDragging = false;
                     if (dragRaf) {
@@ -748,7 +752,17 @@ app.registerExtension({
                     pendingDragEvent = null;
                     updateBackend();
                 }
-            });
+            };
+            window.addEventListener("mousemove", onCurveMouseMove);
+            window.addEventListener("mouseup", onCurveMouseUp);
+            
+            // ★ 节点删除 / 工作流切换时清理
+            const _origOnRemoved = this.onRemoved;
+            this.onRemoved = function () {
+                window.removeEventListener("mousemove", onCurveMouseMove);
+                window.removeEventListener("mouseup", onCurveMouseUp);
+                if (_origOnRemoved) _origOnRemoved.apply(this, arguments);
+            };
 
             const draw = () => {
                 const w = canvas.width, h = canvas.height;

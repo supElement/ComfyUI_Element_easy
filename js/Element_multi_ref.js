@@ -1,4 +1,6 @@
-import { app } from "../../../scripts/app.js";
+import { app } from "../../scripts/app.js";
+import { eeMarkForward } from "./ee_canvas_utils.js";
+
 
 /* ================= 槽位定义 ================= */
 const SLOT_DEFS = [
@@ -11,6 +13,7 @@ const SLOT_DEFS = [
   { id: "drive_audio", kind: "audio", group: "drive" },
 ];
 const SLOT_MAP = Object.fromEntries(SLOT_DEFS.map(d => [d.id, d]));
+
 const SLOT_ORDER = SLOT_DEFS.map(d => d.id);
 const KIND_ACCEPT = {
   image: "image/*,.png,.jpg,.jpeg,.webp,.bmp",
@@ -1490,26 +1493,42 @@ class MultiRefUI {
     this.node = node; this.root = root; this.widget = widget;
     let saved = {};
     try { saved = JSON.parse(widget?.value || "{}"); } catch (_) {}
+
     this.mats = saved.materials || {};
     this.slots = saved.slots || {};
     this.prompt = typeof saved.prompt === "string" ? saved.prompt : "";
-    this.presets = Array.isArray(saved.presets) ? saved.presets : [];
-    this.zones = Object.assign({ img: true, frame: true, av: true, prompt: true },
-      (saved.zones && typeof saved.zones === "object") ? saved.zones : {});
+    this.presets = [];
+    this.zones = Object.assign({ img: true, frame: true, av: true, prompt: true }, (saved.zones && typeof saved.zones === "object") ? saved.zones : {});
     this._ensurePids();
     this._wsSrcPid = typeof saved._ws_src_pid === "string" ? saved._ws_src_pid : null;
+ 
     this._waves = {};
     this._dragSlot = null;
     this._editVer = {};
+	this.convertConn = (saved.convert_conn && typeof saved.convert_conn === "object") ? saved.convert_conn : {};
     this.build();
     this.render();
-    this._ro = new ResizeObserver(() => {
-      this.node.onResize?.();
-      this.node.setDirtyCanvas?.(true, true);
-      this._queueBtnrow?.();
-      this._queueHead?.();        
+    this._lastRoW = 0;
+    this._lastRoH = 0;
+    this._roRaf = 0;
+    this._ro = new ResizeObserver((entries) => {
+      const r = entries[0]?.contentRect;
+      if (r) {
+        // 尺寸几乎没变就直接返回，避免布局抖动引发的重绘风暴
+        if (Math.abs(r.width - this._lastRoW) < 1 && Math.abs(r.height - this._lastRoH) < 1) return;
+        this._lastRoW = r.width;
+        this._lastRoH = r.height;
+      }
+      if (this._roRaf) return;
+      this._roRaf = requestAnimationFrame(() => {
+        this._roRaf = 0;
+        this.node.onResize?.();
+        this.node.setDirtyCanvas?.(true, false);   // ★ 第二参数 false：不强制重绘整图
+        this._queueBtnrow?.();
+        this._queueHead?.();
+      });
     });
-
+    this._loadLibrary(); 
     setTimeout(() => this._ro.observe(root), 100);
   }
 
@@ -1783,6 +1802,26 @@ class MultiRefUI {
     const vm = this.mats[vs.mat];
     return (vm && vm.kind === "video" && vs.with_audio && vm.media?.has_audio) ? vid : null;
   }
+  
+  refreshConnectivity() {
+    try {
+      const map = {};
+      const graph = this.node?.graph || app.graph;
+      const getLink = (id) => (id != null) ? (graph.links?.get ? graph.links.get(id) : graph.links?.[id]) : null;
+      for (const lid of (this.node?.outputs?.[0]?.links || [])) {
+        const link = getLink(lid);
+        const conv = link && graph.getNodeById ? graph.getNodeById(link.target_id) : null;
+        if (!conv) continue;
+        const names = [];
+        for (const o of (conv.outputs || [])) if (o?.links?.length && o.name) names.push(o.name);
+        if (names.length) map[String(conv.id)] = names;
+      }
+      this.convertConn = map;
+      this.updateState();
+    } catch (_) {}
+  }
+
+  
   openEditor(slotId) {
     let slot = this.slots[slotId];
     if (!slot) {                       
@@ -1910,7 +1949,7 @@ class MultiRefUI {
             const q1 = Math.max(q0 + 1e-4, Math.min(1, (tr[1] / fps) / dur));
             drawWaveCanvas(cv, pts.slice(Math.floor(q0 * (pts.length - 1)), Math.max(2, Math.ceil(q1 * (pts.length - 1)))));
           };
-		  cv._redraw = draw; 
+          cv._redraw = draw; 
           if (vm._wave?.length) draw();
           else fetch(`/element_multi_ref/media_info?p=${encodeURIComponent(vm.path)}`)
             .then(r => r.json()).then(d => { vm._wave = d.waveform || []; if (!this.slots[id]) draw(); })
@@ -2000,8 +2039,12 @@ class MultiRefUI {
 
   updateState() {
     const nodeId = this.node.__nodeId !== undefined ? this.node.__nodeId : this.node.id;
-    const payload = { version: 3, _node_id: nodeId, materials: this.mats, slots: this.slots,
-                      prompt: this.prompt, presets: this.presets, _ws_src_pid: this._wsSrcPid || null, zones: { ...this.zones }};
+
+    const presetsOut = (this.presets || []).map(p => ({ pid: p.pid || null, name: p.name || "", thumb: (p.thumb && !String(p.thumb).startsWith("data:")) ? p.thumb : null }));
+    const payload = { version: 4, _node_id: nodeId, materials: this.mats, slots: this.slots,
+        prompt: this.prompt, presets: presetsOut, convert_conn: this.convertConn || {},
+        _ws_src_pid: this._wsSrcPid || null, zones: { ...this.zones } };
+
     const mats = JSON.parse(JSON.stringify(payload.materials));
     for (const m of Object.values(mats)) delete m._wave;
     payload.materials = mats;
@@ -2018,8 +2061,10 @@ class MultiRefUI {
     this.mats = saved.materials || this.mats;
     this.slots = saved.slots || this.slots;
     this.prompt = typeof saved.prompt === "string" ? saved.prompt : this.prompt;
-    if (Array.isArray(saved.presets)) this.presets = saved.presets;
+
+    // 轻量索引不覆盖内存（以库为准）
     this._ensurePids();
+
     this._wsSrcPid = typeof saved._ws_src_pid === "string" ? saved._ws_src_pid : null;
     const ta = this.root.querySelector(".emr-prompt");
     if (ta) ta.value = this.prompt;
@@ -2029,6 +2074,70 @@ class MultiRefUI {
     }
     this.render();
   }
+
+  /* ===== ★ 服务端预设库 ===== */
+  async _materializeThumb(thumb) {
+    if (!thumb || typeof thumb !== "string" || !thumb.startsWith("data:")) return thumb || null;
+    try {
+        const blob = await (await fetch(thumb)).blob();
+        return (await this._uploadBlob(blob, "thumb.jpg")) || thumb;
+    } catch (_) { return thumb; }
+  }
+  _mergePresets(arr) {
+    const havePids = new Set(this.presets.map(p => p.pid).filter(Boolean));
+    const haveSigs = new Set(this.presets.map(p => this._presetSig(p)));
+    let added = 0;
+    for (const p of arr || []) {
+      if (!p || typeof p !== "object" || !p.snapshot) continue;
+      if (p.pid && havePids.has(p.pid)) continue;
+      const sig = this._presetSig(p);
+      if (!p.pid && haveSigs.has(sig)) continue;
+      if (!p.pid) p.pid = this._newPid();
+      havePids.add(p.pid); haveSigs.add(sig);
+      this.presets.push(p); added++;
+    }
+    return added;
+  }
+  async _persistLibrary() {
+    try {
+      const arr = [];
+      for (const p of this.presets) {
+        if (!p || typeof p !== "object" || !p.snapshot) continue;
+        const snap = p.snapshot;
+        const mats = {};
+        for (const [id, m] of Object.entries(snap.materials || {})) {
+            const c = { ...m }; delete c._wave; mats[id] = c;
+        }
+        const thumb = await this._materializeThumb(p.thumb);
+        arr.push({ pid: p.pid || null, name: p.name || "", thumb, snapshot: { ...snap, materials: mats } });
+      }
+      const r = await fetch("/element_multi_ref/presets", { method: "POST",
+          headers: { "Content-Type": "application/json" }, body: JSON.stringify({ presets: arr }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || d.error) throw new Error(d.error || ("HTTP " + r.status));
+      this.presets.forEach((p, i) => { if (arr[i]) { p.thumb = arr[i].thumb; if (!p.pid) p.pid = arr[i].pid; } });
+      return true;
+    } catch (e) {
+      this.status("Preset library save failed: " + e.message);
+      console.warn("[EMR] persist library failed:", e);
+      return false;
+    }
+  }
+  _persistLibrarySoon() { clearTimeout(this._libT); this._libT = setTimeout(() => this._persistLibrary(), 400); }
+  async _loadLibrary() {
+    try {
+      const r = await fetch("/element_multi_ref/presets");
+      if (!r.ok) return;
+      const d = await r.json();
+      const added = this._mergePresets(Array.isArray(d.presets) ? d.presets : []);
+      if (added > 0) {
+          this.render();
+          const rp = this._runPresetWidget();
+          if (rp && Math.round(+rp.value) > 0) this._onRunPresetInput(rp.value);
+      }
+    } catch (e) { console.warn("[EMR] load library failed:", e); }
+  }
+
 
   /* ================= 预设 / 收集导出 ================= */
 
@@ -2491,7 +2600,7 @@ class MultiRefUI {
           const from = +e.dataTransfer.getData("text/emr-preset");
           if (Number.isInteger(from) && from !== i) {
             [this.presets[from], this.presets[i]] = [this.presets[i], this.presets[from]];
-            this.updateState(); render();
+            this.updateState(); this._persistLibrarySoon(); render();
           }
         };
         grid.appendChild(card);
@@ -2508,11 +2617,7 @@ class MultiRefUI {
 
     q('[data-a="export"]').onclick = () => this.exportPresets();
     
-    q('[data-a="del"]').onclick = () => {
-      if (sel < 0) return;
-      this.presets.splice(sel, 1); sel = -1;
-      this.updateState(); render();
-    };
+    q('[data-a="del"]').onclick = () => { if (sel < 0) return; this.presets.splice(sel, 1); sel = -1; this.updateState(); this._persistLibrarySoon(); render(); };
     
     const clearBtn = q('[data-a="clearallp"]');
     let clearArm = 0, clearT = 0;
@@ -2531,6 +2636,7 @@ class MultiRefUI {
       this._wsSrcPid = null;          
       sel = -1;
       this.updateState();
+      this._persistLibrary();
       render();
       this._pmsg("All presets cleared");
     };
@@ -2543,7 +2649,7 @@ class MultiRefUI {
       else if (key === "az") this.presets.sort((a, b) => (a.name || "").localeCompare(b.name || "", "zh-Hans-CN", { numeric: true }));
       else this.presets.sort((a, b) => (b.name || "").localeCompare(a.name || "", "zh-Hans-CN", { numeric: true }));
       for (const [k, b] of Object.entries(sortBtns)) b.classList.toggle("emr-pbtn", k === key);
-      this.updateState(); render();
+      this.updateState(); this._persistLibrarySoon(); render();
     };
     sortBtns.num.onclick = () => doSort("num");
     sortBtns.az.onclick = () => doSort("az");
@@ -2597,6 +2703,7 @@ class MultiRefUI {
   applyPreset(i) {
     const p = this.presets[i];
     if (!p) return;
+    if (!p.snapshot) { this.status("Preset not loaded yet — library still loading"); return; }
     const snap = p.snapshot || {};
     this.mats = JSON.parse(JSON.stringify(snap.materials || {}));
     this.slots = JSON.parse(JSON.stringify(snap.slots || {}));
@@ -2668,18 +2775,10 @@ class MultiRefUI {
       inp.click();
     };
     ov.querySelector('[data-a="cancel"]').onclick = ov.querySelector(".emr-x").onclick = () => ov.remove();
-    const saveNew = () => {
-      const pid = this._newPid();
-      this.presets.push({ pid, ...collect() });
-      this._wsSrcPid = pid;                        
-      this.updateState(); ov.remove();
-      this.status(`Saved preset #${this.presets.length}`);
-    };
+    const saveNew = () => { const pid = this._newPid(); this.presets.push({ pid, ...collect() }); this._wsSrcPid = pid; this.updateState(); this._persistLibrary(); ov.remove(); this.status(`Saved preset #${this.presets.length} → library`); };
     ov.querySelector('[data-a="ok"]').onclick = () => {
       if (isNew) { saveNew(); return; }
-      Object.assign(cur, collect());               
-      this.updateState(); ov.remove();
-      this.status(`Updated preset #${linked + 1}`);
+      Object.assign(cur, collect()); this.updateState(); this._persistLibrary(); ov.remove(); this.status(`Updated preset #${linked + 1}`);
     };
     const asNewBtn = ov.querySelector('[data-a="asnew"]');
     if (asNewBtn) asNewBtn.onclick = saveNew;
@@ -2816,12 +2915,18 @@ class MultiRefUI {
     for (const p of arr) {
       if (!p || typeof p !== "object" || !p.snapshot) continue;
       const ms = {};
-      for (const [id, m] of Object.entries(p.snapshot.materials || {})) {
+
+    for (const [id, m] of Object.entries(p.snapshot.materials || {})) {
         const nid = idMap[id] || (idMap[id] = newId());
-        const c = { ...m }; c.path = fixPath(c.path); ms[nid] = c;
-      }
-      let thumb = p.thumb;
-      if (thumb && !thumb.startsWith("data:")) thumb = fixPath(thumb);
+        const c = { ...m };
+        delete c._wave;                                       
+        c.path = fixPath(c.path);
+        ms[nid] = c;
+    }
+    let thumb = p.thumb;
+    if (thumb && thumb.startsWith("data:")) thumb = await this._materializeThumb(thumb);   
+    else if (thumb) thumb = fixPath(thumb);
+
       tryPush({ pid: p.pid || null, name: p.name || "Imported", thumb: thumb || null,
         snapshot: { materials: ms, slots: importSlots(p.snapshot.slots), prompt: p.snapshot.prompt ?? "",
           zones: (p.snapshot.zones && typeof p.snapshot.zones === "object") ? { ...p.snapshot.zones } : undefined } });
@@ -2830,56 +2935,44 @@ class MultiRefUI {
       const ms = {};
       for (const [id, m] of Object.entries(pkg.workspace.materials || {})) {
         const nid = idMap[id] || (idMap[id] = newId());
-        const c = { ...m }; c.path = fixPath(c.path); ms[nid] = c;
+        const c = { ...m }; delete c._wave; c.path = fixPath(c.path); ms[nid] = c;
       }
       let wthumb = pkg.workspace.thumb;
-      if (wthumb && !wthumb.startsWith("data:")) wthumb = fixPath(wthumb);
+      if (wthumb && wthumb.startsWith("data:")) wthumb = await this._materializeThumb(wthumb);
+      else if (wthumb) wthumb = fixPath(wthumb);
       tryPush({ pid: null, name: "workspace · imported", thumb: wthumb || null,
         snapshot: { materials: ms, slots: importSlots(pkg.workspace.slots), prompt: pkg.workspace.prompt ?? "",
           zones: (pkg.workspace.zones && typeof pkg.workspace.zones === "object") ? { ...pkg.workspace.zones } : undefined } });
     }
     this.updateState();
+    this._persistLibrary();
     this._pmsg(`Imported ${n} preset(s)` + (dup ? `, skipped${dup} duplicate(s)` : "") + (entries ? " (+media files)" : ""));
   }
 
-
   async exportPresets() {
     if (!this.presets.length) { this._pmsg("No presets to export", true); return; }
-    const out = [];
-    for (const p of this.presets) {
-      let thumb = p.thumb;
-      if (thumb && !thumb.startsWith("data:")) {
-        try {
-          const b = await (await fetch(previewUrl(thumb, -1, 640))).blob();
-          thumb = await this._blobToDataURL(b);
-        } catch (_) { /* 保留服务器路径 */ }
-      }
-      out.push({ pid: p.pid || null, name: p.name, thumb, snapshot: p.snapshot });
-    }
+    const stripMats = (mats) => {
+      const out = {};
+      for (const [id, m] of Object.entries(mats || {})) { const c = { ...m }; delete c._wave; out[id] = c; }
+      return out;
+    };
+    const out = this.presets.map(p => ({
+      pid: p.pid || null, name: p.name,
+      thumb: (p.thumb && !String(p.thumb).startsWith("data:")) ? p.thumb : null,
+      snapshot: { ...(p.snapshot || {}), materials: stripMats(p.snapshot?.materials) },
+    }));
     const text = JSON.stringify({ version: 1, kind: "element_multi_ref_presets",
       exported_at: new Date().toISOString(), presets: out }, null, 2);
     const d = new Date(), pad = (x) => String(x).padStart(2, "0");
-    const name = `emr_presets_${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}.json`;
-    let dh = null;
-    const storedH = await this._loadDirHandle();
-    if (storedH && (await this._ensurePerm(storedH))) dh = storedH;
-    if (!dh) {
-      const picked = await this._pickDir();
-      if (picked === null) { this._pmsg("Export cancelled", true); return; }
-      if (picked) { dh = picked; await this._saveDirHandle(picked); }
-    }
-
-    if (dh) {
-      const fh = await dh.getFileHandle(name, { create: true });
-      const w = await fh.createWritable(); await w.write(text); await w.close();
-      this._pmsg("Exported: " + name);
-    } else {
-      this._pmsg("Exported: " + await this._saveFile(name, text));
-    }
+    const name = `emr_presets_${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}.json`;
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+    a.download = name; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+    this._pmsg("Exported (paths only — use Collect and Export to bundle media): " + name);
   }
 
-
-   _askExportFolder(defVal) {
+  _askExportFolder(defVal) {
     return new Promise((resolve) => {
       const ov = document.createElement("div");
       ov.className = "emr-modal";
@@ -3094,11 +3187,28 @@ class MultiRefUI {
 /* ================= 注册 ================= */
 app.registerExtension({
   name: "Element.MultiRef",
-  async beforeRegisterNodeDef(nodeType, nodeData) {
-    if (nodeData.name !== "ElementMultiRef") return;
-    installStyles();
-    
-    /* ★ 最近一次被移除的 EMR 节点状态（供右键 Reload Node / 重建后恢复） */
+  async beforeRegisterNodeDef(nodeType, nodeData) { if (nodeData.name !== "ElementMultiRef" && nodeData.name !== "ElementRefConvert") return; installStyles();
+    if (nodeData.name === "ElementRefConvert") {
+      const origConvConn = nodeType.prototype.onConnectionsChange;
+      nodeType.prototype.onConnectionsChange = function () {
+        const r = origConvConn?.apply(this, arguments);
+        try {
+          clearTimeout(this.__emrConnT);
+          this.__emrConnT = setTimeout(() => {
+            try {
+              const linkId = this.inputs?.[0]?.link;
+              const graph = this.graph || app.graph;
+              const link = linkId != null ? (graph.links?.get ? graph.links.get(linkId) : graph.links?.[linkId]) : null;
+              const src = link ? (graph.getNodeById ? graph.getNodeById(link.origin_id) : null) : null;
+              src?.__emr?.refreshConnectivity();
+            } catch (_) {}
+          }, 200);
+        } catch (_) {}
+        return r;
+      };
+      return;   
+    }
+
     let EMR_LAST_REMOVED = null;
     const emrStateHasData = (str) => {
       try {
@@ -3134,19 +3244,10 @@ app.registerExtension({
         }
       };
       hideWidget(this.widgets?.find(w => w.name === "refs_data"));
-	  purgeInputSlot(this, "refs_data");
-	  
+      purgeInputSlot(this, "refs_data");
+      
       const root = document.createElement("div");
-      root.addEventListener("wheel", (e) => {
-        const t = e.target;
-        if (t && /^(TEXTAREA|INPUT|SELECT)$/.test(t.tagName)) return;  
-        if (!app.canvasEl) return;
-        const fwd = new WheelEvent("wheel", { clientX: e.clientX, clientY: e.clientY,
-          deltaX: e.deltaX, deltaY: e.deltaY, deltaMode: e.deltaMode,
-          ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey });
-        app.canvasEl.dispatchEvent(fwd);
-        e.preventDefault(); e.stopPropagation();
-      }, { passive: false });
+      eeMarkForward(root);
 
       const domWidget = this.addDOMWidget("multi_ref_ui", "div", root, { serialize: false, hideOnZoom: false });
       const widget = this.widgets?.find(w => w.name === "refs_data");
@@ -3200,15 +3301,15 @@ app.registerExtension({
       const applyAll = () => {                       
           this.__emr?._queueHead?.();
           this.__emr?._queueBtnrow?.();
-		  this.__emr?.redrawWaves?.();
-          this.setDirtyCanvas?.(true, true);
+          this.__emr?.redrawWaves?.();
+          this.setDirtyCanvas?.(true, false);
       };
       this.onResize = applyAll;
       
       try { this.__emr._ro?.disconnect(); } catch (_) {}
       this.__emr._ro = new ResizeObserver(applyAll); 
       this.__emr._ro.observe(root);
-
+      setTimeout(() => this.__emr?.refreshConnectivity(), 400);
       if (typeof this.id !== "number" || this.id < 0) this.size = [NEW_W, NEW_H];
       return result;
     };
@@ -3217,16 +3318,23 @@ app.registerExtension({
     nodeType.prototype.onConfigure = function () {
       const r = origConfigure?.apply(this, arguments);
       this.__nodeId = this.id;
-	  purgeInputSlot(this, "refs_data");
+      purgeInputSlot(this, "refs_data");
 
       if (this.__emr) setTimeout(() => {
         this.__emr.reloadFromWidget();
+		this.__emr.refreshConnectivity();
         const rp = this.widgets?.find(w => w.name === "run_preset_NUM");
         if (rp) this.__emr._onRunPresetInput(rp.value);   
       }, 50);
       return r;
     };
 
+    const origConnChange = nodeType.prototype.onConnectionsChange;
+    nodeType.prototype.onConnectionsChange = function (side, slotIndex, isConnected, linkInfo, ioSlot) {
+      const r = origConnChange?.apply(this, arguments);
+      try { this.__emr?.refreshConnectivity(); } catch (_) {}
+      return r;
+    };
 
     const origRemoved = nodeType.prototype.onRemoved;
     nodeType.prototype.onRemoved = function () {

@@ -1,4 +1,5 @@
 import { app } from "../../scripts/app.js";
+import { eeMarkForward } from "./ee_canvas_utils.js";
 
 console.log(">>> Element_easy JS (ColorPicker v5) Loaded! <<<"); 
 
@@ -217,6 +218,7 @@ function setupColorPicker(node) {
         `;
 
         const root = el.querySelector(".ee-cp");
+        eeMarkForward(root);
 
         const canvas    = root.querySelector(".ee-cp-wheel");
         const slider    = root.querySelector(".ee-cp-slider");
@@ -309,11 +311,13 @@ function setupColorPicker(node) {
             commit();
         }
         canvas.addEventListener("pointerdown", e => {
+            if (e.button !== 0) return;   // ★ 只响应左键；中键交给画布平移，右键无操作
             dragging = true;
             try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
             pick(e);
             e.preventDefault();
         });
+
         canvas.addEventListener("pointermove", e => { if (dragging) pick(e); });
         canvas.addEventListener("pointerup", () => dragging = false);
         canvas.addEventListener("pointercancel", () => dragging = false);

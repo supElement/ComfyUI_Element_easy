@@ -10,6 +10,8 @@
 import { app } from "/../scripts/app.js";
 import { $el } from "/../scripts/ui.js";
 import { api } from "/../scripts/api.js";
+import { eeMarkForward } from "./ee_canvas_utils.js";
+
 
 const NODE_CLASS = "Element_SigmaGraph_Curve";
 const GRAPH_DATA_NAME = "graph_data";
@@ -334,6 +336,8 @@ function setup(node) {
         }
     });
     wrap.appendChild(preview);
+
+    eeMarkForward(wrap);
 
     const domWidget = node.addDOMWidget(CANVAS_TYPE, "custom", wrap, { 
         serialize: true, 
@@ -688,6 +692,17 @@ function setup(node) {
 
     const ctx = canvas.getContext("2d");
     
+    let _coeffCacheKey = "";
+    let _coeffCache = null;
+    function getCoeffsCached(pts) {
+        const key = JSON.stringify(pts);
+        if (key !== _coeffCacheKey) {
+          _coeffCacheKey = key;
+          _coeffCache = computeSplineCoefficients(pts);
+        }
+        return _coeffCache;
+    }
+    
     function draw(overridePts) {
         const pts = overridePts || strToPts(gw.value);
         const dpr = window.devicePixelRatio || 1;
@@ -715,7 +730,7 @@ function setup(node) {
             ctx.beginPath();
 
             if (isCurveMode) {
-                const coeffs = computeSplineCoefficients(pts);
+                const coeffs = getCoeffsCached(pts);
                 const drawSteps = Math.max(w * 2, 200);
                 for (let i = 0; i <= drawSteps; i++) {
                     const t = i / drawSteps;
@@ -786,6 +801,7 @@ function setup(node) {
     };
 
     let dragIdx = -1;
+	let dragPts = null;
     let lastClickTime = 0;
     let lastClickX = 0;
     let lastClickY = 0;
@@ -813,6 +829,7 @@ function setup(node) {
 
             if (existingIdx >= 0) {
                 dragIdx = existingIdx;
+				dragPts = pts;
             } else {
                 pushUndo(gw.value); 
                 
@@ -826,7 +843,7 @@ function setup(node) {
 
                 let newY;
                 if (isCurveMode) {
-                    const coeffs = computeSplineCoefficients(pts);
+                    const coeffs = getCoeffsCached(pts);
                     newY = evaluateSpline(x, coeffs);
                 } else {
                     const t = (x - leftPt.x) / (rightPt.x - leftPt.x);
@@ -842,8 +859,8 @@ function setup(node) {
                 
                 pts.splice(insertIdx, 0, newPoint);
                 applyPoints(pts);
-                
                 dragIdx = insertIdx;
+				dragPts = pts;
             }
 
             if (dragIdx >= 0) {
@@ -857,7 +874,7 @@ function setup(node) {
         const rect = canvas.getBoundingClientRect();
         const x = (e.clientX - rect.left) / rect.width;
         const y = 1 - (e.clientY - rect.top) / rect.height;
-        const pts = strToPts(gw.value);
+        const pts = dragPts || strToPts(gw.value);
 
         if (dragIdx >= 0) {
             const ny = Math.min(1, Math.max(0, y));
@@ -871,7 +888,7 @@ function setup(node) {
                 const nx = Math.min(maxX, Math.max(minX, x));
                 pts[dragIdx] = { x: nx, y: ny };
             }
-            applyPoints(pts);
+            draw(pts);
         }
 
         const over = pts.some(p => Math.hypot(p.x - x, p.y - y) < GRAB_THRESHOLD);
@@ -881,6 +898,8 @@ function setup(node) {
     canvas.onpointerup = (e) => {
         if (dragIdx >= 0) {
             e.target.releasePointerCapture(e.pointerId);
+	        if (dragPts) applyPoints(dragPts);         
+            dragPts = null;
             dragIdx = -1;
         }
     };

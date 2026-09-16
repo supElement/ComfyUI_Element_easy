@@ -1,6 +1,8 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 import { $el } from "../../scripts/ui.js";
+import { eeMarkForward } from "./ee_canvas_utils.js";
+
 
 const NODE_NAMES = ["ImagePadBlur_Element", "ImagePadBlur"];
 const NODE_TITLE = "Image Pad & Blur";
@@ -247,7 +249,7 @@ function setupPadBlurUI(node) {
 
   let lastSrcFp = null, lastMaskFp = null;
   let pollTimer = null;
-  const POLL_MS = 700;
+  const POLL_MS = 2000;
 
   // ========== 布局核心：基准 / 派生 ==========
   function numW(n) {
@@ -484,8 +486,20 @@ function setupPadBlurUI(node) {
   const mkRange = (min, max, val, title) => $el("input.eipb-range", { type: "range", min, max, step: 1, value: val, title });
   const featherInp = mkRange(0, 500, state.feathering, "Feathering (per-edge, use edge toggles)");
   const blurInp = mkRange(0, 500, state.content_blur, "Background blur (applied to collage)");
-  featherInp.oninput = (e) => { state.feathering = parseInt(e.target.value) || 0; serialize(); markInteractive(); redraw(); };
-  blurInp.oninput = (e) => { state.content_blur = parseInt(e.target.value) || 0; serialize(); markInteractive(); redraw(); };
+  featherInp.oninput = (e) => {
+    state.feathering = parseInt(e.target.value) || 0;
+    markInteractive();
+    redraw();
+  };
+  featherInp.onchange = () => serialize();   
+  
+  blurInp.oninput = (e) => {
+    state.content_blur = parseInt(e.target.value) || 0;
+    markInteractive();
+    redraw();
+  };
+  blurInp.onchange = () => serialize();
+
 
   const maskRepBtn = $el("button.eipb-btn.eipb-maskrep", {
     title: "Replace masked area with background in output image",
@@ -521,19 +535,7 @@ function setupPadBlurUI(node) {
   wrapper.style.height = "100%";
   wrapper.style.pointerEvents = "none";
   wrapper.appendChild(container);
-  wrapper.addEventListener("wheel", (e) => {
-    const t = e.target;
-    if (t && /^(TEXTAREA|INPUT|SELECT)$/.test(t.tagName)) return;
-    if (!app.canvasEl) return;
-    const fwd = new WheelEvent("wheel", {
-      clientX: e.clientX, clientY: e.clientY,
-      deltaX: e.deltaX, deltaY: e.deltaY, deltaMode: e.deltaMode,
-      ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey,
-    });
-    app.canvasEl.dispatchEvent(fwd);
-    e.preventDefault();
-    e.stopPropagation();
-  }, { passive: false });
+  eeMarkForward(wrapper);
 
   const domWidget = node.addDOMWidget("eipb_ui", "div", wrapper, { serialize: false, hideOnZoom: false });
   if (domWidget?.element) {
@@ -800,6 +802,7 @@ function setupPadBlurUI(node) {
 
   // ========== 手势（拖拽=像素位移；缩放=反推相对zoom）==========
   canvas.addEventListener("pointerdown", (e) => {
+	if (e.button !== 0) return;
     if (!view) return;
     const c = toCanvas(e);
     const h = hitHandle(c);
@@ -912,8 +915,13 @@ function setupPadBlurUI(node) {
   canvas.addEventListener("pointercancel", endDrag);
 
   // ========== 顶栏输入 ==========
-  colorInp.oninput = () => { state.background_color = colorInp.value; serialize(); markInteractive(); redraw(); };
-
+  colorInp.oninput = () => {
+    state.background_color = colorInp.value;
+    markInteractive();
+    redraw();
+  };
+  colorInp.onchange = () => serialize();
+  
   function applySizeInput(which) {
     const v = Math.max(16, Math.min(8192, parseInt(which === "w" ? imgWInp.value : imgHInp.value) || 16));
     const d = deriveDims();

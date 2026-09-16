@@ -1,6 +1,8 @@
 import { app } from "../../scripts/app.js";
 import { $el } from "../../scripts/ui.js";
 import { api } from "../../scripts/api.js";
+import { eeMarkForward } from "./ee_canvas_utils.js";
+
 
 const NODE_NAME = "LoadImageWithPreview"; 
 
@@ -534,16 +536,16 @@ app.registerExtension({
 
         const handleWheel = (e) => {
             if (gridView.contains(e.target)) {
-                e.stopPropagation();          
-                e.stopImmediatePropagation(); 
-                e.preventDefault();           
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                e.preventDefault();
                 requestAnimationFrame(() => {
-                    gridView.scrollTop += (e.deltaY || e.detail || e.wheelDelta);
+                  gridView.scrollTop += (e.deltaY || e.detail || e.wheelDelta);
                 });
             }
         };
-
         window.addEventListener("wheel", handleWheel, { capture: true, passive: false });
+
 
         const oldOnRemoved = node.onRemoved;
         node.onRemoved = function() {
@@ -714,7 +716,9 @@ app.registerExtension({
         
         container.appendChild(header);
         container.appendChild(gridView);
-        container.appendChild(editorView);
+		container.appendChild(editorView);
+        gridView.setAttribute("data-ee-native-scroll", "1"); 
+        eeMarkForward(container);
 
         container.style.width = "100%";
         container.style.height = "100%";
@@ -1363,6 +1367,7 @@ app.registerExtension({
         window.addEventListener('keyup', (e) => { if (e.key === 'Shift') isShiftPressed = false; });
 
         maskCanvas.addEventListener("mousedown", (e) => {
+			if (e.button !== 0) return;   // ★ 中键不画画/不建裁切框；右键保留给浏览器/未来功能
             const pos = getPos(e);
             if (!pos.isInside) return;
 			    if (cropMode) {
@@ -1399,12 +1404,52 @@ app.registerExtension({
         });
 
         maskCanvas.addEventListener("mouseenter", (e) => {
+            if (eePanning) return; 
             if (!cropMode && (currentTool === 'brush' || currentTool === 'eraser')) brushCursor.style.display = "block";
         });
 
-        maskCanvas.addEventListener("mouseleave", () => { brushCursor.style.display = "none"; });
-
+        maskCanvas.addEventListener("mouseleave", () => {
+            brushCursor.style.display = "none";
+        });
+        
+        // ====== 中键平移画布时隐藏画笔圆圈======
+        let eePanning = false;        
+        let eePanHidCursor = false;   
+        const onEEPanDown = (e) => {
+            if (e.button !== 1) return;                        
+            if (editorView.style.display === "none") return;   
+            const zone = e.target.closest && e.target.closest("[data-ee-forward-wheel]");
+            if (!zone) return;
+            eePanning = true;
+            if (brushCursor.style.display !== "none") {
+                brushCursor.style.display = "none";
+                eePanHidCursor = true;
+            }
+        };
+        const onEEPanUp = (e) => {
+            if (!eePanning) return;
+            eePanning = false;
+            if (!eePanHidCursor) return;
+            eePanHidCursor = false;
+            if (!cropMode && (currentTool === 'brush' || currentTool === 'eraser') &&
+                    editorView.style.display !== "none" && maskCanvas.contains(e.target)) {
+                updateCursorPosition(e);
+                brushCursor.style.display = "block";
+                updateBrushCursor();
+            }
+        };
+        const onEEPanAbort = () => {   
+            if (!eePanning) return;
+            eePanning = false;
+            eePanHidCursor = false;
+        };
+        window.addEventListener("pointerdown", onEEPanDown, true);
+        window.addEventListener("pointerup", onEEPanUp, true);
+        window.addEventListener("pointercancel", onEEPanAbort, true);
+        window.addEventListener("blur", onEEPanAbort);
+        
         let cursorRafId = null;
+
         
         const updateCursorPosition = (e) => {
             const containerRect = canvasContainer.getBoundingClientRect();
@@ -1634,7 +1679,12 @@ app.registerExtension({
             } catch (e) {}
             cleanupWindowTracking();
             window.removeEventListener("paste", handlePaste, true);
+            window.removeEventListener("pointerdown", onEEPanDown, true);
+            window.removeEventListener("pointerup", onEEPanUp, true);
+            window.removeEventListener("pointercancel", onEEPanAbort, true);
+            window.removeEventListener("blur", onEEPanAbort);
             if (brushCursor && brushCursor.parentNode) brushCursor.parentNode.removeChild(brushCursor);
+
             if (cursorRafId) cancelAnimationFrame(cursorRafId);
             resizeObserver.disconnect();
             if (originalOnRemoved) originalOnRemoved.apply(this, arguments);

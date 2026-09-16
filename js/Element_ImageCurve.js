@@ -1,5 +1,7 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
+import { eeMarkForward } from "./ee_canvas_utils.js";
+
 
 app.registerExtension({
     name: "Element_easy.ImageCurve",
@@ -214,6 +216,7 @@ app.registerExtension({
 
                 container.appendChild(viewArea);
                 const ctx = canvas.getContext("2d");
+				eeMarkForward(container);
 				
                 const resizeObserver = new ResizeObserver((entries) => {
                     for (let entry of entries) {
@@ -741,27 +744,33 @@ app.registerExtension({
 
                 canvas.addEventListener("contextmenu", e => e.preventDefault());
 
-                window.addEventListener("mousemove", (e) => {
+                const onCurveMouseMove = (e) => {
                     if (!isDragging || dragIndex === -1) return;
                     const [x, y] = getPos(e);
                     const pts = curveData[activeChannel];
-                    
                     let minX = dragIndex > 0 ? pts[dragIndex - 1][0] + 0.02 : 0;
                     let maxX = dragIndex < pts.length - 1 ? pts[dragIndex + 1][0] - 0.02 : 1;
-                    
                     pts[dragIndex] = [Math.max(minX, Math.min(maxX, x)), y];
-                    
                     draw();
                     updateBackend();
                     updateLivePreview(true);
-                });
-
-                window.addEventListener("mouseup", () => {
+                };
+                const onCurveMouseUp = () => {
                     if (isDragging) {
-                        isDragging = false;
-                        updateBackend();
+                      isDragging = false;
+                      updateBackend();
                     }
-                });
+                };
+                window.addEventListener("mousemove", onCurveMouseMove);
+                window.addEventListener("mouseup", onCurveMouseUp);
+                
+                const _origOnRemoved = this.onRemoved;
+                this.onRemoved = function () {
+                    window.removeEventListener("mousemove", onCurveMouseMove);
+                    window.removeEventListener("mouseup", onCurveMouseUp);
+                    if (_origOnRemoved) _origOnRemoved.apply(this, arguments);
+                };
+
 
                 const draw = () => {
                     const clientW = canvas.clientWidth;

@@ -66,7 +66,7 @@
 <a id="element-multi-ref"></a>
 ## Element Multi REF
 
-<sub>v1.5.7 新增 · v1.6.1 优化</sub>
+<sub>v1.5.7 新增 · v1.6.1优化</sub>
 
 详细说明：[中文](subMd/Element_multi_ref_zh.md) | [English](subMd/Element_multi_ref_en.md)</sub>
 

@@ -58,7 +58,11 @@
 - [Frame Calculator](#frame-calculator) · [ImageSize Div](#imagesize-div) · [random_chars](#random_chars) · [text_line_break](#text_line_break)
 
 ---
+## bug修复与优化
 
+- 现在鼠标指针在可视化交互节点上时可以正常拖动和缩放 comfyUI 画布
+
+---
 <a id="element-multi-ref"></a>
 ## Element Multi REF
 

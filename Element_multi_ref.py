@@ -75,9 +75,8 @@ def _audio_to_waveform(tensor: torch.Tensor, target_points: int = WAVEFORM_POINT
     return peaks
 
 def _decode_audio_wave(path: str, max_seconds: float = 0.0):
-    """整轨解码 → (waveform list, sr, duration)。
-    ★ 按 pts 对齐到容器时间轴：开头偏移补静音、流内 pts 空洞补静音，
-      保证 波形位置 == 视频画面位置 == 提取音频的播放位置。"""
+    """整轨解码 → (waveform list, sr, duration)。★ 按 pts 对齐到容器时间轴：开头偏移补静音、流内 pts 空洞补静音，
+    保证 波形位置 == 视频画面位置 == 提取音频的播放位置。"""
     with av.open(path) as c:
         astream = next((s for s in c.streams.audio), None)
         if astream is None:
@@ -85,26 +84,13 @@ def _decode_audio_wave(path: str, max_seconds: float = 0.0):
         sr = int(astream.rate or 44100)
         tb = float(astream.time_base)
         dur = float(astream.duration * astream.time_base) if astream.duration else 0.0
-        chunks = []          # (start_sec, mono float32)
+        chunks = []  # (start_sec, mono float32)
         cursor = None
         for fr in c.decode(astream):
-            arr = fr.to_ndarray()
-            if arr.ndim == 1:
-                arr = arr.reshape(1, -1)
-            if arr.dtype == np.int16:
-                arr = arr.astype(np.float32) / 32768.0        
-            elif arr.dtype == np.int32:
-                arr = arr.astype(np.float32) / 2147483648.0
-            elif arr.dtype == np.uint8:
-                arr = (arr.astype(np.float32) - 128.0) / 128.0
-            elif arr.dtype != np.float32:
-                arr = arr.astype(np.float32)
-            if arr.shape[0] > 1:
-                arr = np.mean(arr, axis=0)
-            mono = arr.reshape(-1)
+            mono = _frame_to_mono(fr)
             pt = float(fr.pts * tb) if fr.pts is not None else None
             start = pt if pt is not None else (cursor if cursor is not None else 0.0)
-            if start < 0:                                    
+            if start < 0:
                 skip = int(round(-start * sr))
                 if skip >= mono.shape[0]:
                     cursor = start + mono.shape[0] / sr
@@ -114,20 +100,21 @@ def _decode_audio_wave(path: str, max_seconds: float = 0.0):
             cursor = start + mono.shape[0] / sr
             if max_seconds and max_seconds > 0 and cursor >= max_seconds:
                 break
-        if not chunks:
-            return [], sr, dur
-        end_t = max(s + m.shape[0] / sr for s, m in chunks)
-        total = int(round(end_t * sr))
-        if total <= 0:
-            return [], sr, dur
-        pcm = np.zeros(total, dtype=np.float32)               
-        for start, mono in chunks:
-            i0 = int(round(start * sr)); i1 = min(total, i0 + mono.shape[0])
-            if i1 > i0:
-                pcm[i0:i1] = mono[: i1 - i0]
-        if max_seconds and max_seconds > 0 and total > int(max_seconds * sr):
-            pcm = pcm[: int(max_seconds * sr)]
-        return _audio_to_waveform(torch.from_numpy(pcm)), sr, dur
+    if not chunks:
+        return [], sr, dur
+    end_t = max(s + m.shape[0] / sr for s, m in chunks)
+    total = int(round(end_t * sr))
+    if total <= 0:
+        return [], sr, dur
+    pcm = np.zeros(total, dtype=np.float32)
+    for start, mono in chunks:
+        i0 = int(round(start * sr)); i1 = min(total, i0 + mono.shape[0])
+        if i1 > i0:
+            pcm[i0:i1] = mono[: i1 - i0]
+    if max_seconds and max_seconds > 0 and total > int(max_seconds * sr):
+        pcm = pcm[: int(max_seconds * sr)]
+    return _audio_to_waveform(torch.from_numpy(pcm)), sr, dur
+
 
 def _decode_audio_wave_ffmpeg(path: str, max_seconds: float = 600.0):
     """PyAV 打不开/解不出音频时的 ffmpeg CLI 兜底（flac、alac、奇特封装等）。"""
@@ -356,6 +343,32 @@ def _resample_linear(pcm: np.ndarray, src: int, dst: int) -> np.ndarray:
     idx = np.linspace(0, pcm.size - 1, n_out)
     return np.interp(idx, np.arange(pcm.size), pcm).astype(np.float32)
 
+def _frame_to_mono(fr) -> np.ndarray:
+    """PyAV 音频帧 → mono float32。★ 正确处理 planar 与 packed(interleaved) 两种布局。"""
+    arr = fr.to_ndarray()
+    if arr.ndim == 1:
+        arr = arr.reshape(1, -1)
+    if arr.dtype == np.int16:
+        arr = arr.astype(np.float32) / 32768.0
+    elif arr.dtype == np.int32:
+        arr = arr.astype(np.float32) / 2147483648.0
+    elif arr.dtype == np.uint8:
+        arr = (arr.astype(np.float32) - 128.0) / 128.0
+    elif arr.dtype != np.float32:
+        arr = arr.astype(np.float32)
+    n_samples = int(getattr(fr, "samples", 0) or 0)
+    layout = getattr(fr, "layout", None)
+    ch = max(1, len(layout.channels) if layout is not None else 1)
+    if getattr(fr.format, "is_planar", True):
+        if n_samples and arr.shape[-1] > n_samples:
+            arr = arr[:, :n_samples]
+        return arr.reshape(ch, -1).mean(axis=0) if ch > 1 else arr.reshape(-1)
+    if n_samples and arr.shape[-1] > n_samples * ch:
+        arr = arr[:, : n_samples * ch]
+    arr = arr.reshape(-1, ch)
+    return arr.mean(axis=1) if ch > 1 else arr.reshape(-1)
+
+
 def _extract_audio_media(video_path: str):
     """★ 与波形/输出切片共用同一套 pts 对齐逻辑：PyAV 整轨重建 WAV。
     放弃 mp3 转码（编码延迟/选轨差异是音画错位的来源之一）。"""
@@ -368,20 +381,7 @@ def _extract_audio_media(video_path: str):
             tb = float(astream.time_base)
             chunks, cursor = [], None
             for fr in c.decode(astream):
-                arr = fr.to_ndarray()
-                if arr.ndim == 1:
-                    arr = arr.reshape(1, -1)
-                if arr.dtype == np.int16:
-                    arr = arr.astype(np.float32) / 32768.0
-                elif arr.dtype == np.int32:
-                    arr = arr.astype(np.float32) / 2147483648.0
-                elif arr.dtype == np.uint8:
-                    arr = (arr.astype(np.float32) - 128.0) / 128.0
-                elif arr.dtype != np.float32:
-                    arr = arr.astype(np.float32)
-                if arr.shape[0] > 1:
-                    arr = np.mean(arr, axis=0)
-                mono = arr.reshape(-1)
+                mono = _frame_to_mono(fr)
                 pt = float(fr.pts * tb) if fr.pts is not None else None
                 start = pt if pt is not None else (cursor if cursor is not None else 0.0)
                 if start < 0:
@@ -752,7 +752,7 @@ class ElementMultiRef(io.ComfyNode):
         materials = state.get("materials") or {}
         slots = state.get("slots") or {}
         prompt = state.get("prompt", "")
-        presets = state.get("presets") or []
+        presets = _load_preset_library()
 
         try:
             n = int(run_preset_NUM)
@@ -768,8 +768,7 @@ class ElementMultiRef(io.ComfyNode):
             applied = nn
 
         missing = [mid for mid, m in materials.items() if not (m.get("path") and os.path.exists(m["path"]))]
-        info = {"version": 3, "node_id": node_id, "materials": materials, "slots": slots,
-                "missing": missing, "prompt": prompt, "preset_index": applied, "run_preset_NUM": n}
+        info = {"version": 3, "node_id": node_id, "materials": materials, "slots": slots, "missing": missing, "prompt": prompt, "preset_index": applied, "run_preset_NUM": n, "convert_conn": state.get("convert_conn") or {}}
         return io.NodeOutput(_pack_ref(info))
 
 
@@ -790,15 +789,21 @@ class ElementRefConvert(io.ComfyNode):
                io.String.Output("prompt"),
                io.String.Output("info")]
         )
-        return io.Schema(
+        kwargs = dict(
             node_id="ElementRefConvert",
             display_name="Element ref convert",
             category="Element_easy",
             description="Convert REF_ALL_IN_ONE into 21 typed outputs + prompt. "
-                        "Empty slots output black image / silence; 'info' carries per-slot manifest.",
+            "Empty slots output black image / silence; 'info' carries per-slot manifest.",
             inputs=inputs,
             outputs=outputs,
+            hidden=[io.Hidden.unique_id],
         )
+        try:
+            return io.Schema(**kwargs)
+        except TypeError:
+            kwargs.pop("hidden", None)
+            return io.Schema(**kwargs)
 
     @classmethod
     def execute(cls, info):
@@ -812,6 +817,16 @@ class ElementRefConvert(io.ComfyNode):
             return v if isinstance(v, dict) and v.get("mat") else None
 
         imgs, auds, manifest, missing_slots = [], [], {}, []
+        
+        nid = None
+        try:
+            nid = str(cls.hidden.unique_id)
+        except Exception:
+            nid = None
+        cmap = data.get("convert_conn") or {}
+        lst = cmap.get(str(nid)) if nid is not None else None
+        connected = set(lst) if isinstance(lst, (list, tuple)) else None
+        
         for sid in SLOT_ORDER:
             slot = slot_val(sid)
             paired = False
@@ -823,6 +838,7 @@ class ElementRefConvert(io.ComfyNode):
                         slot, paired = vs, True
             entry = {"has": False, "kind": "image" if sid in _IMAGE_SLOTS else "audio"}
             out_img, out_aud = None, None
+            skip = (connected is not None) and (sid not in connected)
             try:
                 if slot is None:
                     raise KeyError("empty slot")
@@ -830,7 +846,16 @@ class ElementRefConvert(io.ComfyNode):
                 if not mat or not os.path.exists(mat.get("path") or ""):
                     raise FileNotFoundError("material file missing")
                 edit = slot.get("edit") or {}
-                if paired:
+
+                if skip:
+                    if sid in _IMAGE_SLOTS:
+                        out_img = torch.zeros((1, 64, 64, 3))
+                        entry = {"has": True, "kind": "image", "skipped": True}
+                    else:
+                        out_aud = {"waveform": torch.zeros((1, 1, 44100)), "sample_rate": 44100}
+                        entry = {"has": True, "kind": "audio", "skipped": True}
+
+                elif paired:
                     out_aud = _video_paired_audio(mat, slot)
                     entry = {"has": True, "kind": "audio", "paired": True,
                              "seconds": round(out_aud["waveform"].shape[-1] / out_aud["sample_rate"], 3)}
@@ -855,10 +880,10 @@ class ElementRefConvert(io.ComfyNode):
                     out_img = torch.zeros((1, 64, 64, 3))
                 else:
                     out_aud = {"waveform": torch.zeros((1, 1, 44100)), "sample_rate": 44100}
-            if out_img is not None:
-                imgs.append(out_img)
-            if out_aud is not None:
-                auds.append(out_aud)
+            if sid in _IMAGE_SLOTS:
+                imgs.append(out_img if out_img is not None else torch.zeros((1, 64, 64, 3)))
+            else:
+                auds.append(out_aud if out_aud is not None else {"waveform": torch.zeros((1, 1, 44100)), "sample_rate": 44100})
             manifest[sid] = entry
 
         info_out = json.dumps({"version": 2, "producer": "ElementRefConvert", "slots": manifest,
@@ -1110,7 +1135,82 @@ async def emr_raw_file_handler(request):
         return resp
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
-        
+
+# ================= Preset 库持久化（user 目录，服务端写盘，无浏览器授权） =================
+_lib_cache = {"mt": None, "arr": []}
+
+def _preset_lib_dir():
+    d = os.path.join(folder_paths.get_user_directory(), "element_easy", "Element_Multi_REF")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+def _preset_lib_path():
+    return os.path.join(_preset_lib_dir(), "presets.json")
+
+def _load_preset_library() -> list:
+    p = _preset_lib_path()
+    try:
+        mt = os.path.getmtime(p)
+    except Exception:
+        return []
+    if _lib_cache["mt"] == mt:
+        return _lib_cache["arr"]
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        arr = data.get("presets") if isinstance(data, dict) else data
+        arr = arr if isinstance(arr, list) else []
+    except Exception:
+        arr = []
+    _lib_cache.update(mt=mt, arr=arr)
+    return arr
+
+@PromptServer.instance.routes.get("/element_multi_ref/presets")
+async def emr_presets_get(request):
+    try:
+        p = _preset_lib_path()
+        arr = _load_preset_library()
+        return web.json_response({"presets": arr, "path": p})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+@PromptServer.instance.routes.post("/element_multi_ref/presets")
+async def emr_presets_put(request):
+    try:
+        data = await request.json()
+        arr = data.get("presets") if isinstance(data, dict) else None
+        if not isinstance(arr, list):
+            return web.json_response({"error": 'body must be {"presets": [...]}'}, status=400)
+        clean = []
+        for p in arr:
+            if not isinstance(p, dict):
+                continue
+            snap = p.get("snapshot") if isinstance(p.get("snapshot"), dict) else {"materials": {}, "slots": {}, "prompt": ""}
+            mats = {}
+            for mid, m in (snap.get("materials") or {}).items():
+                if isinstance(m, dict):
+                    c = dict(m); c.pop("_wave", None); mats[mid] = c
+            snap = dict(snap); snap["materials"] = mats
+            thumb = p.get("thumb")
+            if thumb and str(thumb).startswith("data:"):
+                thumb = None
+            clean.append({"pid": p.get("pid"), "name": str(p.get("name") or "")[:200],
+                          "thumb": thumb, "snapshot": snap})
+        text = json.dumps({"version": 1, "kind": "element_multi_ref_preset_library", "presets": clean},
+                          ensure_ascii=False)
+        if len(text.encode("utf-8")) > 64_000_000:
+            return web.json_response({"error": "library too large (>64MB)"}, status=413)
+        final = _preset_lib_path()
+        tmp = final + f".tmp.{os.getpid()}.{time.time_ns()}"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, final)          
+        _lib_cache.update(mt=None, arr=[])  
+        return web.json_response({"ok": True, "count": len(clean), "path": final})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
 @PromptServer.instance.routes.get("/element_multi_ref/export_base")
 async def emr_export_base_handler(request):
     """给前端提供默认导出根目录（ComfyUI output 目录）。"""

@@ -60,7 +60,7 @@
 ---
 ## bug修复与优化
 
-- 现在鼠标指针在可视化交互节点上时可以正常拖动和缩放 comfyUI 画布，除了loadimage_preview节点的缩略图预览界面。
+- 现在鼠标指针在可视化交互节点上时可以正常拖动和缩放 comfyUI 画布，loadimage_preview节点的缩略图预览界面除外。
 
 ---
 <a id="element-multi-ref"></a>

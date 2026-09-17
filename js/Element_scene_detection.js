@@ -22,7 +22,7 @@ const CURSOR_EW = svgToCursor(
   12, 8);
 
 const CURSOR_SCISSORS = svgToCursor(
-  '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>',
+  '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><path d="M8.12 8.12 12 12"/><path d="M20 4 8.12 15.88"/><circle cx="6" cy="18" r="3"/><path d="M14.8 14.8 20 20"/></svg>',
   12, 12);
 
 const CURSOR_TRIM = svgToCursor(
@@ -206,7 +206,12 @@ function installStyles() {
     .esd-ruler { cursor: ${CURSOR_EW}; }
     .esd-playhead { cursor: ${CURSOR_EW}; pointer-events: auto; }
     .esd-playhead::after { content: ""; position: absolute; top: 0; bottom: 0; left: -7px; width: 16px; }
-    .esd.marking .esd-track, .esd.marking .esd-track .esd-seg, .esd.marking .esd-track .esd-cut { cursor: ${CURSOR_SCISSORS}; }
+	
+    .esd.marking .esd-stage,
+    .esd.marking .esd-track,
+    .esd.marking .esd-track .esd-seg,
+    .esd.marking .esd-track .esd-cut { cursor: ${CURSOR_SCISSORS}; }
+	
     .esd-stage.trim-hover .esd-seg, .esd-stage.trimming .esd-seg { cursor: ${CURSOR_TRIM} !important; }
     .esd-stage.trim-hover .esd-track, .esd-stage.trimming .esd-track, .esd-stage.trim-hover .esd-cut, .esd-stage.trimming .esd-cut { cursor: ${CURSOR_TRIM}; }
     .esd-stage.reordering, .esd-stage.reordering .esd-seg { cursor: grabbing !important; }
@@ -374,6 +379,7 @@ class SceneDetectionUI {
         .map(s => ({ start: s.start, end: Math.min(s.end, this.totalFrames) }))
         .filter(s => s.end > s.start);
     }
+	this.root.classList.toggle("marking", this.segMarker);
     this._syncDomFromState();
     this.render();
     this._updateVideoInfoWidget();
@@ -535,8 +541,9 @@ class SceneDetectionUI {
     this.root.querySelector('[data-action="jump-all-end"]').onclick = () => this.jumpAllEnd();
 
     this.root.querySelector("#esd-segmarker").onchange = (e) => {
-      this.segMarker = e.target.checked;
-      this.updateState();
+        this.segMarker = e.target.checked;
+        this.root.classList.toggle("marking", this.segMarker);   
+        this.updateState();
     };
     this.root.querySelector("#esd-threshold").onchange = (e) => {
       this.cutThreshold = parseFloat(e.target.value) || 15.0;

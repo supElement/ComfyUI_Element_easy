@@ -55,6 +55,8 @@ Main node parameters:
 
 Transport bar below the preview: jump to timeline start/end, jump to current clip start/end, **play current clip**, **play all clips in sequence** (with audio sync).
 
+Other shortcuts: Spacebar – Play/Stop all clips; Mouse wheel – Zoom the timeline; Shift + Mouse wheel – Scroll the timeline view horizontally. Icons, buttons, or keyboard shortcuts on the node interface can only be used when the node is selected.
+
 **Export** at the bottom: export selected clips (or all clips when Export All is checked) as mp4 files with audio to the **Out Dir** directory.
 
 ---

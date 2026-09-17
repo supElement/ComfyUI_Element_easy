@@ -541,9 +541,9 @@ class SceneDetectionUI {
     this.root.querySelector('[data-action="jump-all-end"]').onclick = () => this.jumpAllEnd();
 
     this.root.querySelector("#esd-segmarker").onchange = (e) => {
-        this.segMarker = e.target.checked;
-        this.root.classList.toggle("marking", this.segMarker);   
-        this.updateState();
+      this.segMarker = e.target.checked;
+      this.root.classList.toggle("marking", this.segMarker);   
+      this.updateState();
     };
     this.root.querySelector("#esd-threshold").onchange = (e) => {
       this.cutThreshold = parseFloat(e.target.value) || 15.0;

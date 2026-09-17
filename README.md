@@ -60,7 +60,7 @@
 ---
 ## bug修复与优化
 
-- 现在鼠标指针在可视化交互节点上时可以正常拖动和缩放 comfyUI 画布，loadimage_preview节点的缩略图预览界面除外。
+- 现在鼠标指针在可视化交互节点上时可以正常拖动和缩放 comfyUI 画布，loadimage_preview节点的缩略图预览界面 和 Element Load and Edit Video 节点在选中状态下的时间线窗口除外。
 
 ---
 <a id="element-multi-ref"></a>
@@ -88,7 +88,7 @@
 <a id="element-load-and-edit-video"></a>
 ## Element Load and Edit Video
 
-<sub>v1.5.4 新增 · v1.6.1 优化</sub>
+<sub>v1.5.4 新增 · v1.6.2 优化</sub>
 
 详细说明：[中文](subMd/Element_scene_detection.zh.md) | [English](subMd/Element_scene_detection.en.md)</sub>
 
@@ -97,6 +97,8 @@
 - PySceneDetect 自动检测镜头切换点， 也可在交互式时间线上手动切分、修剪、重排片段；
 - 画面与音频同步预览；
 - 直接输出片段帧序列与精确对应的音频，支持导出带音频的 mp4（需要 ffmpeg）。
+- 快捷键：空格键 = 播放/停止 所有片段；鼠标滚轮 = 缩放时间线；shift+鼠标滚轮 = 左右滑动时间线显示范围；分段选择：Ctrl+点击 = 加选，Shift+点击 = 范围连选；修剪片段：按住 Alt/Ctrl 拖动 = 联动修剪。
+⚠️ 节点在选择状态下，才能操作节点界面上的图标、按钮或快捷键。
 
 辅助节点 **Element Video Clip**、**Element Video Info** 配合使用。
 

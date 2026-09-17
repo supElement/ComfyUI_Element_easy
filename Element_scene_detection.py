@@ -37,6 +37,240 @@ _audio_media_cache = OrderedDict()
 _audio_media_lock = threading.Lock()
 MAX_AUDIO_MEDIA_CACHE = 2
 
+# ========== 短视频全帧预生成 / 长视频低清代理 ==========
+SHORT_VIDEO_MAX_FRAMES = 1500   # 总帧数 ≤ 此值 → 全帧预生成；否则 → 低清代理（1500 ≈ 25fps 的一分钟）
+PREVIEW_SIZES = (384, 64)       # 与前端一致：主预览 384 / 时间线缩略图 64（js 里 PREVIEW_SIZE=384、s=64）
+PROXY_MAX_LONG_EDGE = 384       # 代理视频长边
+
+_strategy_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="esd-strategy")
+_pregen_cache = {}   
+_pregen_state = {}   
+_proxy_state = {}    
+
+
+def _video_sig(video_path: str) -> str:
+    """文件签名（mtime+size）：文件被替换后缓存/代理自动失效重建。"""
+    try:
+        st = os.stat(video_path)
+        return f"{st.st_mtime_ns}|{st.st_size}"
+    except OSError:
+        return "0"
+
+
+def _proxy_path_for(video_path: str) -> str:
+    d = os.path.join(folder_paths.get_temp_directory(), "element_scene_detection", "proxy")
+    os.makedirs(d, exist_ok=True)
+    key = hashlib.sha256(f"{video_path}|{_video_sig(video_path)}".encode()).hexdigest()[:16]
+    return os.path.join(d, f"{key}_{PROXY_MAX_LONG_EDGE}px.mp4")
+
+
+def _probe_total_frames(video_path: str) -> int:
+    """只读 header 估算总帧数（不解码，毫秒级）。"""
+    try:
+        with av.open(video_path) as c:
+            vs = c.streams.video[0]
+            if vs.frames:
+                return int(vs.frames)
+            fps = float(vs.average_rate) if vs.average_rate else 24.0
+            dur = float(vs.duration * vs.time_base) if vs.duration else 0.0
+            return int(round(dur * fps)) if dur > 0 else 0
+    except Exception:
+        return 0
+
+
+def _purge_pregen(video_path: str):
+    for k in [k for k in _pregen_cache if k[0] == video_path]:
+        _pregen_cache.pop(k, None)
+
+
+def _generate_strategy_for(video_path: str, total_frames: int = 0, fps: float = 24.0):
+    """★ 决策入口：短视频→后台全帧预生成；长视频→后台生成全 I 帧低清代理。
+    幂等：同一文件只建一次；文件被替换（sig 变化）会作废重建。后台执行，不阻塞调用方。"""
+    if not video_path or not os.path.exists(video_path):
+        return
+    sig = _video_sig(video_path)
+    ps = _pregen_state.get(video_path)
+    xs = _proxy_state.get(video_path)
+    if ps or xs:
+        if (ps and ps.get("sig") == sig) or (xs and xs.get("sig") == sig):
+            return  
+        if ps:
+            _purge_pregen(video_path)
+            _pregen_state.pop(video_path, None)
+        if xs:
+            _proxy_state.pop(video_path, None)
+    if total_frames <= 0:
+        total_frames = _probe_total_frames(video_path)
+    if 0 < total_frames <= SHORT_VIDEO_MAX_FRAMES:
+        _pregen_state[video_path] = {"status": "pending", "ready": 0, "total": total_frames, "sig": sig}
+        _strategy_executor.submit(_pregen_all_frames, video_path)
+    else:
+        _proxy_state[video_path] = {"status": "pending", "path": _proxy_path_for(video_path), "sig": sig}
+        _strategy_executor.submit(_build_proxy_job, video_path)
+
+
+def _pregen_all_frames(video_path: str):
+    """★ 短视频：顺序解码一遍（无 seek，最快路径），每帧缓存两档尺寸 JPEG。
+    生成期间前端照常走旧解码路径，互不阻塞；完成后所有请求零解码命中。"""
+    st = _pregen_state.get(video_path)
+    if st is None:
+        return
+    st["status"] = "running"
+    done = 0
+    try:
+        with av.open(video_path) as container:
+            vstream = container.streams.video[0]
+            try:
+                vstream.thread_type = "AUTO"
+            except Exception:
+                pass
+            fps = float(vstream.average_rate) if vstream.average_rate else 24.0
+            tb = vstream.time_base
+            for frame in container.decode(vstream):
+                if frame.pts is None:
+                    continue
+                idx = round(float(frame.pts * tb) * fps)
+                img = frame.to_ndarray(format="bgr24")
+                h, w = img.shape[:2]
+                for size in PREVIEW_SIZES:
+                    scale = size / max(h, w)
+                    if scale < 1.0:
+                        small = cv2.resize(
+                            img,
+                            (max(1, int(round(w * scale))), max(1, int(round(h * scale)))),
+                            interpolation=cv2.INTER_AREA,
+                        )
+                    else:
+                        small = img
+                    ok, buf = cv2.imencode(".jpg", small, [int(cv2.IMWRITE_JPEG_QUALITY), 82])
+                    if ok:
+                        _pregen_cache[(video_path, idx, size)] = buf.tobytes()
+                done += 1
+                st["ready"] = done
+        st["status"] = "ready"
+        print(f"[ESD] Pregen ready: {done} frames x {len(PREVIEW_SIZES)} sizes -> {os.path.basename(video_path)}")
+    except Exception as e:
+        st["status"] = "failed"
+        st["error"] = str(e)
+        print(f"[ESD] Pregen failed: {e}")
+
+
+_PROXY_VF = (
+    f"scale=w='if(gt(iw,ih),min(iw,{PROXY_MAX_LONG_EDGE}),-2)'"
+    f":h='if(gt(iw,ih),-2,min(ih,{PROXY_MAX_LONG_EDGE}))'"
+)
+
+
+def _build_proxy_job(video_path: str):
+    """★ 长视频：一次性转出全 I 帧低清代理（此后任意帧 seek 只解 1 帧，O(1)）。
+    落盘 temp 目录并带文件签名，重启/重复导入直接复用。
+    通过 ffmpeg -progress 实时回报 0~1 进度到 _proxy_state["progress"]。"""
+    proxy = _proxy_path_for(video_path)
+    st = _proxy_state.setdefault(video_path, {"status": "running", "path": proxy})
+    st["status"] = "running"
+    st["progress"] = 0.0
+    tmp = None
+    proc = None
+    try:
+        if os.path.exists(proxy) and os.path.getsize(proxy) > 0:
+            st["status"] = "ready"
+            st["progress"] = 1.0
+            print(f"[ESD] Proxy reused: {proxy}")
+            return
+        duration = 0.0
+        try:
+            with av.open(video_path) as c:
+                vs = c.streams.video[0]
+                if vs.duration:
+                    duration = float(vs.duration * vs.time_base)
+                elif getattr(vs, "frames", None) and vs.average_rate:
+                    duration = int(vs.frames) / float(vs.average_rate)
+        except Exception:
+            pass
+        tmp = f"{proxy}.{os.getpid()}_{time.time_ns()}.part"
+        cmd = [
+            "ffmpeg", "-nostdin", "-y", "-loglevel", "error",
+            "-i", video_path,
+            "-vf", _PROXY_VF,
+            "-an", "-vsync", "0",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+            "-g", "1", "-keyint_min", "1",
+            "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+            "-progress", "pipe:1", "-nostats",   
+            tmp,
+        ]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        for line in proc.stdout:                 
+            line = line.strip()
+            if (line.startswith("out_time_ms=") or line.startswith("out_time_us=")) and duration > 0:
+                try:
+                    st["progress"] = min(1.0, (int(line.split("=", 1)[1]) / 1_000_000.0) / duration)
+                except ValueError:
+                    pass
+        ret = proc.wait()
+        if ret != 0:
+            err = ""
+            if proc.stderr:
+                try:
+                    err = proc.stderr.read()[-400:]
+                except Exception:
+                    pass
+            raise RuntimeError(f"ffmpeg exit {ret}: {err}")
+        os.replace(tmp, proxy)
+        tmp = None
+        st["status"] = "ready"
+        st["progress"] = 1.0
+        print(f"[ESD] Proxy ready: {proxy}")
+    except Exception as e:
+        if proc and proc.poll() is None:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        if tmp:
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
+        st["status"] = "failed"
+        st["error"] = str(e)
+        print(f"[ESD] Proxy build failed: {e}")
+
+
+
+def _preview_source_for(video_path: str) -> str:
+    """★ 预览解码源：代理就绪 → 代理文件；否则 → 原视频。
+    （-vsync 0 保证代理与源帧号 1:1；代理被清理时自动重建）"""
+    st = _proxy_state.get(video_path)
+    if st and st.get("status") == "ready":
+        p = st.get("path") or ""
+        if p and os.path.exists(p):
+            return p
+        st["status"] = "pending"
+        if shutil.which("ffmpeg"):
+            _strategy_executor.submit(_build_proxy_job, video_path)
+    return video_path
+
+@PromptServer.instance.routes.get("/esd/preview_status")
+async def esd_preview_status_handler(request):
+    p = request.rel_url.query.get("p", "")
+    ps, xs = _pregen_state.get(p) or {}, _proxy_state.get(p) or {}
+    pregen_prog = None
+    if ps:
+        if ps.get("status") == "ready":
+            pregen_prog = 1.0
+        else:
+            total = ps.get("total") or 0
+            pregen_prog = (ps.get("ready") or 0) / total if total > 0 else 0.0
+    return web.json_response({
+        "strategy": "pregen" if ps else ("proxy" if xs else "none"),
+        "pregen": {"status": ps.get("status"), "progress": pregen_prog,
+                   "ready": ps.get("ready", 0), "total": ps.get("total", 0)},
+        "proxy": {"status": xs.get("status"), "progress": xs.get("progress", 0.0)},
+    })
+
+# ========== 结束 ==========
+
 
 def _extract_audio_media(video_path: str):
     """提取整条音轨为浏览器可播放格式：ffmpeg→mp3 优先，缺失时回退 PyAV→WAV(16bit 单声道)。返回 (content_type, bytes) 或 None（无音轨）。"""
@@ -121,8 +355,13 @@ def _decode_frame_bgr(video_path: str, frame_idx: int) -> np.ndarray:
                 _av_reset_locked()
                 container = av.open(video_path)
                 stream = container.streams.video[0]
+                try:
+                    stream.thread_type = "AUTO"   
+                except Exception:
+                    pass
                 fps = float(stream.average_rate) if stream.average_rate else 24.0
                 _av_state.update(path=video_path, container=container, stream=stream, fps=fps, last_idx=-1)
+
             container, stream = _av_state["container"], _av_state["stream"]
             fps, tb = _av_state["fps"], stream.time_base
             sequential = 0 <= _av_state["last_idx"] < frame_idx <= _av_state["last_idx"] + _AV_SEQUENTIAL_WINDOW
@@ -178,20 +417,29 @@ def _decode_frame_bgr_fallback(video_path: str, frame_idx: int) -> np.ndarray:
 
 
 def build_preview_jpeg(video_path: str, frame_idx: int, size: int) -> bytes:
-    """★ 纯 CPU 快路径：解码(BGR uint8) → cv2.resize → JPEG 编码 → bytes"""
-    try:
-        img = _decode_frame_bgr(video_path, frame_idx)
-    except Exception:
+    """★ 纯 CPU 快路径：预生成缓存 → 解码(BGR uint8) → cv2.resize → JPEG 编码 → bytes"""
+    body = _pregen_cache.get((video_path, frame_idx, size))
+    if body is not None:
+        return body
+    src = _preview_source_for(video_path)
+    img = None
+    for candidate in dict.fromkeys([src, video_path]):
+        try:
+            img = _decode_frame_bgr(candidate, frame_idx)
+            break
+        except Exception:
+            continue
+    if img is None:
         img = _decode_frame_bgr_fallback(video_path, frame_idx)
     h, w = img.shape[:2]
     scale = size / max(h, w)
     if scale < 1.0:
-        img = cv2.resize(img, (max(1, int(round(w * scale))), max(1, int(round(h * scale)))),
-                         interpolation=cv2.INTER_AREA)
+        img = cv2.resize(img, (max(1, int(round(w * scale))), max(1, int(round(h * scale)))), interpolation=cv2.INTER_AREA)
     ok, buf = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 82])
     if not ok:
         raise RuntimeError("JPEG encode failed")
     return buf.tobytes()
+
 
 
 def _cache_put(key, body):
@@ -220,15 +468,17 @@ def _warm_one(path, frame, size, gen):
 
 
 def _schedule_warm(path, frame, size):
-    """按最近拖动方向预取接下来 3 帧。
-    ★ 方案A：队列有积压时直接放弃本轮预热——预热任务会占住 _av_lock 与 worker，
-    与用户实时预览请求抢锁是预览长尾延迟（偶发卡一下）的来源之一。"""
+    """按最近拖动方向预取接下来 3 帧。..."""
+    ps = _pregen_state.get(path)
+    if ps and ps.get("status") in ("pending", "running", "ready"):
+        return
     try:
         if _preview_executor._work_queue.qsize() > 2:
             return
     except Exception:
         pass
     prev = _last_preview_frame.get(path)
+
     direction = 1 if (prev is None or frame >= prev) else -1
     _last_preview_frame[path] = frame
     _warm_generation[path] = gen = _warm_generation.get(path, 0) + 1
@@ -622,27 +872,6 @@ def get_video_info(video_path: str) -> dict:
             pass
     return {"total_frames": total_frames, "fps": fps, "width": width, "height": height, "waveform": waveform}
 
-
-# def split_audio_by_ranges(audio_tensor: torch.Tensor, ranges: list, total_frames: int) -> list:
-    # """按"片段源区间列表"切分音频（支持重排/修剪后的任意区间，与视频片段一一对应）"""
-    # if audio_tensor is None:
-        # return [None] * len(ranges)
-    # if audio_tensor.dim() == 2:
-        # audio_tensor = audio_tensor.unsqueeze(0)
-    # elif audio_tensor.dim() == 1:
-        # audio_tensor = audio_tensor.unsqueeze(0).unsqueeze(0)
-    # total_samples = audio_tensor.shape[-1]
-    # total_frames = max(1, int(total_frames))
-    # out = []
-    # for (s, e) in ranges:
-        # a = int(round(s / total_frames * total_samples))
-        # b = int(round(e / total_frames * total_samples))
-        # a = max(0, min(total_samples, a))
-        # b = max(a, min(total_samples, b))
-        # out.append(audio_tensor[..., a:b] if b > a else None)
-    # return out
-
-
 def _parse_ranges(raw) -> list:
     """解析前端送来的片段区间列表（支持 [{start,end}] 或 [[s,e]] 两种形式）"""
     ranges = []
@@ -660,7 +889,6 @@ def _parse_ranges(raw) -> list:
     return ranges
 
 
-# ========== info 类型（ElementSceneDetection → 下游节点） ==========
 def _make_info_type():
     """优先 io.Custom("ESD_INFO")；旧版 API 回退 STRING（info 值为 JSON 字符串），行为一致。"""
     try:
@@ -670,7 +898,6 @@ def _make_info_type():
     except Exception:
         pass
     return None
-
 
 _ESD_INFO = _make_info_type()
 
@@ -981,7 +1208,6 @@ class ElementVideoClip(io.ComfyNode):
         if parts:
             audio_out = torch.cat(parts, dim=-1) if len(parts) > 1 else parts[0]
 
-        # ---------- info：继承上游字段，再覆盖为"本次实际输出"的真实值 ----------
         clip_info = dict(data) if isinstance(data, dict) else {}
         clip_info.update({
             "kind": "clip",                     
@@ -1010,7 +1236,6 @@ class ElementVideoClip(io.ComfyNode):
 
         return io.NodeOutput(images, wrap_audio(audio_out), frame_count, float(seconds),
                              first_image, last_image, _pack_info(clip_info))
-
 
 
 class ElementVideoInfo(io.ComfyNode):
@@ -1129,11 +1354,11 @@ async def upload_video_handler(request):
         print(f"[ESD] Uploaded: {target}")
         info = get_video_info(target)
         info["file_path"] = target
+        _generate_strategy_for(target, info.get("total_frames", 0), info.get("fps", 24))  
         return web.json_response(info)
     except Exception as e:
         print(f"[ESD] Upload error: {e}")
         return web.json_response({"error": str(e)}, status=500)
-
 
 
 @PromptServer.instance.routes.post("/element_scene_detection/detect")
@@ -1173,12 +1398,16 @@ async def esd_preview_get_handler(request):
             if body is not None:
                 _preview_cache.move_to_end(key)
         if body is None:
+            body = _pregen_cache.get(key)       
+        if body is None:
+            if video_path not in _pregen_state and video_path not in _proxy_state:
+                _generate_strategy_for(video_path)
             loop = asyncio.get_running_loop()
             body = await loop.run_in_executor(_preview_executor, build_preview_jpeg, video_path, frame_idx, size)
             _cache_put(key, body)
-            _schedule_warm(video_path, frame_idx, size)
-        return web.Response(body=body, content_type="image/jpeg",
-                            headers={"Cache-Control": "private, max-age=300"})
+        _schedule_warm(video_path, frame_idx, size)
+        return web.Response(body=body, content_type="image/jpeg", headers={"Cache-Control": "private, max-age=300"})
+
     except Exception as e:
         print(f"[ESD] preview(get) error: {e}")
         return web.Response(status=500, text=str(e))

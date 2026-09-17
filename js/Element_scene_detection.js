@@ -49,7 +49,8 @@ const ICONS = {
   segStart: '<path d="M19 5v14L8.5 12z" fill="#ffffff" stroke="none"/><line x1="6" y1="5" x2="6" y2="19"/>',
   segEnd: '<path d="M5 5v14l10.5-7z" fill="#ffffff" stroke="none"/><line x1="18" y1="5" x2="18" y2="19"/>',
   allStart: '<line x1="3" y1="5" x2="3" y2="19"/><path d="M21 5v14l-7-7z" fill="#ffffff" stroke="none"/><path d="M13 5v14l-7-7z" fill="#ffffff" stroke="none"/>',
-  allEnd: '<line x1="21" y1="5" x2="21" y2="19"/><path d="M3 5v14l7-7z" fill="#ffffff" stroke="none"/><path d="M11 5v14l7-7z" fill="#ffffff" stroke="none"/>'
+  allEnd: '<line x1="21" y1="5" x2="21" y2="19"/><path d="M3 5v14l7-7z" fill="#ffffff" stroke="none"/><path d="M11 5v14l7-7z" fill="#ffffff" stroke="none"/>',
+  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
 
 };
 
@@ -80,7 +81,7 @@ function installStyles() {
       background: #1c222d; border-bottom: 1px solid var(--line);
       flex-wrap: nowrap; white-space: nowrap; flex-shrink: 0;
     }
-	.esd-vinfo {
+    .esd-vinfo {
       display: flex;
       align-items: center;
       gap: 10px;
@@ -130,7 +131,7 @@ function installStyles() {
       min-width: 90px;
     }
     
-	
+    
     .esd-preview-container {
       display: flex; flex-direction: column; align-items: center; justify-content: center;
       padding: 4px 12px; background: #0d1118; border-bottom: 1px solid var(--line);
@@ -206,12 +207,12 @@ function installStyles() {
     .esd-ruler { cursor: ${CURSOR_EW}; }
     .esd-playhead { cursor: ${CURSOR_EW}; pointer-events: auto; }
     .esd-playhead::after { content: ""; position: absolute; top: 0; bottom: 0; left: -7px; width: 16px; }
-	
+    
     .esd.marking .esd-stage,
     .esd.marking .esd-track,
     .esd.marking .esd-track .esd-seg,
     .esd.marking .esd-track .esd-cut { cursor: ${CURSOR_SCISSORS}; }
-	
+    
     .esd-stage.trim-hover .esd-seg, .esd-stage.trimming .esd-seg { cursor: ${CURSOR_TRIM} !important; }
     .esd-stage.trim-hover .esd-track, .esd-stage.trimming .esd-track, .esd-stage.trim-hover .esd-cut, .esd-stage.trimming .esd-cut { cursor: ${CURSOR_TRIM}; }
     .esd-stage.reordering, .esd-stage.reordering .esd-seg { cursor: grabbing !important; }
@@ -323,7 +324,7 @@ class SceneDetectionUI {
     newState.total_frames = this.totalFrames;
     newState.waveform = this.waveform;
     newState.fps = this.fps;
-	newState.zoom = this.zoom;
+    newState.zoom = this.zoom;
     newState.video_width = this.videoWidth || 0;  
     newState.video_height = this.videoHeight || 0;
     newState.export_dir = this.exportDir;
@@ -359,7 +360,7 @@ class SceneDetectionUI {
     if (this.state.total_frames !== undefined) this.totalFrames = this.state.total_frames;
     if (this.state.waveform) this.waveform = this.state.waveform;
     this.fps = this.state.fps || 24;
-	if (typeof this.state.zoom === "number" && this.state.zoom > 0) this.zoom = this.state.zoom;
+    if (typeof this.state.zoom === "number" && this.state.zoom > 0) this.zoom = this.state.zoom;
     this.videoWidth = this.state.video_width || this.videoWidth || 0;    
     this.videoHeight = this.state.video_height || this.videoHeight || 0; 
     this.exportDir = this.state.export_dir || "./ComfyUI/output/video";
@@ -379,7 +380,7 @@ class SceneDetectionUI {
         .map(s => ({ start: s.start, end: Math.min(s.end, this.totalFrames) }))
         .filter(s => s.end > s.start);
     }
-	this.root.classList.toggle("marking", this.segMarker);
+    this.root.classList.toggle("marking", this.segMarker);
     this._syncDomFromState();
     this.render();
     this._updateVideoInfoWidget();
@@ -429,7 +430,7 @@ class SceneDetectionUI {
         <button class="esd-btn" data-action="refresh-cuts">${svgIcon(ICONS.zap)} Sync Cuts</button>
         <button class="esd-btn danger" data-action="clear">${svgIcon(ICONS.trash)} Clear</button>
       </div>
-	  <div class="esd-vinfo">
+      <div class="esd-vinfo">
         <span class="esd-vinfo-main" id="esd-vinfo-main">no video</span>
         <span class="esd-status">Ready</span>
       </div>
@@ -459,8 +460,9 @@ class SceneDetectionUI {
           <button class="esd-btn" data-action="move-right">${svgIcon(ICONS.chevronRight)}</button>
         </div>
         <button class="esd-btn" data-action="selectall">${svgIcon(ICONS.checkAll)} Select All</button>
+        <button class="esd-btn danger" data-action="delete-segs" title="Delete selected clips · Del">${svgIcon(ICONS.x)} Delete</button>
         <span class="esd-spacer"></span>
-		<label class="esd-field grow"><span>Out Dir</span><input type="text" id="esd-export-dir" value="${this.exportDir}"></label>
+        <label class="esd-field grow"><span>Out Dir</span><input type="text" id="esd-export-dir" value="${this.exportDir}"></label>
         <label class="esd-field"><span>Export All</span><input type="checkbox" id="esd-export-all" ${this.exportAll ? "checked" : ""}></label>
         <button class="esd-btn primary" data-action="export">${svgIcon(ICONS.save)} Export</button>
       </div>
@@ -517,6 +519,7 @@ class SceneDetectionUI {
     };
 
     this.root.querySelector('[data-action="selectall"]').onclick = () => this.selectAll();
+    this.root.querySelector('[data-action="delete-segs"]').onclick = () => this.deleteSelected();
     this.root.querySelector('[data-action="clear"]').onclick = () => {
       this.cuts = [];
       this.rebuildOrderFromCuts();
@@ -526,6 +529,7 @@ class SceneDetectionUI {
       this.updateState();
       this.render();
     };
+    
     this.root.querySelector('[data-action="export"]').onclick = () => this.exportClips();
     this.root.querySelector('[data-action="move-left"]').onclick = () => this.moveSelected(-1);
     this.root.querySelector('[data-action="move-right"]').onclick = () => this.moveSelected(1);
@@ -634,9 +638,9 @@ class SceneDetectionUI {
           this._selectClickArmed = true;             
           this._selectClickAt = performance.now();
           try {
-              const lc = app.canvas;
-              if (typeof lc?.selectNode === "function") lc.selectNode(this.node);
-              else if (typeof lc?.selectNodes === "function") lc.selectNodes([this.node]);
+            const lc = app.canvas;
+            if (typeof lc?.selectNode === "function") lc.selectNode(this.node);
+            else if (typeof lc?.selectNodes === "function") lc.selectNodes([this.node]);
           } catch (_) {}
         }
       }, true);
@@ -839,7 +843,7 @@ class SceneDetectionUI {
     this.zoom = Math.min(200, Math.max(0.5, newZoom));
     this.render();
     this._updateVideoInfoWidget();
-	this.updateState();
+    this.updateState();
   }
 
   /* ===================== 进度线（预生成/代理构建进度） ===================== */
@@ -908,7 +912,7 @@ class SceneDetectionUI {
       const target = anchorT * this.zoom;                  
       this.viewport.scrollLeft = Math.max(0, this.viewport.scrollLeft + (target - cx) * scale);
       this.status.textContent = `Zoom: ${this.zoom.toFixed(1)} px/s`;
-	  this.updateState();
+      this.updateState();
   }
   
 
@@ -926,7 +930,7 @@ class SceneDetectionUI {
       if (sel === this._uiActive) return;
       this._uiActive = sel;
       this.viewport?.toggleAttribute("data-ee-native-scroll", sel);
-	  if (this._veil) this._veil.classList.toggle("on", !sel);
+      if (this._veil) this._veil.classList.toggle("on", !sel);
       if (!sel) {
           if (this.root.contains(document.activeElement)) document.activeElement.blur?.();
           if (this._playing) this.stopPlayback();
@@ -1727,6 +1731,22 @@ class SceneDetectionUI {
     this.updateState();
     this.syncSelections();
   }
+  
+  deleteSelected() {
+    if (!this.selections.length) { this.status.textContent = "No clips selected"; return; }
+    if (this.selections.length >= this.order.length) { this.status.textContent = "Cannot delete all clips"; return; }
+    const n = this.selections.length;
+    const del = new Set(this.selections);
+    this.order = this.order.filter((_, i) => !del.has(i));
+    this.selections = [];
+    this._selAnchor = null;
+    this.reordered = true;          
+    this.syncCutsFromOrder();
+    this.updateState();
+    this.render();
+    this.status.textContent = `Deleted ${n} clip(s)`;
+  }
+
 
   moveSelected(direction) {
     if (!this.selections.length) return;
@@ -1872,6 +1892,8 @@ class SceneDetectionUI {
     };
     app.api?.addEventListener?.("executed", this._onExecuted);
 
+    
+
     this._queueWasBusy = false;
     this._onStatus = ({ detail }) => {
       try {
@@ -1888,6 +1910,17 @@ class SceneDetectionUI {
     this._onDocPointerUp = () => this._updateActiveState();
     document.addEventListener("pointerup", this._onDocPointerUp, true);
     this._selTimer = setInterval(() => this._updateActiveState(), 250);
+    this._onDocKeyDel = (e) => {
+      if (e.key !== "Delete" && e.key !== "Backspace") return;          
+      if (!this._isActive() || !this.selections.length) return;         
+      const t = e.target || {};
+      const tag = (t.tagName || "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select" || t.isContentEditable) return;  
+      e.preventDefault();                                               
+      e.stopPropagation();                                              
+      this.deleteSelected();                                            
+    };
+    window.addEventListener("keydown", this._onDocKeyDel, true);
   }
 }
 
@@ -1941,7 +1974,7 @@ app.registerExtension({
         [Math.max(100, (this.size?.[0] || w || 860) - 20), panelH];
 
       this.size = [Math.max(this.size?.[0] || 0, 860), this.computeSize()[1] - BODY_PAD];
-	  
+      
       const lockHeight = () => { this.size[1] = this.computeSize()[1] - BODY_PAD; };
       this.resizable = true;
       this.onResize = () => lockHeight();
@@ -1991,6 +2024,7 @@ app.registerExtension({
         if (this.__esd._onKeydown) document.removeEventListener("keydown", this.__esd._onKeydown);
         if (this.__esd._selTimer) clearInterval(this.__esd._selTimer);
         if (this.__esd._onDocPointerUp) document.removeEventListener("pointerup", this.__esd._onDocPointerUp, true);
+        if (this.__esd._onDocKeyDel) window.removeEventListener("keydown", this.__esd._onDocKeyDel, true);
         this.__esd = null;
       }
       return origRemoved?.apply(this, arguments);

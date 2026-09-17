@@ -1,4 +1,5 @@
-import { app } from "../../../scripts/app.js";
+import { app } from "../../scripts/app.js";
+import { eeMarkForward } from "./ee_canvas_utils.js";
 
 // const NODE_NAME = "ElementSceneDetection";
 const STYLE_ID = "esd-style";
@@ -146,12 +147,14 @@ function installStyles() {
     .esd-transport { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
     .esd-tbtn { width: 30px; padding: 0; justify-content: center; }
     .esd-tbtn.playing { background: #2a4b7a; border-color: #4e7fc0; }
-    .esd-preview-info { margin-left: auto; text-align: right; font-size: 12px; color: var(--muted); white-space: nowrap; }
+    .esd-preview-info { position: absolute; right: 8px; bottom: 8px; text-align: right; font-size: 12px; color: var(--muted); white-space: nowrap; z-index: 2; }
     .esd-field { display: flex; align-items: center; gap: 4px; color: var(--muted); white-space: nowrap; flex-shrink: 0; }
     .esd-field input[type="number"] { width: 60px; height: 24px; padding: 2px 4px; color: var(--text); background: #0d1118; border: 1px solid #333d50; border-radius: 4px; outline: none; }
     .esd-field input[type="text"] { width: 130px; height: 24px; padding: 2px 4px; color: var(--text); background: #0d1118; border: 1px solid #333d50; border-radius: 4px; outline: none; }
     .esd-field input[type="checkbox"] { accent-color: var(--cyan); width: 16px; height: 16px; cursor: pointer; flex-shrink: 0; }
-    .esd-timeline-shell { flex: 0 0 auto; height: 166px; display: flex; flex-direction: column; min-height: 0px; border-bottom: 1px solid var(--line); overflow: hidden; }
+    .esd-timeline-shell { flex: 0 0 auto; height: 166px; display: flex; flex-direction: column; min-height: 0px; border-bottom: 1px solid var(--line); overflow: hidden; position: relative; }
+    .esd-progress-line { position: absolute; top: 0; left: 0; height: 3px; width: 0%; background: linear-gradient(90deg, #2fd57a, #7cf5b0); box-shadow: 0 0 8px rgba(47,213,122,.55); z-index: 30; pointer-events: none; transition: width .35s ease, opacity .4s ease; }
+
     .esd-viewport {
       flex: 0 0 auto;
       height: 309px;          
@@ -183,11 +186,11 @@ function installStyles() {
       opacity: 0; transition: opacity 0.2s ease-in;
     }
     .esd-seg-thumb.loaded { opacity: 1; }
-    .esd-cut { position: absolute; top: 0; width: 2px; height: 100%; background: #ff9900; z-index: 5; cursor: pointer; }
-    .esd-cut::before { content: ""; position: absolute; top: 0; left: -4px; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 6px solid #ff9900; }
+    .esd-cut { position: absolute; top: 0; width: 1px; height: 100%; background: #ff9900; z-index: 5; cursor: pointer; }
+    .esd-cut::before { content: none; }
     .esd-drag-cut { position: absolute; top: 0; width: 2px; height: 100%; background: #ffaa00; z-index: 4; pointer-events: none; border-left: 2px dashed #ffaa00; }
     .esd-playhead { position: absolute; top: 0; bottom: 0; width: 2px; z-index: 11; background: #ff737d; cursor: ew-resize; pointer-events: none; }
-    .esd-playhead::before { content: ""; position: absolute; left: -5px; top: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 8px solid #ff737d; }
+    .esd-playhead::before { content: ""; position: absolute; left: 50%; top: 0; transform: translateX(-50%); border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 8px solid #ff737d; }
     .esd-wave { position: absolute; top: 50%; transform: translateY(-50%); left: 0; }
     .esd-wave-seg { position: absolute; top: 0; bottom: 0; overflow: hidden; border: 1px solid rgba(86,136,236,.35); border-radius: 3px; }
     .esd-wave-seg.selected { border-color: var(--cyan); box-shadow: 0 0 0 1px #43d9d166; }
@@ -209,6 +212,10 @@ function installStyles() {
     .esd-stage.reordering, .esd-stage.reordering .esd-seg { cursor: grabbing !important; }
     .esd-insert-line { position: absolute; top: 0; width: 2px; height: 100%; background: var(--cyan); box-shadow: 0 0 6px var(--cyan); z-index: 12; pointer-events: none; }
     .esd-ico { display: inline-block; vertical-align: -2px; flex-shrink: 0; }
+    .esd { position: relative; }
+    .esd-veil { position: absolute; inset: 0; z-index: 60; display: none; background: transparent; cursor: default; }
+    .esd-veil.on { display: block; }
+
   `;
   document.head.appendChild(style);
 }
@@ -311,6 +318,7 @@ class SceneDetectionUI {
     newState.total_frames = this.totalFrames;
     newState.waveform = this.waveform;
     newState.fps = this.fps;
+	newState.zoom = this.zoom;
     newState.video_width = this.videoWidth || 0;  
     newState.video_height = this.videoHeight || 0;
     newState.export_dir = this.exportDir;
@@ -346,6 +354,7 @@ class SceneDetectionUI {
     if (this.state.total_frames !== undefined) this.totalFrames = this.state.total_frames;
     if (this.state.waveform) this.waveform = this.state.waveform;
     this.fps = this.state.fps || 24;
+	if (typeof this.state.zoom === "number" && this.state.zoom > 0) this.zoom = this.state.zoom;
     this.videoWidth = this.state.video_width || this.videoWidth || 0;    
     this.videoHeight = this.state.video_height || this.videoHeight || 0; 
     this.exportDir = this.state.export_dir || "./ComfyUI/output/video";
@@ -365,10 +374,10 @@ class SceneDetectionUI {
         .map(s => ({ start: s.start, end: Math.min(s.end, this.totalFrames) }))
         .filter(s => s.end > s.start);
     }
-    this.root.classList.toggle("marking", this.segMarker);
     this._syncDomFromState();
     this.render();
-    this._updateVideoInfoWidget(); 
+    this._updateVideoInfoWidget();
+    if (this.localVideoPath) this._ensureProgressPolling();   
     if (this.totalFrames > 0) this.updatePreview(this.playheadFrame);
   }
 
@@ -437,7 +446,7 @@ class SceneDetectionUI {
       <div class="esd-timeline-shell">
         <div class="esd-viewport"><div class="esd-stage"></div></div>
       </div>
-      <div class="esd-foot" title="Click: select (Ctrl add / Shift range) · Drag clip: reorder · Drag edge: trim (Alt/Ctrl: roll) · Manual mode: click track to add cut · Drag ruler/playhead: scrub · Right-click boundary: merge">
+      <div class="esd-foot" title="Click: select (Ctrl add / Shift range) · Drag clip: reorder · Drag edge: trim (Alt/Ctrl: roll) · Manual mode: click track to add cut · Drag ruler/playhead: scrub · Right-click boundary: merge · Wheel on track: zoom (Shift+wheel: h-scroll)">
         <button class="esd-btn" data-action="fit">${svgIcon(ICONS.fit)} Fit</button>
         <div class="btn-group">
           <button class="esd-btn" data-action="move-left">${svgIcon(ICONS.chevronLeft)}</button>
@@ -452,9 +461,22 @@ class SceneDetectionUI {
       <input hidden id="esd-upload" type="file" accept="video/*">
     `;
 
+    this._veil = document.createElement("div");
+    this._veil.className = "esd-veil";
+    this._veil.title = "Click to activate panel";
+    this.root.appendChild(this._veil);
+
     this.stage = this.root.querySelector(".esd-stage");
     this.viewport = this.root.querySelector(".esd-viewport");
     this.status = this.root.querySelector(".esd-status");
+    // ★ 进度线（预生成/代理构建进度）
+    this.progressLineEl = document.createElement("div");
+    this.progressLineEl.className = "esd-progress-line";
+    this.progressLineEl.style.opacity = "0";
+    this.root.querySelector(".esd-timeline-shell").appendChild(this.progressLineEl);
+    // ★ 滚轮缩放
+    this.viewport.addEventListener("wheel", (e) => this.onWheelZoom(e), { passive: false });
+
     this.previewImg = this.root.querySelector("#esd-preview-img");
     this.previewTime = this.root.querySelector("#esd-preview-time");
 
@@ -514,7 +536,6 @@ class SceneDetectionUI {
 
     this.root.querySelector("#esd-segmarker").onchange = (e) => {
       this.segMarker = e.target.checked;
-      this.root.classList.toggle("marking", this.segMarker);
       this.updateState();
     };
     this.root.querySelector("#esd-threshold").onchange = (e) => {
@@ -572,6 +593,7 @@ class SceneDetectionUI {
           this._updateVideoInfoWidget(); 
           this.updateState();
           this.status.textContent = "Uploaded";
+          this._ensureProgressPolling();          
           this.render();
           if (this.totalFrames > 0) this.updatePreview(0);
         } else {
@@ -589,7 +611,30 @@ class SceneDetectionUI {
     this.stage.addEventListener("pointercancel", () => this.onPointerLeave());
     this.stage.addEventListener("pointerleave", () => this.onPointerLeave());
     this.stage.addEventListener("contextmenu", e => e.preventDefault());
-    this.stage.addEventListener("dragstart", e => e.preventDefault()); 
+    this.stage.addEventListener("dragstart", e => e.preventDefault());
+    eeMarkForward(this.root);
+    for (const type of ["pointerdown", "mousedown", "click", "dblclick", "contextmenu"]) {
+      this.root.addEventListener(type, (e) => {
+        if (type === "click" && this._selectClickArmed) {
+          const fresh = performance.now() - this._selectClickAt < 600;
+          this._selectClickArmed = false;
+          if (fresh) { e.preventDefault(); e.stopPropagation(); return; }
+        }
+        if (this._isActive() || e.button === 1) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (type === "pointerdown" && e.button === 0) {
+          this._selectClickArmed = true;             
+          this._selectClickAt = performance.now();
+          try {
+              const lc = app.canvas;
+              if (typeof lc?.selectNode === "function") lc.selectNode(this.node);
+              else if (typeof lc?.selectNodes === "function") lc.selectNodes([this.node]);
+          } catch (_) {}
+        }
+      }, true);
+    }
+    this._updateActiveState();
 
     this.stage.addEventListener("load", (e) => {
       const img = e.target;
@@ -616,15 +661,14 @@ class SceneDetectionUI {
       entries.forEach(entry => {
         if (entry.isIntersecting) {
           const img = entry.target;
-          if (!img.dataset.loaded && !img.dataset.loading && !img.dataset.failed && img.dataset.frame)
-            this.loadSingleThumbnail(img);
+          if (!img.dataset.loaded && !img.dataset.loading && !img.dataset.failed && img.dataset.frame) this.loadSingleThumbnail(img);
         }
       });
     }, { root: this.viewport, threshold: 0.1 });
 
     this.root.classList.toggle("marking", this.segMarker);
-  }
 
+  }
 
   stageX(e) {
     const rect = this.stage.getBoundingClientRect();
@@ -788,6 +832,98 @@ class SceneDetectionUI {
     this.zoom = Math.min(200, Math.max(0.5, newZoom));
     this.render();
     this._updateVideoInfoWidget();
+	this.updateState();
+  }
+
+  /* ===================== 进度线（预生成/代理构建进度） ===================== */
+  _ensureProgressPolling() {
+      if (this._progressTimer) return;
+      this._progressTimer = setInterval(() => this._pollProgress(), 700);
+      this._pollProgress();
+  }
+  _stopProgressPolling() {
+      if (this._progressTimer) { clearInterval(this._progressTimer); this._progressTimer = null; }
+  }
+  async _pollProgress() {
+      if (!this.localVideoPath) { this._hideProgressLine(); this._stopProgressPolling(); return; }
+      let d = null;
+      try {
+          const r = await fetch(`/esd/preview_status?p=${encodeURIComponent(this.localVideoPath)}`);
+          d = await r.json();
+      } catch (_) { return; }
+      let pct = 0, show = false, label = "";
+      if (d && d.strategy === "pregen" && d.pregen) {
+          const s = d.pregen.status;
+          if (s === "pending" || s === "running") {
+              pct = Math.round((d.pregen.progress || 0) * 100); show = true;
+              label = `Preview cache ${pct}%`;
+          }
+      } else if (d && d.strategy === "proxy" && d.proxy) {
+          const s = d.proxy.status;
+          if (s === "pending" || s === "running") {
+              pct = Math.round((d.proxy.progress || 0) * 100); show = true;
+              label = `Building proxy ${pct}%`;
+          }
+      }
+      if (show) {
+          this.progressLineEl.style.width = pct + "%";
+          this.progressLineEl.style.opacity = "1";
+          this.status.textContent = pct >= 100 ? "Finishing…" : label;
+      } else {
+          if (this.progressLineEl.style.opacity === "1") {
+              this.progressLineEl.style.width = "100%";
+              setTimeout(() => this._hideProgressLine(), 350);
+          } else this._hideProgressLine();
+          this._stopProgressPolling();
+      }
+  }
+  _hideProgressLine() {
+      if (!this.progressLineEl) return;
+      this.progressLineEl.style.opacity = "0";
+      setTimeout(() => { if (this.progressLineEl && this.progressLineEl.style.opacity === "0") this.progressLineEl.style.width = "0%"; }, 400);
+  }
+  
+  /* ============ 滚轮缩放  ============ */
+  onWheelZoom(e) {
+      if (e.shiftKey) return;      
+      if (!this._isActive()) return;
+      if (!this.totalFrames || !this.order?.length) return;
+      e.preventDefault();
+      const cx = this.stageX(e);                           
+      const anchorT = cx / this.zoom;                      
+      const factor = e.deltaY < 0 ? 1.25 : 1 / 1.25;       // 上滚放大 / 下滚缩小
+      const nz = Math.min(500, Math.max(0.5, this.zoom * factor));
+      if (nz === this.zoom) return;
+      this.zoom = nz;
+      this.render();                                       
+      const stRect = this.stage.getBoundingClientRect();
+      const scale = (stRect.width || 1) / (this.stage.offsetWidth || 1);  
+      const target = anchorT * this.zoom;                  
+      this.viewport.scrollLeft = Math.max(0, this.viewport.scrollLeft + (target - cx) * scale);
+      this.status.textContent = `Zoom: ${this.zoom.toFixed(1)} px/s`;
+	  this.updateState();
+  }
+  
+
+  _isActive() {
+      try {
+          const sn = app.canvas?.selected_nodes;
+          if (sn && this.node && this.node.id != null && sn[this.node.id]) return true;
+      } catch (_) {}
+      return false;   
+  }
+
+  _updateActiveState() {
+      if (!this.root) return;
+      const sel = this._isActive();
+      if (sel === this._uiActive) return;
+      this._uiActive = sel;
+      this.viewport?.toggleAttribute("data-ee-native-scroll", sel);
+	  if (this._veil) this._veil.classList.toggle("on", !sel);
+      if (!sel) {
+          if (this.root.contains(document.activeElement)) document.activeElement.blur?.();
+          if (this._playing) this.stopPlayback();
+      }
   }
 
   /* ===================== 预览（节流 + 取消过期请求） ===================== */
@@ -914,6 +1050,19 @@ class SceneDetectionUI {
     }
     this.startPlayback(true);
   }
+  
+  _handleKeydown(e) {
+    if (e.code !== "Space" && e.key !== " ") return;
+    const t = e.target || {};
+    const tag = (t.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "textarea" || tag === "select" || t.isContentEditable) return;
+    if (!this._isActive()) return;
+    e.preventDefault();          
+    if (e.repeat) return;        
+    if (tag === "button") t.blur?.();   
+    this.togglePlayAll();
+  }
+
 
   startPlayback(playAll = false) {
     const i = this._segIndexAtFrame(this.playheadFrame);
@@ -1451,7 +1600,7 @@ class SceneDetectionUI {
     for (let i = 0; i < segs.length; i++) {
       const seg = segs[i], L = this._layout[i];
       const sel = this.selections.includes(i);
-      const numThumbs = Math.min(8, Math.max(1, Math.floor(L.w / 30)));
+      const numThumbs = Math.min(16, Math.max(1, Math.floor(L.w / 30)));  //每段缩略图数量
       const denom = Math.max(1, numThumbs - 1);
       let thumbsHtml = "";
       for (let j = 0; j < numThumbs; j++) {
@@ -1727,6 +1876,11 @@ class SceneDetectionUI {
       } catch (err) { /* 静默 */ }
     };
     app.api?.addEventListener?.("status", this._onStatus);
+    this._onKeydown = (e) => this._handleKeydown(e);
+    document.addEventListener("keydown", this._onKeydown);
+    this._onDocPointerUp = () => this._updateActiveState();
+    document.addEventListener("pointerup", this._onDocPointerUp, true);
+    this._selTimer = setInterval(() => this._updateActiveState(), 250);
   }
 }
 
@@ -1822,10 +1976,14 @@ app.registerExtension({
         if (this.__esd._resizeObserver) this.__esd._resizeObserver.disconnect();
         if (this.__esd._thumbObserver) this.__esd._thumbObserver.disconnect();
         if (this.__esd._previewThrottleTimer) clearTimeout(this.__esd._previewThrottleTimer);
+        if (this.__esd._progressTimer) clearInterval(this.__esd._progressTimer);   
         if (this.__esd._destroyPlayback) this.__esd._destroyPlayback();
         if (this.__esd._onAutoCuts) app.api?.removeEventListener?.("esd_auto_cuts", this.__esd._onAutoCuts);
         if (this.__esd._onExecuted) app.api?.removeEventListener?.("executed", this.__esd._onExecuted);
         if (this.__esd._onStatus) app.api?.removeEventListener?.("status", this.__esd._onStatus);
+        if (this.__esd._onKeydown) document.removeEventListener("keydown", this.__esd._onKeydown);
+        if (this.__esd._selTimer) clearInterval(this.__esd._selTimer);
+        if (this.__esd._onDocPointerUp) document.removeEventListener("pointerup", this.__esd._onDocPointerUp, true);
         this.__esd = null;
       }
       return origRemoved?.apply(this, arguments);

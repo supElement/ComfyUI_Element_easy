@@ -76,6 +76,13 @@ jobs:
           # [FIX] 扩充单位白名单（kHz/MHz/GHz/TB/km/cm/mm/px/pt 等）
           UNIT_RE = re.compile(r'\b\d+(?:\.\d+)?(?:ms|s|min|h|fps|Hz|kHz|MHz|GHz|KB|MB|GB|TB|km|cm|mm|px|pt)\b')
 
+          # [FIX] 中文残留检查专用：这些区域里的中文不算"漏译"
+          URL_RE = re.compile(r'https?://\S+')
+          ATTR_RE = re.compile(r'<[^>]*>', re.S)
+          HTML_COMMENT_RE = re.compile(r'<!--.*?-->', re.S)
+          MD_TARGET_RE = re.compile(r'\]\([^)\n]*\)')
+          IMG_ALT_RE = re.compile(r'!\[[^\]]*\]')
+
           def mask_links(text):
               targets = []
               def _m(m):
@@ -183,8 +190,23 @@ jobs:
               return re.sub(r'`[^`\n]*`', '', t)
 
           def prose_text(text):
+              """旧接口，保留兼容；建议新代码用 translatable_prose"""
               t = strip_code_and_inline(text)
               return TAG_RE.sub(' ', t)
+
+          def translatable_prose(text):
+              """[FIX] 只保留"应当被翻译"的散文，去掉一切不应算作中文残留的区域：
+              代码块/行内代码、HTML 注释、HTML 标签与属性、裸 URL、
+              Markdown 链接目标、图片 alt、占位符。
+              这样 URL/alt/属性里的中文不会再被误报成漏译。"""
+              t = strip_code_and_inline(text)      # 去围栏代码 + 行内代码
+              t = HTML_COMMENT_RE.sub(' ', t)      # 去 <!-- ... -->
+              t = ATTR_RE.sub(' ', t)              # 去 <...> 标签/属性
+              t = URL_RE.sub(' ', t)               # 去裸 URL
+              t = MD_TARGET_RE.sub(']()', t)       # 去链接目标
+              t = IMG_ALT_RE.sub('![]', t)         # 去图片 alt 文本
+              t = re.sub(r'%%[A-Z]\d+%%', ' ', t)  # 去占位符
+              return t
 
           def extract_fence_spans(text):
               """返回每个代码围栏块的 (首行行号, 末行行号)，含首尾围栏行"""
@@ -226,7 +248,8 @@ jobs:
                   pids = sorted(int(x) for x in re.findall(pat, text))
                   if pids != list(range(1, total + 1)):
                       return f"{name}占位符不完整: 期望 {total} 个, 实际 {len(pids)} 个"
-              cjk = CJK_RE.findall(prose_text(text))
+              # [FIX] 改用 translatable_prose，URL/alt/属性里的中文不再误报
+              cjk = CJK_RE.findall(translatable_prose(text))
               if cjk:
                   return "译文存在中文残留: " + ", ".join(cjk[:10])
               return None
@@ -245,12 +268,13 @@ jobs:
               if len(fs) != len(fo):
                   return f"整体代码块数量不一致: 源 {len(fs)} / 译 {len(fo)}"
               t = LINK_RE.sub('](URL)', out)
-              cjk = CJK_RE.findall(prose_text(t))
+              # [FIX] 同样改用 translatable_prose
+              cjk = CJK_RE.findall(translatable_prose(t))
               if cjk:
                   return "整体中文残留: " + ", ".join(cjk[:10])
               # [FIX] 长度比例检查：模型整体缩译时其他校验均能通过，这里兜底
-              sp = len(prose_text(LINK_RE.sub('](URL)', src)))
-              op = len(prose_text(t))
+              sp = len(translatable_prose(LINK_RE.sub('](URL)', src)))
+              op = len(translatable_prose(t))
               if sp > 0 and op < sp * 0.5:
                   return f"译文长度异常: 源散文 {sp} 字符 / 译散文 {op} 字符，疑似严重缩译"
               return None
@@ -340,7 +364,12 @@ jobs:
                       continue
                   if in_fence:
                       continue
+                  # [FIX] 判断前先剥掉代码、标签、URL、占位符，
+                  # 避免把 URL/alt/属性里的中文也当成需要修复的残留
                   t = re.sub(r'`[^`\n]*`', '', ln)
+                  t = ATTR_RE.sub(' ', t)
+                  t = URL_RE.sub(' ', t)
+                  t = re.sub(r'%%[A-Z]\d+%%', ' ', t)
                   if CJK_RE.search(t):
                       bad.append(idx)
               if not bad:

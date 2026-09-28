@@ -186,6 +186,8 @@
 
 <img width="2121" height="963" alt="image" src="https://github.com/user-attachments/assets/0e341594-8b59-45af-8ece-59382ace50e4" />
 
+🎬 核心场景：消除图像经过生图模型分块放大后产生的变形和色差。
+
 ---
 
 <a id="black_white_color"></a>

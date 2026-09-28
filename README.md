@@ -179,14 +179,21 @@
 
 <sub>v1.4.3 新增 · v1.4.8 优化</sub>
 
-两张图像有足够的共同特征时，智能合并图像，适合把局部重绘的结果拼回原图：
+🎬 核心场景：消除图像经过生图模型分块放大后产生的变形和色差
 
-- **最优输入方案**：original_image + edited_crop_B + original_crop_A。其中 original_crop_A 是从原图中剪切的没有修改或变形的图像，edited_crop_B 是经过编辑或重绘的图像；
-- 支持分块合并：edited_crop_B 端口输入多张图像时，输出为最终合并后的单张图像。注意输入必须是 **Batch 而非 list**，如果是 list，要经过 Image List To Batch 节点转换。
+把图分块丢给生图模型放大，再拼回去时，接缝处经常有色差、有变形，直接拼很难看。
+这个节点利用两张图的共同特征做智能对齐，把分块放大后的结果平滑拼回原图。
+
+怎么用（最优输入方案）：
+- original_image：原图
+- edited_crop_B：经过编辑或重绘的块
+- original_crop_A：从原图剪切的、没有修改或变形的块
+三个端口配合，节点会自动找到对齐关系，把编辑过的部分拼回原图。
+
+支持分块合并：edited_crop_B 端口输入多张图像时，输出为最终合并后的单张图像。
+⚠️ 注意输入必须是 Batch 而非 list，如果是 list，要先经过 Image List To Batch 节点转换。
 
 <img width="2121" height="963" alt="image" src="https://github.com/user-attachments/assets/0e341594-8b59-45af-8ece-59382ace50e4" />
-
-🎬 核心场景：消除图像经过生图模型分块放大后产生的变形和色差。
 
 ---
 

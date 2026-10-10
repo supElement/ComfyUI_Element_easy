@@ -177,7 +177,7 @@
 <a id="smart-merge-images"></a>
 ## Smart merge images
 
-<sub>v1.4.3 新增 · v1.4.8 优化</sub>
+<sub>v1.4.3 新增 · v1.4.8 优化 · v1.6.3 修复 </sub>
 
 🎬 核心场景：消除图像经过生图模型分块放大后产生的变形和色差
 
@@ -191,7 +191,6 @@
 三个端口配合，节点会自动找到对齐关系，把编辑过的部分拼回原图。
 
 支持分块合并：edited_crop_B 端口输入多张图像时，输出为最终合并后的单张图像。
-⚠️ 注意输入必须是 Batch 而非 list，如果是 list，要先经过 Image List To Batch 节点转换。
 
 <img width="2121" height="963" alt="image" src="https://github.com/user-attachments/assets/0e341594-8b59-45af-8ece-59382ace50e4" />
 

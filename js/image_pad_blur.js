@@ -976,6 +976,32 @@ function setupPadBlurUI(node) {
     };
   });
 
+  // div 变化后对 target_width/height 重新吸附（保持预览与后端一致）
+  const divW = W("div");
+  if (divW) {
+      let snapDivTimer = null;
+      const origDivCb = divW.callback;
+      divW.callback = function (v) {
+          if (origDivCb) origDivCb.call(this, v);
+          clearTimeout(snapDivTimer);
+          snapDivTimer = setTimeout(() => {
+              const d = Math.max(1, parseInt(W("div")?.value) || 1);
+              if (d > 1) {
+                  ["target_width", "target_height"].forEach(n => {
+                      const w = W(n); if (!w) return;
+                      const num = parseFloat(w.value);
+                      if (Number.isFinite(num) && num > 0) {
+                          const snapped = Math.max(d, Math.round(num / d) * d);
+                          if (snapped !== num) w.value = snapped;
+                      }
+                  });
+              }
+              sanitizeOffsets(); syncSizeInputs(); serialize(); redraw();
+              node.setDirtyCanvas?.(true, true);
+          }, 350);
+      };
+  }
+
   // ========== 本地源图像载入 ==========
   const opaqueCv = document.createElement("canvas");
 

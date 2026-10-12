@@ -506,24 +506,44 @@ class ImageEditor {
       return "ns-resize";
     }
     function applyResize(p, dg) {
-      const d = divNow(), o = dg.orig;
-      let x0 = o.x, y0 = o.y, x1 = o.x + o.w, y1 = o.y + o.h;
-      if (dg.ed.h === "l") x0 = Math.min(Math.max(0, snapQ(p.x, d)), x1 - d);
-      else if (dg.ed.h === "r") x1 = Math.max(Math.min(W, snapQ(p.x, d)), x0 + d);
-      if (dg.ed.v === "t") y0 = Math.min(Math.max(0, snapQ(p.y, d)), y1 - d);
-      else if (dg.ed.v === "b") y1 = Math.max(Math.min(H, snapQ(p.y, d)), y0 + d);
-      rect = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+        const d = divNow(), o = dg.orig;
+        let x0 = o.x, y0 = o.y, x1 = o.x + o.w, y1 = o.y + o.h;
+        const maxX = Math.floor(W / d) * d, maxY = Math.floor(H / d) * d;
+        if (dg.ed.h === "l") x0 = Math.min(Math.max(0, snapQ(p.x, d)), x1 - d);
+        else if (dg.ed.h === "r") x1 = Math.max(Math.min(maxX, snapQ(p.x, d)), x0 + d);
+        if (dg.ed.v === "t") y0 = Math.min(Math.max(0, snapQ(p.y, d)), y1 - d);
+        else if (dg.ed.v === "b") y1 = Math.max(Math.min(maxY, snapQ(p.y, d)), y0 + d);
+        rect = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
     }
+
     /* ---- 参数 ---- */
-    q('[data-f="div"]').onchange = () => syncInputs();
-    q('[data-f="ow"]').onchange = () => {
-      const ow = Math.max(0, Math.round(+q('[data-f="ow"]').value || 0));
-      q('[data-f="ow"]').value = ow;
-      if (q('[data-f="olock"]').checked && ow > 0) {
-        const rw = rect ? rect.w : W, rh = rect ? rect.h : H;
-        if (rw > 0) q('[data-f="oh"]').value = Math.max(2, Math.round(ow * rh / rw / 2) * 2);
-      }
+    q('[data-f="div"]').onchange = () => {
+        const d = divNow();
+        if (rect) {
+            rect.w = Math.max(d, Math.round(rect.w / d) * d);
+            rect.h = Math.max(d, Math.round(rect.h / d) * d);
+            rect.x = Math.min(Math.max(0, Math.floor(rect.x / d) * d), Math.max(0, Math.floor((W - rect.w) / d) * d));
+            rect.y = Math.min(Math.max(0, Math.floor(rect.y / d) * d), Math.max(0, Math.floor((H - rect.h) / d) * d));
+        }
+        for (const f of ["ow", "oh"]) {
+            const el = q(`[data-f="${f}"]`);
+            const v = Math.round(+el.value || 0);
+            if (v > 0) el.value = Math.max(d, Math.round(v / d) * d);
+        }
+        maybeSyncOut(); syncInputs(); redraw();
     };
+
+    q('[data-f="ow"]').onchange = () => {
+        const d = divNow();
+        let ow = Math.max(0, Math.round(+q('[data-f="ow"]').value || 0));
+        if (ow > 0) ow = Math.max(d, Math.round(ow / d) * d);   // 0 = 不缩放，保持 0
+        q('[data-f="ow"]').value = ow;
+        if (q('[data-f="olock"]').checked && ow > 0) {
+            const rw = rect ? rect.w : W, rh = rect ? rect.h : H;
+            if (rw > 0) q('[data-f="oh"]').value = Math.max(d, Math.round(ow * rh / rw / d) * d);
+        }
+    };
+
     q('[data-f="oh"]').onchange = () => {
       const oh = Math.max(0, Math.round(+q('[data-f="oh"]').value || 0));
       q('[data-f="oh"]').value = oh;
@@ -652,20 +672,29 @@ class ImageEditor {
         const p = pos(e);
         if (drag) {
           if (drag.kind === "move") {
-            rect.x = Math.round(Math.max(0, Math.min(W - rect.w, p.x - drag.dx)));
-            rect.y = Math.round(Math.max(0, Math.min(H - rect.h, p.y - drag.dy)));
-            syncInputs(); redraw();
+              const d = divNow();
+              const maxX = Math.max(0, Math.floor((W - rect.w) / d) * d);
+              const maxY = Math.max(0, Math.floor((H - rect.h) / d) * d);
+              rect.x = Math.min(snapV(p.x - drag.dx, d), maxX);
+              rect.y = Math.min(snapV(p.y - drag.dy, d), maxY);
+              syncInputs(); redraw();
           } else if (drag.kind === "resize") {
             applyResize(p, drag);
             syncInputs(); maybeSyncOut(); redraw();
           } else {
-            const d = drag.d;
-            const x = snapV(Math.min(drag.sx, p.x), d), y = snapV(Math.min(drag.sy, p.y), d);
-            const w = Math.max(d, Math.round(Math.abs(p.x - drag.sx) / d) * d);
-            const h = Math.max(d, Math.round(Math.abs(p.y - drag.sy) / d) * d);
-            rect = { x, y, w: Math.min(w, W - x), h: Math.min(h, H - y) };
-            syncInputs(); maybeSyncOut(); redraw();
+              const d = drag.d;
+              const x = snapV(Math.min(drag.sx, p.x), d), y = snapV(Math.min(drag.sy, p.y), d);
+              let w = Math.max(d, Math.round(Math.abs(p.x - drag.sx) / d) * d);
+              let h = Math.max(d, Math.round(Math.abs(p.y - drag.sy) / d) * d);
+              w = Math.min(w, Math.max(d, Math.floor(W / d) * d));
+              h = Math.min(h, Math.max(d, Math.floor(H / d) * d));
+              let xx = x, yy = y;
+              if (xx + w > W) xx = Math.max(0, Math.floor((W - w) / d) * d);
+              if (yy + h > H) yy = Math.max(0, Math.floor((H - h) / d) * d);
+              rect = { x: xx, y: yy, w, h };
+              syncInputs(); maybeSyncOut(); redraw();
           }
+
         } else {
           const ed = rect && edgeAt(p);
           canvas.style.cursor = ed ? cursorFor(ed) : (inRect(p) ? "move" : "crosshair");
@@ -702,13 +731,17 @@ class ImageEditor {
     q(".emr-x").onclick = close;
     q('[data-a="cancel"]').onclick = close;
     q('[data-a="apply"]').onclick = async () => {
-      const d = divNow();
-      const out = { ...edit, div_by: d,
-        out_w: Math.max(0, Math.round(+q('[data-f="ow"]').value || 0)),
-        out_h: Math.max(0, Math.round(+q('[data-f="oh"]').value || 0)),
-        paint_file: null };
-      delete out.lock_ratio;
-      out.crop = rect ? [rect.x, rect.y, rect.w, rect.h] : null;
+        const d = divNow();
+        if (rect) {
+            rect.w = Math.max(d, Math.round(rect.w / d) * d);
+            rect.h = Math.max(d, Math.round(rect.h / d) * d);
+            rect.x = Math.min(Math.max(0, Math.floor(rect.x / d) * d), Math.max(0, Math.floor((W - rect.w) / d) * d));
+            rect.y = Math.min(Math.max(0, Math.floor(rect.y / d) * d), Math.max(0, Math.floor((H - rect.h) / d) * d));
+        }
+        const out = { ...edit, div_by: d, out_w: Math.max(0, Math.round(+q('[data-f="ow"]').value || 0)), out_h: Math.max(0, Math.round(+q('[data-f="oh"]').value || 0)), paint_file: null };
+        delete out.lock_ratio;
+        out.crop = rect ? [rect.x, rect.y, rect.w, rect.h] : null;
+
       if (strokesState === "dirty") {
         const blob = await new Promise(res => strokes.toBlob(res, "image/png"));
         const fd = new FormData();

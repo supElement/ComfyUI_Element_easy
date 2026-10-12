@@ -275,7 +275,9 @@ class LoadImageWithPreview:
                     H = int(output_image.shape[1]); W = int(output_image.shape[2])
                     x, y, cw, ch = [int(round(float(v))) for v in arr]
                     x = max(0, min(x, W - 1)); y = max(0, min(y, H - 1))
-                    cw = max(1, min(cw, W - x)); ch = max(1, min(ch, H - y))
+                    cw = max(1, min(cw, W)); ch = max(1, min(ch, H))
+                    if x + cw > W: x = max(0, W - cw)
+                    if y + ch > H: y = max(0, H - ch)
                     output_image = output_image[:, y:y + ch, x:x + cw, :].contiguous()
                     if mask_tensor.dim() == 3:
                         mask_tensor = mask_tensor[:, y:y + ch, x:x + cw].contiguous()

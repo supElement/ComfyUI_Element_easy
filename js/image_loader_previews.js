@@ -808,9 +808,24 @@ app.registerExtension({
         const snapQ = (v, d) => Math.round(v / d) * d;
         
         const exportCrop = () => {
+            if (cropRect) {
+                const d = cropDivNow();
+                const W = cropCanvas.width, H = cropCanvas.height;
+                // 1) 强制吸附到 d 的网格：x,y 向下取整；w,h 就近取整
+                cropRect.x = Math.max(0, Math.floor(cropRect.x / d) * d);
+                cropRect.y = Math.max(0, Math.floor(cropRect.y / d) * d);
+                cropRect.w = Math.max(d, Math.round(cropRect.w / d) * d);
+                cropRect.h = Math.max(d, Math.round(cropRect.h / d) * d);
+                // 2) 超界时回退起点，宽高保持倍数不变
+                if (cropRect.x + cropRect.w > W) cropRect.x = Math.max(0, Math.floor((W - cropRect.w) / d) * d);
+                if (cropRect.y + cropRect.h > H) cropRect.y = Math.max(0, Math.floor((H - cropRect.h) / d) * d);
+            }
             cropWidget.value = cropRect ? JSON.stringify([Math.round(cropRect.x), Math.round(cropRect.y), Math.round(cropRect.w), Math.round(cropRect.h)]) : "";
-            try { if (node.graph && node.graph.change) node.graph.change(); } catch (e) {}
+            try {
+                if (node.graph && node.graph.change) node.graph.change();
+            } catch (e) {}
         };
+
 
         
         const redrawCrop = () => {
@@ -894,27 +909,38 @@ app.registerExtension({
         const cropApplyResize = (p, dg) => {
             const d = cropDivNow(), o = dg.orig;
             let x0 = o.x, y0 = o.y, x1 = o.x + o.w, y1 = o.y + o.h;
+            const maxX = Math.floor(maskCanvas.width / d) * d;
+            const maxY = Math.floor(maskCanvas.height / d) * d;
             if (dg.ed.h === "l") x0 = Math.min(Math.max(0, snapQ(p.x, d)), x1 - d);
-            else if (dg.ed.h === "r") x1 = Math.max(Math.min(maskCanvas.width, snapQ(p.x, d)), x0 + d);
+            else if (dg.ed.h === "r") x1 = Math.max(Math.min(maxX, snapQ(p.x, d)), x0 + d);
             if (dg.ed.v === "t") y0 = Math.min(Math.max(0, snapQ(p.y, d)), y1 - d);
-            else if (dg.ed.v === "b") y1 = Math.max(Math.min(maskCanvas.height, snapQ(p.y, d)), y0 + d);
+            else if (dg.ed.v === "b") y1 = Math.max(Math.min(maxY, snapQ(p.y, d)), y0 + d);
             cropRect = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
         };
+
         
         const updateCropDrag = (pos) => {
             if (!cropDrag) return;
             const W = maskCanvas.width, H = maskCanvas.height;
             if (cropDrag.kind === "move") {
-                cropRect.x = Math.round(Math.max(0, Math.min(W - cropRect.w, pos.rawX - cropDrag.dx)));
-                cropRect.y = Math.round(Math.max(0, Math.min(H - cropRect.h, pos.rawY - cropDrag.dy)));
+                const d = cropDivNow();
+                const maxX = Math.max(0, Math.floor((W - cropRect.w) / d) * d);
+                const maxY = Math.max(0, Math.floor((H - cropRect.h) / d) * d);
+                cropRect.x = Math.min(snapV(pos.rawX - cropDrag.dx, d), maxX);
+                cropRect.y = Math.min(snapV(pos.rawY - cropDrag.dy, d), maxY);
             } else if (cropDrag.kind === "resize") {
                 cropApplyResize(pos, cropDrag);
             } else {
                 const d = cropDrag.d;
                 const x = snapV(Math.min(cropDrag.sx, pos.rawX), d), y = snapV(Math.min(cropDrag.sy, pos.rawY), d);
-                const w = Math.max(d, Math.round(Math.abs(pos.rawX - cropDrag.sx) / d) * d);
-                const h = Math.max(d, Math.round(Math.abs(pos.rawY - cropDrag.sy) / d) * d);
-                cropRect = { x, y, w: Math.min(w, W - x), h: Math.min(h, H - y) };
+                let w = Math.max(d, Math.round(Math.abs(pos.rawX - cropDrag.sx) / d) * d);
+                let h = Math.max(d, Math.round(Math.abs(pos.rawY - cropDrag.sy) / d) * d);
+                w = Math.min(w, Math.max(d, Math.floor(W / d) * d));
+                h = Math.min(h, Math.max(d, Math.floor(H / d) * d));
+                let xx = x, yy = y;
+                if (xx + w > W) xx = Math.max(0, Math.floor((W - w) / d) * d);
+                if (yy + h > H) yy = Math.max(0, Math.floor((H - h) / d) * d);
+                cropRect = { x: xx, y: yy, w, h };
             }
             redrawCrop();
         };

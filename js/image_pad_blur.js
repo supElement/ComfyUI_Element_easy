@@ -996,6 +996,7 @@ function setupPadBlurUI(node) {
                       }
                   });
               }
+			  markInteractive();
               sanitizeOffsets(); syncSizeInputs(); serialize(); redraw();
               node.setDirtyCanvas?.(true, true);
           }, 350);

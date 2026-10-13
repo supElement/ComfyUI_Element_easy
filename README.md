@@ -177,7 +177,7 @@
 <a id="smart-merge-images"></a>
 ## Smart merge images
 
-<sub>v1.4.3 新增 · v1.4.8 优化 · v1.6.3 修复 </sub>
+<sub>v1.4.3 新增 · v1.4.8 优化 · v1.6.3 修复 · v1.6.5 精简优化</sub>
 
 🎬 核心场景：消除图像经过生图模型分块放大后产生的变形和色差
 
@@ -191,6 +191,8 @@
 三个端口配合，节点会自动找到对齐关系，把编辑过的部分拼回原图。
 
 支持分块合并：edited_crop_B 端口输入多张图像时，输出为最终合并后的单张图像。
+
+需要下载 [模型文件](https://huggingface.co/cglearned/Smart_merge_images/tree/main) ，默认自动下载，若失败需要手动下载，并将 loftr_outdoor.ckpt / disk_depth.pt / disk_lightglue.pth 模型文件放入 \ComfyUI\models\elementEasy\checkpoints 文件夹中。
 
 <img width="2121" height="963" alt="image" src="https://github.com/user-attachments/assets/0e341594-8b59-45af-8ece-59382ace50e4" />
 

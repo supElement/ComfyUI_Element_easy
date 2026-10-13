@@ -192,7 +192,7 @@
 
 支持分块合并：edited_crop_B 端口输入多张图像时，输出为最终合并后的单张图像。
 
-需要下载 [模型文件](https://huggingface.co/cglearned/Smart_merge_images/tree/main) ，默认自动下载，若失败需要手动下载，并将 loftr_outdoor.ckpt / disk_depth.pt / disk_lightglue.pth 模型文件放入 \ComfyUI\models\elementEasy\checkpoints 文件夹中。
+需要下载 [模型文件](https://huggingface.co/cglearned/Smart_merge_images/tree/main) ，默认自动下载，若失败需要手动下载，并将 depth-save.pth / disk_lightglue_v0-1_arxiv-pth / loftr_outdoor.ckpt 模型文件放入 \ComfyUI\models\elementEasy\checkpoints 文件夹中。
 
 <img width="2121" height="963" alt="image" src="https://github.com/user-attachments/assets/0e341594-8b59-45af-8ece-59382ace50e4" />
 

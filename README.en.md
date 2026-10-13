@@ -191,6 +191,11 @@ Three ports work together, the node automatically finds the alignment relationsh
 
 Supports block merging: When multiple images are input to the edited_crop_B port, the output is a single image of the final merged result.
 
+You need to download the [model files](https://huggingface.co/cglearned/Smart_merge_images/tree/main); by default, they are downloaded automatically.
+
+Manual download: depth-save.pth / disk_lightglue_v0-1_arxiv-pth / loftr_outdoor.ckpt
+To: \ComfyUI\models\elementEasy\checkpoints
+
 <img width="2121" height="963" alt="image" src="https://github.com/user-attachments/assets/0e341594-8b59-45af-8ece-59382ace50e4" />
 
 ---

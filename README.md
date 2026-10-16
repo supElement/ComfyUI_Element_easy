@@ -298,7 +298,7 @@ mask 描边：内外描边宽度和模糊度单独控制，支持非描边区域
 
 <sub>v1.6.6 新增 </sub>
 
-与Element_SigmaGraph类似，只是输出为 float 和 string 列表，列表中元素数量与 steps 值相同，而非 steps + 1。可以连接到 [ComfyUI-Element_TileUpscale](https://github.com/supElement/ComfyUI-Element_TileUpscale) 的 reference_strength 参数，控制每步采样的图像参考强度。
+与Element_SigmaGraph类似，曲线上点的 y 值不再限制为随 x 值降低，输出为 float 和 string 列表，列表中元素数量与 steps 值相同，而非 steps + 1。可以连接到 [ComfyUI-Element_TileUpscale](https://github.com/supElement/ComfyUI-Element_TileUpscale) 的 reference_strength 参数，控制每步采样的图像参考强度。
 
 ---
 

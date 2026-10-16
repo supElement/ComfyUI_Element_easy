@@ -638,24 +638,33 @@ function setupPadBlurUI(node) {
     }
     // reflect 镜像波平铺：与后端 torch F.pad(mode="reflect") 对齐——反射不包含
     // 边界像素（[a,b,c] pad 2 → [c,b,a,b,c]）。
-    if (iw <= 1 || ih <= 1) { 
+    if (iw <= 1 || ih <= 1) {
       c.drawImage(srcImg, X, Y, iw, ih);
       return;
     }
-    const rpw = 2 * (iw - 1), rph = 2 * (ih - 1);
+    const kx = pw > 0 ? pw / iw : 1;
+    const ky = ph > 0 ? ph / ih : 1;
+    const rpw = 2 * (iw - 1), rph = 2 * (ih - 1); 
     const pc = document.createElement("canvas");
-    pc.width = rpw; pc.height = rph;
+    pc.width = Math.max(1, Math.round(rpw));
+    pc.height = Math.max(1, Math.round(rph));
     const pctx = pc.getContext("2d");
-    // 四象限合成一个 2(W-1)×2(H-1) 的完整镜像波周期。
-   
-    pctx.drawImage(srcImg, 0, 0, iw - 1, ih - 1, 0, 0, iw - 1, ih - 1);                       
-    pctx.save(); pctx.translate(rpw, 0); pctx.scale(-1, 1);
-    pctx.drawImage(srcImg, 1, 0, iw - 1, ih - 1, 0, 0, iw - 1, ih - 1); pctx.restore();         
-    pctx.save(); pctx.translate(0, rph); pctx.scale(1, -1);
-    pctx.drawImage(srcImg, 0, 1, iw - 1, ih - 1, 0, 0, iw - 1, ih - 1); pctx.restore();         
-    pctx.save(); pctx.translate(rpw, rph); pctx.scale(-1, -1);
-    pctx.drawImage(srcImg, 1, 1, iw - 1, ih - 1, 0, 0, iw - 1, ih - 1); pctx.restore();         
-
+    pctx.drawImage(srcImg, 0, 0, (iw - 1) * kx, (ih - 1) * ky, 0, 0, iw - 1, ih - 1);
+    pctx.save();
+    pctx.translate(rpw, 0);
+    pctx.scale(-1, 1);
+    pctx.drawImage(srcImg, kx, 0, (iw - 1) * kx, (ih - 1) * ky, 0, 0, iw - 1, ih - 1);
+    pctx.restore();
+    pctx.save();
+    pctx.translate(0, rph);
+    pctx.scale(1, -1);
+    pctx.drawImage(srcImg, 0, ky, (iw - 1) * kx, (ih - 1) * ky, 0, 0, iw - 1, ih - 1);
+    pctx.restore();
+    pctx.save();
+    pctx.translate(rpw, rph);
+    pctx.scale(-1, -1);
+    pctx.drawImage(srcImg, kx, ky, (iw - 1) * kx, (ih - 1) * ky, 0, 0, iw - 1, ih - 1);
+    pctx.restore();
     const ti0 = Math.floor((0 - X) / rpw), ti1 = Math.floor((w - X) / rpw);
     const tj0 = Math.floor((0 - Y) / rph), tj1 = Math.floor((h - Y) / rph);
     for (let tj = tj0; tj <= tj1; tj++) {

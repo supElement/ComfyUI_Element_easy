@@ -1,6 +1,8 @@
 import torch
 import numpy as np
 
+from .element_easy.image_utils import parse_color_str
+
 class EmptyImageRGB:
     """根据 RGB/Hex 颜色生成纯色图像，前端支持色轮 + 屏幕吸管取色。"""
 
@@ -33,24 +35,7 @@ class EmptyImageRGB:
         actual_h = max(div, int(round(height / div) * div))
 
         color = [0, 0, 0]
-        try:
-            c = str(color_code).strip()
-            if c.startswith("#"):
-                c = c.lstrip("#")
-                if len(c) == 6:
-                    color = [int(c[i:i+2], 16) for i in (0, 2, 4)]
-                elif len(c) == 3:
-                    color = [int(ch * 2, 16) for ch in c]
-            elif "," in c:
-                parts = [int(p) for p in c.split(",")[:3]]
-                if len(parts) == 3:
-                    color = [max(0, min(255, p)) for p in parts]
-            else:
-                val = max(0, min(255, int(float(c))))
-                color = [val, val, val]
-        except Exception:
-            print(f"[Element_easy] Color parse error: {color_code}. Defaulting to black.")
-            color = [0, 0, 0]
+        color = parse_color_str(color_code)
 
         r, g, b = (x / 255.0 for x in color)
         image_tensor = torch.empty((1, actual_h, actual_w, 3), dtype=torch.float32)

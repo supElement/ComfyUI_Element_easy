@@ -18,6 +18,37 @@ import folder_paths
 from server import PromptServer
 from aiohttp import web
 from comfy_api.latest import io
+
+from .element_easy.video_io import (
+    decode_frame_bgr as _decode_frame_bgr,
+    decode_frame_bgr_fallback as _decode_frame_bgr_fallback,
+    lru_put,
+    audio_to_waveform,
+    TypedInfoIO,
+)
+
+# info 类型封装（ESD_INFO 优先，旧 API 回退 STRING/JSON）
+_esd_io = TypedInfoIO("ESD_INFO")
+
+
+def _info_input(name="info", tooltip=""):
+    return _esd_io.input(name, tooltip)
+
+
+def _info_output(name="info"):
+    return _esd_io.output(name)
+
+
+def _parse_info(info) -> dict:
+    return _esd_io.parse(info)
+
+
+def _pack_info(d: dict):
+    return _esd_io.pack(d)
+
+
+def _cache_put(key, body):
+    lru_put(_preview_cache, _preview_cache_lock, key, body, MAX_PREVIEW_CACHE)
 import av
 
 # ========== 缓存与常量 ==========
@@ -328,94 +359,7 @@ def _extract_audio_media(video_path: str):
 
 _last_preview_frame = {}
 _warm_generation = {}
-_AV_SEQUENTIAL_WINDOW = 24  
-
 # ========== ★ 常驻 AV 容器：BGR uint8 快速解码 ==========
-_av_lock = threading.Lock()
-_av_state = {"path": None, "container": None, "stream": None, "fps": 24.0, "last_idx": -1}
-
-
-def _av_reset_locked():
-    if _av_state["container"] is not None:
-        try:
-            _av_state["container"].close()
-        except Exception:
-            pass
-    _av_state.update(path=None, container=None, stream=None, last_idx=-1)
-
-
-def _decode_frame_bgr(video_path: str, frame_idx: int) -> np.ndarray:
-    """返回 BGR uint8 ndarray。
-    常驻容器只 open 一次；目标帧在当前位置前方 _AV_SEQUENTIAL_WINDOW 帧内时
-    直接顺序解码（拖动预览的大多数请求命中此路径），跳变/回退才 seek。
-    全程 uint8、无 torch、无色彩转换。失败时复位容器并抛出，由上层回退。"""
-    with _av_lock:
-        try:
-            if _av_state["path"] != video_path or _av_state["container"] is None:
-                _av_reset_locked()
-                container = av.open(video_path)
-                stream = container.streams.video[0]
-                try:
-                    stream.thread_type = "AUTO"   
-                except Exception:
-                    pass
-                fps = float(stream.average_rate) if stream.average_rate else 24.0
-                _av_state.update(path=video_path, container=container, stream=stream, fps=fps, last_idx=-1)
-
-            container, stream = _av_state["container"], _av_state["stream"]
-            fps, tb = _av_state["fps"], stream.time_base
-            sequential = 0 <= _av_state["last_idx"] < frame_idx <= _av_state["last_idx"] + _AV_SEQUENTIAL_WINDOW
-            if not sequential:
-                seek_time = max(0.0, frame_idx / fps - 0.1)
-                container.seek(int(seek_time / tb), stream=stream, any_frame=False, backward=True)
-                _av_state["last_idx"] = -1
-            img = None
-            for frame in container.decode(stream):
-                if frame.pts is None:
-                    continue
-                cur = round(float(frame.pts * tb) * fps)
-                _av_state["last_idx"] = cur
-                if cur >= frame_idx:
-                    img = frame.to_ndarray(format="bgr24")
-                    break
-            if img is None:
-                raise ValueError(f"Frame {frame_idx} not found")
-            return img
-        except Exception:
-            _av_reset_locked()
-            raise
-
-
-def _decode_frame_bgr_fallback(video_path: str, frame_idx: int) -> np.ndarray:
-    """保守回退：独立 open 一次的 AV 读取；仍失败再用 cv2（天然 BGR）。"""
-    try:
-        with av.open(video_path) as container:
-            stream = container.streams.video[0]
-            fps = float(stream.average_rate) if stream.average_rate else 24.0
-            tb = stream.time_base
-            seek_time = max(0.0, frame_idx / fps - 0.1)
-            container.seek(int(seek_time / tb), stream=stream, any_frame=False, backward=True)
-            for frame in container.decode(stream):
-                if frame.pts is None:
-                    continue
-                if round(float(frame.pts * tb) * fps) >= frame_idx:
-                    return frame.to_ndarray(format="bgr24")
-            raise ValueError(f"Frame {frame_idx} not found")
-    except Exception:
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            raise IOError(f"无法打开视频: {video_path}")
-        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        if total > 0 and frame_idx >= total:
-            frame_idx = total - 1
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-        ret, frame = cap.read()
-        cap.release()
-        if not ret or frame is None:
-            raise ValueError(f"Frame {frame_idx} 读取失败")
-        return frame
-
-
 def build_preview_jpeg(video_path: str, frame_idx: int, size: int) -> bytes:
     """★ 纯 CPU 快路径：预生成缓存 → 解码(BGR uint8) → cv2.resize → JPEG 编码 → bytes"""
     body = _pregen_cache.get((video_path, frame_idx, size))
@@ -440,14 +384,6 @@ def build_preview_jpeg(video_path: str, frame_idx: int, size: int) -> bytes:
         raise RuntimeError("JPEG encode failed")
     return buf.tobytes()
 
-
-
-def _cache_put(key, body):
-    with _preview_cache_lock:
-        _preview_cache[key] = body
-        _preview_cache.move_to_end(key)
-        while len(_preview_cache) > MAX_PREVIEW_CACHE:
-            _preview_cache.popitem(last=False)
 
 
 def _warm_one(path, frame, size, gen):
@@ -723,42 +659,6 @@ def detect_scenes_direct(video_path: str, threshold: float) -> list:
     return cuts
 
 
-def audio_to_waveform(audio_tensor: torch.Tensor, target_points: int = WAVEFORM_POINTS) -> list:
-    if audio_tensor is None:
-        return []
-    if not isinstance(audio_tensor, torch.Tensor):
-        try:
-            audio_tensor = torch.tensor(audio_tensor, dtype=torch.float32)
-        except Exception:
-            return []
-    audio_tensor = audio_tensor.float()
-    if audio_tensor.dim() == 3:
-        audio_tensor = audio_tensor[0]
-    if audio_tensor.dim() == 2:
-        if audio_tensor.shape[0] == 1 or audio_tensor.shape[1] == 1:
-            audio_tensor = audio_tensor.flatten()
-        elif audio_tensor.shape[0] < audio_tensor.shape[1]:
-            audio_tensor = torch.mean(audio_tensor, dim=0)
-        else:
-            audio_tensor = torch.mean(audio_tensor, dim=1)
-    if audio_tensor.dim() != 1:
-        audio_tensor = audio_tensor.flatten()
-    if audio_tensor.shape[0] > target_points:
-        audio_reshaped = audio_tensor.view(1, 1, -1)
-        downsampled = F.interpolate(audio_reshaped, size=target_points, mode='linear', align_corners=False)
-        peaks = downsampled.squeeze().cpu().tolist()
-    else:
-        peaks = audio_tensor.cpu().tolist()
-    if len(peaks) < target_points:
-        indices = np.linspace(0, len(peaks) - 1, target_points)
-        peaks = np.interp(indices, np.arange(len(peaks)), peaks).tolist()
-    peaks = [abs(v) for v in peaks]
-    max_val = max(peaks) if peaks else 1.0
-    if max_val > 0:
-        peaks = [min(1.0, v / max_val) for v in peaks]
-    return peaks
-
-
 def get_video_info(video_path: str) -> dict:
     """获取视频信息，返回 total_frames, fps, width, height, waveform"""
     total_frames = 0
@@ -887,52 +787,6 @@ def _parse_ranges(raw) -> list:
             except Exception:
                 continue
     return ranges
-
-
-def _make_info_type():
-    """优先 io.Custom("ESD_INFO")；旧版 API 回退 STRING（info 值为 JSON 字符串），行为一致。"""
-    try:
-        t = io.Custom("ESD_INFO")
-        if hasattr(t, "Input") and hasattr(t, "Output"):
-            return t
-    except Exception:
-        pass
-    return None
-
-_ESD_INFO = _make_info_type()
-
-
-def _info_input(name="info", tooltip=""):
-    if _ESD_INFO is not None:
-        return _ESD_INFO.Input(name, tooltip=tooltip)
-    return io.String.Input(name, default="{}", tooltip=tooltip)
-
-
-def _info_output(name="info"):
-    if _ESD_INFO is not None:
-        return _ESD_INFO.Output(name)
-    return io.String.Output(name)
-
-
-def _parse_info(info) -> dict:
-    if isinstance(info, dict):
-        return info
-    if isinstance(info, str):
-        try:
-            v = json.loads(info)
-            return v if isinstance(v, dict) else {}
-        except Exception:
-            return {}
-    return {}
-
-
-def _pack_info(d: dict):
-    if _ESD_INFO is not None:
-        return d
-    try:
-        return json.dumps(d)
-    except Exception:
-        return "{}"
 
 
 def _probe_video_size(video_path: str) -> tuple:

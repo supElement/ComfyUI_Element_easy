@@ -14,6 +14,42 @@ from server import PromptServer
 from aiohttp import web
 from comfy_api.latest import io
 
+from .element_easy.video_io import (
+    decode_frame_bgr as _decode_frame_bgr,
+    decode_frame_bgr_fallback as _decode_frame_bgr_fallback,
+    lru_put,
+    audio_to_waveform,
+    TypedInfoIO,
+)
+
+# ref 类型封装（EMR_REF 优先，旧 API 回退 STRING/JSON）
+_emr_io = TypedInfoIO("EMR_REF")
+
+
+def _ref_input(name="info", tooltip=""):
+    return _emr_io.input(name, tooltip)
+
+
+def _ref_output(name="REF_ALL_IN_ONE"):
+    return _emr_io.output(name)
+
+
+def _parse_ref(info) -> dict:
+    return _emr_io.parse(info)
+
+
+def _pack_ref(d: dict):
+    return _emr_io.pack(d)
+
+
+def _cache_put(key, body):
+    lru_put(_preview_cache, _preview_lock, key, body, MAX_PREVIEW_CACHE)
+
+
+def _audio_to_waveform(tensor, target_points=None):
+    # 延迟取默认值：WAVEFORM_POINTS 在本函数定义之后才初始化
+    return audio_to_waveform(tensor, target_points if target_points is not None else WAVEFORM_POINTS)
+
 # ================= 常量与缓存 =================
 WAVEFORM_POINTS = 3000
 MAX_OUT_FRAMES = 1200          # 单视频槽输出帧数硬上限
@@ -47,32 +83,6 @@ def _kind_of(ext: str):
     if ext in VID_EXTS: return "video"
     if ext in AUD_EXTS: return "audio"
     return None
-
-def _audio_to_waveform(tensor: torch.Tensor, target_points: int = WAVEFORM_POINTS) -> list:
-    if tensor is None: return []
-    if not isinstance(tensor, torch.Tensor):
-        try: tensor = torch.tensor(tensor, dtype=torch.float32)
-        except Exception: return []
-    tensor = tensor.float()
-    if tensor.dim() == 3: tensor = tensor[0]
-    if tensor.dim() == 2:
-        if tensor.shape[0] == 1 or tensor.shape[1] == 1: tensor = tensor.flatten()
-        elif tensor.shape[0] < tensor.shape[1]: tensor = torch.mean(tensor, dim=0)
-        else: tensor = torch.mean(tensor, dim=1)
-    if tensor.dim() != 1: tensor = tensor.flatten()
-    if tensor.shape[0] > target_points:
-        import torch.nn.functional as F
-        d = F.interpolate(tensor.view(1, 1, -1), size=target_points, mode="linear", align_corners=False)
-        peaks = d.squeeze().cpu().tolist()
-    else:
-        peaks = tensor.cpu().tolist()
-    if len(peaks) < target_points:
-        idx = np.linspace(0, len(peaks) - 1, target_points)
-        peaks = np.interp(idx, np.arange(len(peaks)), peaks).tolist()
-    peaks = [abs(v) for v in peaks]
-    mx = max(peaks) if peaks else 1.0
-    if mx > 0: peaks = [min(1.0, v / mx) for v in peaks]
-    return peaks
 
 def _decode_audio_wave(path: str, max_seconds: float = 0.0):
     """整轨解码 → (waveform list, sr, duration)。★ 按 pts 对齐到容器时间轴：开头偏移补静音、流内 pts 空洞补静音，
@@ -211,66 +221,6 @@ def _probe_media_cached(path: str) -> dict:
     return payload
 
 # ================= 帧预览（视频帧 / 整图） =================
-_AV_LOCK = threading.Lock()
-_AV_STATE = {"path": None, "container": None, "stream": None, "fps": 24.0, "last_idx": -1}
-
-def _av_reset_locked():
-    if _AV_STATE["container"] is not None:
-        try: _AV_STATE["container"].close()
-        except Exception: pass
-    _AV_STATE.update(path=None, container=None, stream=None, last_idx=-1)
-
-def _decode_frame_bgr(video_path: str, frame_idx: int) -> np.ndarray:
-    with _AV_LOCK:
-        try:
-            if _AV_STATE["path"] != video_path or _AV_STATE["container"] is None:
-                _av_reset_locked()
-                container = av.open(video_path)
-                stream = container.streams.video[0]
-                fps = float(stream.average_rate) if stream.average_rate else 24.0
-                _AV_STATE.update(path=video_path, container=container, stream=stream, fps=fps, last_idx=-1)
-            container, stream = _AV_STATE["container"], _AV_STATE["stream"]
-            fps, tb = _AV_STATE["fps"], stream.time_base
-            sequential = 0 <= _AV_STATE["last_idx"] < frame_idx <= _AV_STATE["last_idx"] + 24
-            if not sequential:
-                seek_time = max(0.0, frame_idx / fps - 0.1)
-                container.seek(int(seek_time / tb), stream=stream, any_frame=False, backward=True)
-                _AV_STATE["last_idx"] = -1
-            img = None
-            for frame in container.decode(stream):
-                if frame.pts is None: continue
-                cur = round(float(frame.pts * tb) * fps)
-                _AV_STATE["last_idx"] = cur
-                if cur >= frame_idx:
-                    img = frame.to_ndarray(format="bgr24"); break
-            if img is None: raise ValueError(f"Frame {frame_idx} not found")
-            return img
-        except Exception:
-            _av_reset_locked(); raise
-
-def _decode_frame_bgr_fallback(video_path: str, frame_idx: int) -> np.ndarray:
-    try:
-        with av.open(video_path) as container:
-            stream = container.streams.video[0]
-            fps = float(stream.average_rate) if stream.average_rate else 24.0
-            tb = stream.time_base
-            container.seek(int(max(0.0, frame_idx / fps - 0.1) / tb), stream=stream,
-                           any_frame=False, backward=True)
-            for frame in container.decode(stream):
-                if frame.pts is None: continue
-                if round(float(frame.pts * tb) * fps) >= frame_idx:
-                    return frame.to_ndarray(format="bgr24")
-            raise ValueError(f"Frame {frame_idx} not found")
-    except Exception:
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened(): raise IOError(f"无法打开视频: {video_path}")
-        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        if total > 0 and frame_idx >= total: frame_idx = total - 1
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-        ret, frame = cap.read(); cap.release()
-        if not ret or frame is None: raise ValueError(f"Frame {frame_idx} 读取失败")
-        return frame
-
 def _build_preview(path: str, frame_idx: int, size: int,
                    crop=None, overlay: str = None, alpha: bool = False) -> bytes:
     """alpha=True → 返回带透明通道的 PNG（用于笔刷层）；否则 JPEG。
@@ -327,11 +277,6 @@ def _build_preview(path: str, frame_idx: int, size: int,
     if not ok: raise RuntimeError("JPEG encode failed")
     return buf.tobytes()
 
-
-def _cache_put(key, body):
-    with _preview_lock:
-        _preview_cache[key] = body; _preview_cache.move_to_end(key)
-        while len(_preview_cache) > MAX_PREVIEW_CACHE: _preview_cache.popitem(last=False)
 
 # ================= 音轨整轨转发 =================
 _PREVIEW_SR = 22050  
@@ -536,35 +481,6 @@ def _decode_range_cached(path: str, s: int, e: int) -> dict:
     return got
 
 # ================= info 类型（EMR_REF） =================
-def _make_ref_type():
-    try:
-        t = io.Custom("EMR_REF")
-        if hasattr(t, "Input") and hasattr(t, "Output"): return t
-    except Exception: pass
-    return None
-_EMR_REF = _make_ref_type()
-
-def _ref_input(name="info", tooltip=""):
-    if _EMR_REF is not None: return _EMR_REF.Input(name, tooltip=tooltip)
-    return io.String.Input(name, default="{}", tooltip=tooltip)
-
-def _ref_output(name="REF_ALL_IN_ONE"):
-    if _EMR_REF is not None: return _EMR_REF.Output(name)
-    return io.String.Output(name)
-
-def _parse_ref(info) -> dict:
-    if isinstance(info, dict): return info
-    if isinstance(info, str):
-        try:
-            v = json.loads(info); return v if isinstance(v, dict) else {}
-        except Exception: return {}
-    return {}
-
-def _pack_ref(d: dict):
-    if _EMR_REF is not None: return d
-    try: return json.dumps(d)
-    except Exception: return "{}"
-
 # ================= 槽位定义（与 convert 输出端口一一对应） =================
 SLOT_ORDER = (
     ["first_frame", "last_frame"]
@@ -1248,4 +1164,3 @@ async def emr_collect_write_handler(request):
         return web.json_response({"path": target})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
-

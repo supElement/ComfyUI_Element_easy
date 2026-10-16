@@ -87,10 +87,10 @@ class Element_SigmaGraph_Curve:
                     points_data = [{"x": float(i) / (len(nums) - 1), "y": float(y)} for i, y in enumerate(nums)]
             except Exception as e:
                 print(f"[Element_SigmaGraph_Curve Warning] Invalid graph_data input format: {e}. Using default points.")
-                return default_points_list
+                return default_points_list, is_curve
         except (ValueError, TypeError) as e:
             print(f"[Element_SigmaGraph_Curve Warning] Invalid graph_data input: {e}. Using default points.")
-            return default_points_list
+            return default_points_list, is_curve
 
         try:
             valid_points = []
@@ -109,10 +109,10 @@ class Element_SigmaGraph_Curve:
 
         except Exception as e:
             print(f"[Element_SigmaGraph_Curve Warning] Error processing points: {e}. Using default.")
-            return default_points_list
+            return default_points_list, is_curve
 
         if not points:
-             return default_points_list
+             return default_points_list, is_curve
 
         has_start = any(abs(p['x'] - 0.0) < self.EPSILON for p in points)
         has_end = any(abs(p['x'] - 1.0) < self.EPSILON for p in points)
@@ -279,7 +279,10 @@ class Element_SigmaGraph_Curve:
             else:
                 print("[Element_SigmaGraph_Curve Warning] custom_sigmas 输入的数据过短，已回退至界面曲线数据。")
 
-        steps = max(1, int(steps))
+        # steps 契约为 INT，但工作流存量/外部写值可能送来浮点。
+        # int() 截断（int(6.6)=6）曾造成"sigma 比 steps+1 少 1"；
+        # 四舍五入，与前端加载时的量化保持一致。
+        steps = max(1, int(float(steps) + 0.5))
         points, is_curve = self._validate_and_clean_points(graph_data)
         num_sigmas_to_generate = steps + 1
 

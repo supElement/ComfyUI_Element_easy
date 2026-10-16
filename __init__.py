@@ -12,6 +12,7 @@ from .black_white_color import BlackWhiteColor
 from .frame_calc import FrameCalculator
 from .Image_Size import ElementEasyImageSize
 from .Element_SigmaGraph_Curve import Element_SigmaGraph_Curve
+from .Element_listGraph_Curve import Element_listGraph_Curve
 from .Element_ImageCurve import Element_ImageCurve
 from .Element_HueSat import ElementHueSat
 from .Element_HueHue import ElementHueHue
@@ -33,6 +34,7 @@ NODE_CLASS_MAPPINGS = {
     "FrameCalculator_Element": FrameCalculator,
     "ElementEasyImageSize": ElementEasyImageSize,
     "Element_SigmaGraph_Curve": Element_SigmaGraph_Curve,
+    "Element_listGraph_Curve": Element_listGraph_Curve,
     "Element_ImageCurve": Element_ImageCurve,
     "ElementHueSat": ElementHueSat,
     "ElementHueHue": ElementHueHue,
@@ -54,6 +56,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "FrameCalculator_Element": "Frame Calculator",
     "ElementEasyImageSize": "ImageSize Div",
     "Element_SigmaGraph_Curve": "Element_SigmaGraph",
+    "Element_listGraph_Curve": "Element_ListGraph",
     "Element_ImageCurve": "Element ImageCurve",
     "ElementHueSat": "Element HueSat",
     "ElementHueHue": "Element HueHue",

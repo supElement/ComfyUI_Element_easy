@@ -1,48 +1,25 @@
-from aiohttp import web
-import torch
-import torch.nn.functional as F
+# Element_ImageCurve.py —— RGB 四通道曲线节点
+# 共享基建（设备/精度选择、节点缓存、张量→PIL、live 路由）见 element_easy/，
+# 本文件只保留 RGB 曲线特有逻辑（CubicSpline 插值、主曲线→分通道映射、饱和度）。
 import json
-import numpy as np
-from scipy.interpolate import CubicSpline
-import folder_paths
 import os
 import random
 import time
-import uuid
-from PIL import Image
-from threading import Lock
 
-try:
-    from server import PromptServer
-except Exception:
-    PromptServer = None
+import numpy as np
+import torch
+import torch.nn.functional as F
+from scipy.interpolate import CubicSpline
+
+import folder_paths
+from .element_easy.device_utils import get_processing_device, get_processing_dtype, node_image_cache
+from .element_easy.curve_core import register_live_preview_route
+from .element_easy.image_utils import tensor_frame_to_pil
 
 try:
     from comfy.utils import ProgressBar
 except Exception:
     ProgressBar = None
-
-
-GLOBAL_IMAGE_CACHE = {}
-CACHE_LOCK = Lock()
-
-USE_FP16_ON_CUDA = False
-
-
-def _get_processing_dtype(device, input_dtype):
-    if device.type == "cuda" and USE_FP16_ON_CUDA:
-        return torch.float16
-    return input_dtype
-
-
-def _get_processing_device(image, use_gpu=True):
-    if not use_gpu:
-        return image.device
-    if image.device.type != "cpu":
-        return image.device
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    return image.device
 
 
 def _safe_json_loads(curve_data_str):
@@ -84,36 +61,14 @@ def _get_lut(points, x_eval):
             x = np.append(x, 1.0)
             y = np.append(y, y[-1])
 
-        # bc_type='natural' 
+        # bc_type='natural'
         interpolator = CubicSpline(x, y, bc_type='natural')
-        
+
         y_eval = interpolator(x_eval)
         return np.clip(y_eval, 0.0, 1.0).astype(np.float32)
     except Exception as e:
         print(f"Curve Interpolation Error: {e}")
         return x_eval
-
-
-def _tensor_frame_to_pil(t):
-    """
-    t: [H,W,C], float tensor in [0,1]
-    """
-    if t.is_cuda:
-        torch.cuda.synchronize(t.device)
-    t = t.detach().to("cpu", dtype=torch.float32).contiguous()
-    arr = (255.0 * t.numpy()).clip(0, 255).astype(np.uint8)
-
-    if arr.ndim == 2:
-        return Image.fromarray(arr, mode="L")
-
-    if arr.shape[-1] == 1:
-        return Image.fromarray(arr[..., 0], mode="L")
-    elif arr.shape[-1] >= 3:
-        # Comfy IMAGE 一般是 RGB，这里只取前3通道做预览
-        return Image.fromarray(arr[..., :3], mode="RGB")
-    else:
-        # 异常情况兜底
-        return Image.fromarray(np.zeros((arr.shape[0], arr.shape[1], 3), dtype=np.uint8), mode="RGB")
 
 
 @torch.inference_mode()
@@ -129,8 +84,8 @@ def compute_curve_logic(
     original_device = image.device
     original_dtype = image.dtype
 
-    process_device = _get_processing_device(image, use_gpu=use_gpu)
-    process_dtype = _get_processing_dtype(process_device, original_dtype)
+    process_device = get_processing_device(image, use_gpu=use_gpu)
+    process_dtype = get_processing_dtype(process_device, original_dtype)
 
     if image.device != process_device or image.dtype != process_dtype:
         image = image.to(device=process_device, dtype=process_dtype)
@@ -198,7 +153,6 @@ class Element_ImageCurve:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "image": ("IMAGE",),
                 "curve_data": (
                     "STRING",
                     {
@@ -209,6 +163,11 @@ class Element_ImageCurve:
                 "preview_size": ("INT", {"default": 512, "min": 256, "max": 4096, "step": 64}),
                 "frame_index": ("INT", {"default": 0, "min": 0, "max": 9999, "step": 1}),
                 "output_mode": ("BOOLEAN", {"default": False, "label": "Output"}),
+            },
+            "optional": {
+                # 曲线调参工具：不接图也应能独立运行（required 未连接会被
+                # ComfyUI 拒绝执行，改为可选 + 黑图兜底）
+                "image": ("IMAGE",),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID"
@@ -221,15 +180,24 @@ class Element_ImageCurve:
     CATEGORY = "Element_easy/image"
     OUTPUT_NODE = True
 
-    def apply_curve(self, image, curve_data, saturation, preview_size, frame_index, output_mode, unique_id):
+    def apply_curve(self, image=None, curve_data=None, saturation=1.0, preview_size=512,
+                    frame_index=0, output_mode=False, unique_id=None):
+        # image=None 必须是签名默认值：ComfyUI 对未连接的 optional 输入
+        # 是从调用中整个省略该参数（不传 None），无默认值会直接
+        # TypeError: missing 1 required positional argument 'image'。
+        if image is None:
+            # rgthree 语义：未连接输入时节点照常执行但零操作。
+            # 返回同形态 dict、result 为 None —— ui 发空消息；下游若消费
+            # 本节点输出需自行处理 None（Element 家族下游会优雅跳过，
+            # 第三方必需 IMAGE 的节点将把错误定位在其自身）。
+            return {"ui": {"bg_image": [], "batch_size": []}, "result": (None,)}
         batch_size = int(image.shape[0])
 
-        with CACHE_LOCK:
-            GLOBAL_IMAGE_CACHE[unique_id] = {
-                "image": image.detach().to("cpu", dtype=torch.float32).contiguous(),
-                "preview_size": int(preview_size),
-                "batch_size": batch_size
-            }
+        node_image_cache.put(unique_id, {
+            "image": image.detach().to("cpu", dtype=torch.float32).contiguous(),
+            "preview_size": int(preview_size),
+            "batch_size": batch_size
+        })
 
         if not output_mode:
             idx = max(0, min(int(frame_index), batch_size - 1)) if batch_size > 0 else 0
@@ -253,7 +221,7 @@ class Element_ImageCurve:
         os.makedirs(temp_dir, exist_ok=True)
 
         if out_tensor.shape[0] > 0:
-            img_pil = _tensor_frame_to_pil(out_tensor[0])
+            img_pil = tensor_frame_to_pil(out_tensor[0])
             filename = f"curve_preview_{int(time.time()*1000)}_{random.randint(1, 1000000)}.png"
             img_pil.save(os.path.join(temp_dir, filename))
             results.append({"filename": filename, "subfolder": "", "type": "temp"})
@@ -261,57 +229,21 @@ class Element_ImageCurve:
         return {"ui": {"bg_image": results, "batch_size": [batch_size]}, "result": (out_tensor,)}
 
 
-if PromptServer is not None and getattr(PromptServer, "instance", None) is not None:
-    @PromptServer.instance.routes.post("/element_image_curve/live_preview")
-    async def live_preview(request):
-        try:
-            data = await request.json()
-        except Exception:
-            return web.json_response({"error": "Invalid JSON"}, status=400)
+def _image_curve_live_compute(image_frame, data, preview_size):
+    curve_data_str = data.get("curve_data", "{}")
+    saturation = float(data.get("saturation", 1.0))
+    return compute_curve_logic(
+        image_frame,
+        curve_data_str,
+        saturation,
+        preview_mode=True,
+        preview_size=preview_size,
+        use_gpu=True
+    )
 
-        unique_id = data.get("node_id")
-        if not unique_id:
-            return web.json_response({"error": "Missing node_id"}, status=400)
 
-        with CACHE_LOCK:
-            cache_data = GLOBAL_IMAGE_CACHE.get(unique_id)
-
-        if cache_data is None:
-            return web.json_response({"error": "No image cached"}, status=400)
-
-        image = cache_data["image"]
-        batch_size = int(cache_data.get("batch_size", 1))
-        default_preview_size = int(cache_data.get("preview_size", 512))
-
-        curve_data_str = data.get("curve_data", "{}")
-        saturation = float(data.get("saturation", 1.0))
-        preview_size = int(data.get("preview_size", default_preview_size))
-        frame_index = int(data.get("frame_index", 0))
-
-        idx = max(0, min(frame_index, batch_size - 1)) if batch_size > 0 else 0
-        image_frame = image[idx:idx + 1] if batch_size > 0 else image
-
-        out_tensor = compute_curve_logic(
-            image_frame,
-            curve_data_str,
-            saturation,
-            preview_mode=True,
-            preview_size=preview_size,
-            use_gpu=True
-        )
-
-        temp_dir = folder_paths.get_temp_directory()
-        os.makedirs(temp_dir, exist_ok=True)
-
-        # 每次唯一文件名，避免前端缓存导致首帧黑图
-        filename = f"curve_live_{unique_id}_{int(time.time()*1000)}_{uuid.uuid4().hex[:8]}.png"
-        filepath = os.path.join(temp_dir, filename)
-
-        img_pil = _tensor_frame_to_pil(out_tensor[0])
-        img_pil.save(filepath)
-
-        return web.json_response({
-            "filename": filename,
-            "subfolder": "",
-            "type": "temp"
-        })
+register_live_preview_route(
+    "/element_image_curve/live_preview",
+    "curve",
+    _image_curve_live_compute,
+)

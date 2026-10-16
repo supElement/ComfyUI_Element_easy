@@ -55,7 +55,7 @@
 
 **🔧 数值与文本小工具**
 
-- [Frame Calculator](#frame-calculator) · [ImageSize Div](#imagesize-div) · [random_chars](#random_chars) · [text_line_break](#text_line_break)
+- [Element_ListGraph](#Element_ListGraph) · [Frame Calculator](#frame-calculator) · [ImageSize Div](#imagesize-div) · [random_chars](#random_chars) · [text_line_break](#text_line_break)
 
 ---
 ## bug修复与优化
@@ -290,6 +290,15 @@ mask 描边：内外描边宽度和模糊度单独控制，支持非描边区域
 创建单色图像，色彩从色轮上选择，明度滑条控制亮度；吸管可在屏幕任意位置取色，如果浏览器非 Chrome / Edge 96+，吸管可能不可用，可改用旁边的调色板按钮中的吸管。
 
 <img width="1329" height="904" alt="image" src="https://github.com/user-attachments/assets/9dd2957b-e261-40ce-8041-87a83df33880" />
+
+---
+
+<a id="Element_ListGraph"></a>
+## Element_ListGraph
+
+<sub>v1.6.6 新增 </sub>
+
+与Element_SigmaGraph类似，只是输出为 float 和 string 列表，列表中元素数量与 steps 值相同，而非 steps + 1。可以连接到 [ComfyUI-Element_TileUpscale](https://github.com/supElement/ComfyUI-Element_TileUpscale) 的 reference_strength 参数，控制每步采样的图像参考强度。
 
 ---
 

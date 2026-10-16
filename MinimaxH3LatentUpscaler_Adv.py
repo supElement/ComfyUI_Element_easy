@@ -1,6 +1,9 @@
+# MinimaxH3LatentUpscaler_Adv.py —— 进阶版（共享实现见 element_easy/latent_utils.py）
+# 本文件保留 Adv 特有逻辑：conditioning 元数据处理（pass_through / NO_refs / refs）。
 import torch
 import comfy.utils
-from comfy import nested_tensor
+
+from .element_easy.latent_utils import upscale_latents
 
 
 class MinimaxH3LatentUpscaler_Adv:
@@ -69,68 +72,6 @@ class MinimaxH3LatentUpscaler_Adv:
         "update_meta fixes fl2va shape mismatch without re-running TE."
     )
 
-
-    def _compute_target_size(self, ref_tensor, width, height, spatial_compression):
-        if width == 0:
-            height = max(spatial_compression, height)
-            width = max(spatial_compression, round(ref_tensor.shape[-1] * height / ref_tensor.shape[-2]))
-        elif height == 0:
-            width = max(spatial_compression, width)
-            height = max(spatial_compression, round(ref_tensor.shape[-2] * width / ref_tensor.shape[-1]))
-        else:
-            width = max(spatial_compression, width)
-            height = max(spatial_compression, height)
-        return width, height
-
-    def _upscale_video_5d(self, tensor, latent_width, latent_height,
-                          upscale_method, crop, chunk_size=0, safe_precision=True):
-        b, c, t_frames, h, w = tensor.shape
-        original_dtype = tensor.dtype
-        device = tensor.device
-
-        if chunk_size <= 0:
-            chunk_size = t_frames
-
-        out_tensor = torch.empty(
-            (b, c, t_frames, latent_height, latent_width),
-            dtype=original_dtype, device=device
-        )
-
-        for i in range(0, t_frames, chunk_size):
-            end_i = min(i + chunk_size, t_frames)
-            chunk = tensor[:, :, i:end_i, :, :]
-            chunk_flat = chunk.permute(0, 2, 1, 3, 4).contiguous().view(-1, c, h, w)
-
-            if safe_precision and chunk_flat.is_floating_point():
-                chunk_flat = chunk_flat.float()
-
-            upscaled_flat = comfy.utils.common_upscale(
-                chunk_flat, latent_width, latent_height, upscale_method, crop
-            )
-            upscaled_flat = upscaled_flat.to(original_dtype)
-
-            upscaled_chunk = upscaled_flat.view(
-                b, end_i - i, c, latent_height, latent_width
-            ).permute(0, 2, 1, 3, 4)
-            out_tensor[:, :, i:end_i, :, :] = upscaled_chunk
-
-        return out_tensor
-
-    def _build_output(self, processed, is_comfy_nested, original_latent):
-        if is_comfy_nested:
-            try:
-                return nested_tensor.NestedTensor(processed)
-            except RuntimeError:
-                return processed
-        if isinstance(original_latent, tuple):
-            return tuple(processed)
-        if isinstance(original_latent, list):
-            try:
-                return nested_tensor.NestedTensor(processed)
-            except RuntimeError:
-                return processed
-        return processed
-
     def _process_conditioning(self, conditioning, latent_width, latent_height,
                               mode, upscale_method, crop):
         """
@@ -192,74 +133,14 @@ class MinimaxH3LatentUpscaler_Adv:
     def latentUpscale(self, samples, upscale_method, width, height, crop,
                       chunk_size=8, safe_precision="enable",
                       conditioning_mode="pass_through", conditioning=None):
-        spatial_compression = 16
-        use_safe_precision = (safe_precision == "enable")
-
         if width == 0 and height == 0:
             return (samples, conditioning)
 
-        s = samples.copy()
-        latent = samples["samples"]
-        is_comfy_nested = False
-
-        if hasattr(latent, "is_nested") and latent.is_nested:
-            latent_list = list(latent.unbind())
-            is_comfy_nested = True
-        elif isinstance(latent, (list, tuple)):
-            latent_list = list(latent)
-        else:
-            latent_list = None
-
-        if latent_list is not None:
-            ref_tensor = None
-            for t in latent_list:
-                if len(t.shape) == 5:
-                    ref_tensor = t
-                    break
-            if ref_tensor is None:
-                raise ValueError("No video tensor (5D) found in latent.")
-
-            width, height = self._compute_target_size(
-                ref_tensor, width, height, spatial_compression
-            )
-            latent_width = width // spatial_compression
-            latent_height = height // spatial_compression
-
-            processed = []
-            for t in latent_list:
-                if len(t.shape) == 5:
-                    processed.append(
-                        self._upscale_video_5d(
-                            t, latent_width, latent_height,
-                            upscale_method, crop,
-                            chunk_size=chunk_size,
-                            safe_precision=use_safe_precision,
-                        )
-                    )
-                else:
-                    processed.append(t)
-
-            s["samples"] = self._build_output(processed, is_comfy_nested, latent)
-
-        else:
-            ref_tensor = latent
-            width, height = self._compute_target_size(
-                ref_tensor, width, height, spatial_compression
-            )
-            latent_width = width // spatial_compression
-            latent_height = height // spatial_compression
-
-            if len(ref_tensor.shape) == 5:
-                s["samples"] = self._upscale_video_5d(
-                    ref_tensor, latent_width, latent_height,
-                    upscale_method, crop,
-                    chunk_size=chunk_size,
-                    safe_precision=use_safe_precision,
-                )
-            else:
-                s["samples"] = comfy.utils.common_upscale(
-                    ref_tensor, latent_width, latent_height, upscale_method, crop
-                )
+        s, latent_width, latent_height = upscale_latents(
+            samples, width, height, upscale_method, crop,
+            chunk_size=chunk_size,
+            safe_precision=(safe_precision == "enable"),
+        )
 
         cond_out = self._process_conditioning(
             conditioning, latent_width, latent_height,
@@ -272,6 +153,7 @@ class MinimaxH3LatentUpscaler_Adv:
 NODE_CLASS_MAPPINGS = {
     "MinimaxH3LatentUpscaler_Adv": MinimaxH3LatentUpscaler_Adv,
 }
+
 NODE_DISPLAY_NAME_MAPPINGS = {
     "MinimaxH3LatentUpscaler_Adv": "Minimax_H3-LatentUpscaler_Adv",
 }

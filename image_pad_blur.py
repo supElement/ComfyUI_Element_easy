@@ -9,6 +9,7 @@ import torchvision.transforms.functional as TF
 import comfy.model_management
 import folder_paths
 from PIL import Image
+from .element_easy.image_utils import parse_color_str, tensor_frame_to_pil
 from threading import Lock
 from aiohttp import web
 
@@ -71,30 +72,6 @@ def _parse_edges(raw):
     return edges, replace
 
 
-def _parse_color(color_str):
-    color_str = color_str.strip().replace(" ", "")
-    r, g, b = 0, 0, 0
-    if color_str.startswith("#"):
-        try:
-            hex_code = color_str.lstrip('#')
-            if len(hex_code) == 6:
-                r = int(hex_code[0:2], 16)
-                g = int(hex_code[2:4], 16)
-                b = int(hex_code[4:6], 16)
-        except ValueError:
-            pass
-    elif "," in color_str:
-        try:
-            parts = color_str.split(",")
-            if len(parts) >= 3:
-                r = int(parts[0])
-                g = int(parts[1])
-                b = int(parts[2])
-        except ValueError:
-            pass
-    return r / 255.0, g / 255.0, b / 255.0
-
-
 def _safe_pad(input_tensor, pad, mode, value=0):
     left, right, top, bottom = pad
     if mode in ['constant', 'replicate']:
@@ -115,16 +92,6 @@ def _safe_pad(input_tensor, pad, mode, value=0):
         top -= p_t
         bottom -= p_b
     return current
-
-
-def _tensor_to_pil(t):
-    t = t.detach().to("cpu", dtype=torch.float32).contiguous()
-    arr = (255.0 * t.numpy()).clip(0, 255).astype(np.uint8)
-    if arr.ndim == 2:
-        return Image.fromarray(arr, "L")
-    if arr.shape[-1] == 1:
-        return Image.fromarray(arr[..., 0], "L")
-    return Image.fromarray(arr[..., :3], "RGB")
 
 
 def _ensure_source_pngs(entry):
@@ -152,7 +119,7 @@ def _ensure_source_pngs(entry):
     os.makedirs(temp_dir, exist_ok=True)
     tag = uuid.uuid4().hex[:8]
     name_i = f"padblur_src_{tag}.png"
-    _tensor_to_pil(img_s[0]).save(os.path.join(temp_dir, name_i))
+    tensor_frame_to_pil(img_s[0]).save(os.path.join(temp_dir, name_i))
     entry["src_img"] = {"filename": name_i, "subfolder": "", "type": "temp"}
     if mask_s is not None:
         arr = (mask_s[0].cpu().numpy() * 255.0).clip(0, 255).astype(np.uint8)
@@ -259,7 +226,7 @@ def _run_pipeline(img_tensor, user_mask, p, device):
 
     # --- 拼贴（不模糊）---
     if pad_mode == "constant":
-        r, g, b = _parse_color(p["background_color"])
+        r, g, b = (x / 255.0 for x in parse_color_str(p["background_color"]))
         canvas = torch.zeros((B, C, temp_H, temp_W), device=device, dtype=torch.float32)
         canvas[:, 0, :, :] = r
         canvas[:, 1, :, :] = g
@@ -346,7 +313,6 @@ class ImagePadBlur:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "image": ("IMAGE",),
                 "target_width": ("INT", {"default": 1024, "min": 0, "max": 8192, "step": 1}),
                 "target_height": ("INT", {"default": 1024, "min": 0, "max": 8192, "step": 1}),
                 "div": ("INT", {"default": 8, "min": 1, "max": 512, "step": 1}),
@@ -370,6 +336,7 @@ class ImagePadBlur:
                 "mask_replace": ("BOOLEAN", {"default": False}),
             },
             "optional": {
+                "image": ("IMAGE",),
                 "mask": ("MASK",),
                 "ui_data": ("STRING", {"default": ""}),
             },
@@ -384,11 +351,16 @@ class ImagePadBlur:
     CATEGORY = "Element_easy/image"
     OUTPUT_NODE = True  
 
-    def execute(self, image, target_width, target_height, div, alignment, x_offset, y_offset,
-                left, top, right, bottom, feathering, content_blur, pad_mode, background_color,
-                scale_width, scale_height, feather_edges, mask_replace,
-                unique_id=None, mask=None, ui_data=None):
+    def execute(self, image=None, target_width=1024, target_height=1024, div=8, alignment="center",
+                x_offset=0, y_offset=0, left=0, top=0, right=0, bottom=0, feathering=50,
+                content_blur=0, pad_mode="constant", background_color="#000000",
+                scale_width=0, scale_height=0, feather_edges="left,top,right,bottom",
+                mask_replace=False, unique_id=None, mask=None, ui_data=None):
         device = comfy.model_management.get_torch_device()
+
+        if image is None:
+
+            return {"ui": {"preview_image": []}, "result": (None, None)}
 
         if image.dim() == 4:
             c_in = image.shape[-1]
@@ -461,7 +433,7 @@ class ImagePadBlur:
                 temp_dir = folder_paths.get_temp_directory()
                 os.makedirs(temp_dir, exist_ok=True)
                 filename = f"padblur_exec_{int(time.time() * 1000)}_{random.randint(1, 1000000)}.png"
-                _tensor_to_pil(final_image[0]).save(os.path.join(temp_dir, filename))
+                tensor_frame_to_pil(final_image[0]).save(os.path.join(temp_dir, filename))
                 results.append({"filename": filename, "subfolder": "", "type": "temp",
                                 "width": int(final_image.shape[2]),
                                 "height": int(final_image.shape[1])})

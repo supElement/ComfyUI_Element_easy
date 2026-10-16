@@ -12,6 +12,8 @@ from server import PromptServer
 from aiohttp import web
 import node_helpers
 
+from .element_easy.image_utils import scan_sorted_images
+
 
 # --- API 路由定义 ---
 @PromptServer.instance.routes.post("/element_easy/images")
@@ -23,26 +25,7 @@ async def get_images(request):
     if not os.path.exists(folder_path) or not os.path.isdir(folder_path):
         return web.json_response({})
 
-    image_extensions = ["*.png", "*.jpg", "*.jpeg", "*.gif", "*.bmp", "*.webp", "*.tiff"]
-    files = []
-    for ext in image_extensions:
-        files.extend(glob.glob(os.path.join(folder_path, ext)))
-        files.extend(glob.glob(os.path.join(folder_path, ext.upper())))
-
-    if sort_method == "name_asc":
-        files.sort(key=lambda x: os.path.basename(x).lower())
-    elif sort_method == "name_desc":
-        files.sort(key=lambda x: os.path.basename(x).lower(), reverse=True)
-    elif sort_method == "newest_first":
-        files.sort(key=lambda x: os.path.getctime(x), reverse=True)
-    elif sort_method == "oldest_first":
-        files.sort(key=lambda x: os.path.getctime(x))
-    elif sort_method == "recently_modified":
-        files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-    elif sort_method == "oldest_modified":
-        files.sort(key=lambda x: os.path.getmtime(x))
-    else:
-        files.sort(key=lambda x: os.path.getctime(x), reverse=True)
+    files = scan_sorted_images(folder_path, sort_method)
 
     images = {}
     for file_path in files:
@@ -177,26 +160,7 @@ class LoadImageWithPreview:
             if not selected_image or not selected_image.strip():
                 if not os.path.exists(folder_path) or not os.path.isdir(folder_path):
                     raise ValueError(f"Directory does not exist: {folder_path}")
-                image_extensions = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff"]
-                files = []
-                for ext in image_extensions:
-                    files.extend(glob.glob(os.path.join(folder_path, ext)))
-                    files.extend(glob.glob(os.path.join(folder_path, ext.upper())))
-
-                if sort_method == "name_asc":
-                    files.sort(key=lambda x: os.path.basename(x).lower())
-                elif sort_method == "name_desc":
-                    files.sort(key=lambda x: os.path.basename(x).lower(), reverse=True)
-                elif sort_method == "newest_first":
-                    files.sort(key=lambda x: os.path.getctime(x), reverse=True)
-                elif sort_method == "oldest_first":
-                    files.sort(key=lambda x: os.path.getctime(x))
-                elif sort_method == "recently_modified":
-                    files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-                elif sort_method == "oldest_modified":
-                    files.sort(key=lambda x: os.path.getmtime(x))
-                else:
-                    files.sort(key=lambda x: os.path.getctime(x), reverse=True)
+                files = scan_sorted_images(folder_path, sort_method)
 
                 if not files:
                     raise ValueError(f"No images in {folder_path}")

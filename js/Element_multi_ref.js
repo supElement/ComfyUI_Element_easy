@@ -200,7 +200,7 @@ function installStyles() {
   .emr-segblk .ths img.ld{opacity:1}
   .emr-tl-inner.trimhov .emr-segblk{cursor:ew-resize}
   .emr-tl-inner.marking .emr-track,.emr-tl-inner.marking .emr-segblk{cursor:crosshair}
-  // .emr-tl-inner{height:140px}
+  /* .emr-tl-inner{height:140px} */
   .emr-tl-inner{height:auto}
   .emr-track.audio{height:48px;background:#111720;border-bottom:none}
   .emr-waveblk{position:absolute;top:3px;bottom:3px;border:1px solid rgba(86,136,236,.35);border-radius:3px;overflow:hidden;pointer-events:none}

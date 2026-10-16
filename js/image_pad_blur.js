@@ -2,6 +2,7 @@ import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 import { $el } from "../../scripts/ui.js";
 import { eeMarkForward } from "./ee_canvas_utils.js";
+import { eeRunIsolatedPromptCore } from "./ee_node_utils.js";
 
 
 const NODE_NAMES = ["ImagePadBlur_Element", "ImagePadBlur"];
@@ -132,6 +133,13 @@ app.registerExtension({
 });
 
 function setupPadBlurUI(node) {
+  // image 输入显示为普通端口形状（实心）：optional 声明只用于
+  // "未连接不阻塞校验"，端口外观保持默认实心
+  try {
+    const _img = node.inputs?.find((i) => i.name === "image");
+    if (_img) _img.shape = (typeof LiteGraph !== "undefined" && LiteGraph.ROUND_SHAPE) || 2;
+  } catch (e) {}
+
   const W = (n) => node.widgets?.find(w => w.name === n);
 
   // ========== ui_data：隐藏原生widget但保留value提交 ==========
@@ -628,32 +636,31 @@ function setupPadBlurUI(node) {
       c.drawImage(srcImg, X, Y, iw, ih);
       return;
     }
-    const iMin = Math.floor((0 - X) / iw) - 1;
-    const iMax = Math.floor((w - X) / iw) + 1;
-    const jMin = Math.floor((0 - Y) / ih) - 1;
-    const jMax = Math.floor((h - Y) / ih) + 1;
-    for (let j = jMin; j <= jMax; j++) {
-      for (let i = iMin; i <= iMax; i++) {
-        if (i === 0 && j === 0) continue;
-        const flipH = (((i % 2) + 2) % 2) === 1;
-        const flipV = (((j % 2) + 2) % 2) === 1;
-        c.save();
-        if (flipH && flipV) {
-          c.translate(X + (i + 1) * iw, Y + (j + 1) * ih);
-          c.scale(-1, -1);
-          c.drawImage(srcImg, 0, 0, iw, ih);
-        } else if (flipH) {
-          c.translate(X + (i + 1) * iw, Y + j * ih);
-          c.scale(-1, 1);
-          c.drawImage(srcImg, 0, 0, iw, ih);
-        } else if (flipV) {
-          c.translate(X + i * iw, Y + (j + 1) * ih);
-          c.scale(1, -1);
-          c.drawImage(srcImg, 0, 0, iw, ih);
-        } else {
-          c.drawImage(srcImg, X + i * iw, Y + j * ih, iw, ih);
-        }
-        c.restore();
+    // reflect 镜像波平铺：与后端 torch F.pad(mode="reflect") 对齐——反射不包含
+    // 边界像素（[a,b,c] pad 2 → [c,b,a,b,c]）。
+    if (iw <= 1 || ih <= 1) { 
+      c.drawImage(srcImg, X, Y, iw, ih);
+      return;
+    }
+    const rpw = 2 * (iw - 1), rph = 2 * (ih - 1);
+    const pc = document.createElement("canvas");
+    pc.width = rpw; pc.height = rph;
+    const pctx = pc.getContext("2d");
+    // 四象限合成一个 2(W-1)×2(H-1) 的完整镜像波周期。
+   
+    pctx.drawImage(srcImg, 0, 0, iw - 1, ih - 1, 0, 0, iw - 1, ih - 1);                       
+    pctx.save(); pctx.translate(rpw, 0); pctx.scale(-1, 1);
+    pctx.drawImage(srcImg, 1, 0, iw - 1, ih - 1, 0, 0, iw - 1, ih - 1); pctx.restore();         
+    pctx.save(); pctx.translate(0, rph); pctx.scale(1, -1);
+    pctx.drawImage(srcImg, 0, 1, iw - 1, ih - 1, 0, 0, iw - 1, ih - 1); pctx.restore();         
+    pctx.save(); pctx.translate(rpw, rph); pctx.scale(-1, -1);
+    pctx.drawImage(srcImg, 1, 1, iw - 1, ih - 1, 0, 0, iw - 1, ih - 1); pctx.restore();         
+
+    const ti0 = Math.floor((0 - X) / rpw), ti1 = Math.floor((w - X) / rpw);
+    const tj0 = Math.floor((0 - Y) / rph), tj1 = Math.floor((h - Y) / rph);
+    for (let tj = tj0; tj <= tj1; tj++) {
+      for (let ti = ti0; ti <= ti1; ti++) {
+        c.drawImage(pc, X + ti * rpw, Y + tj * rph, rpw, rph);
       }
     }
     c.drawImage(srcImg, X, Y, iw, ih);
@@ -802,7 +809,7 @@ function setupPadBlurUI(node) {
 
   // ========== 手势（拖拽=像素位移；缩放=反推相对zoom）==========
   canvas.addEventListener("pointerdown", (e) => {
-	if (e.button !== 0) return;
+        if (e.button !== 0) return;
     if (!view) return;
     const c = toCanvas(e);
     const h = hitHandle(c);
@@ -996,7 +1003,7 @@ function setupPadBlurUI(node) {
                       }
                   });
               }
-			  markInteractive();
+                          markInteractive();
               sanitizeOffsets(); syncSizeInputs(); serialize(); redraw();
               node.setDirtyCanvas?.(true, true);
           }, 350);
@@ -1279,109 +1286,16 @@ function setupPadBlurUI(node) {
     previewRunning = true;
     setPlayRunning(true);
     try {
-      // ① 完整API prompt
-      const p = await app.graphToPrompt();
-      const prompt = p.output;
-      const selectedNodeId = String(node.id);
-
-      // ② 递归追踪依赖 → 子图
-      const isolatedPrompt = {};
-      const traceDependencies = (nodeId) => {
-        if (!prompt[nodeId] || isolatedPrompt[nodeId]) return;
-        isolatedPrompt[nodeId] = prompt[nodeId];
-        const inputs = prompt[nodeId].inputs;
-        for (let key in inputs) {
-          const val = inputs[key];
-          if (Array.isArray(val) && val.length === 2) {
-            traceDependencies(String(val[0]));
-          }
-        }
-      };
-      traceDependencies(selectedNodeId);
-      if (!isolatedPrompt[selectedNodeId]) {
-        console.warn("[ImagePadBlur] node not found in prompt; pulling cache only");
-        refreshBestSource(); refreshMaskPreview();
-        return;
-      }
-
-      // ③ 直提子图到 /prompt（公开队列API；front:true 插队，预览不必等长队列）
-      const res = await api.fetchApi("/prompt", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt: isolatedPrompt,
-          client_id: api.clientId ?? undefined,
-          extra_data: { front: true },
-        }),
-      });
-      if (res.ok) {
-        try {
-          const j = await res.json();
-          console.log("[ImagePadBlur] preview queued:", j?.prompt_id);
-        } catch (e) {}
-      } else {
-        const errText = await res.text().catch(() => "");
-        throw new Error(`/prompt ${res.status}: ${errText.slice(0, 300)}`);
-      }
-    } catch (err) {
-      console.error("[ImagePadBlur] direct isolated run failed, trying legacy mute path:", err);
-      try { await legacyIsolatedRun(); }
-      catch (e2) { console.error("[ImagePadBlur] legacy path failed:", e2); }
+      await eeRunIsolatedPromptCore(node, "ImagePadBlur");
+    } catch (e2) {
+      console.error("[ImagePadBlur] isolated preview failed:", e2);
     } finally {
-      // 主路径：executed消息自动刷新画布；补两次延迟拉取防消息丢失
       setTimeout(() => { refreshBestSource(); refreshMaskPreview(); }, 800);
       setTimeout(() => { refreshBestSource(); refreshMaskPreview(); }, 2500);
       previewRunning = false;
       setPlayRunning(false);
     }
   };
-
-  // 遗留兜底（仅当直提失败时启用，控制台会记录）
-  async function legacyIsolatedRun() {
-    const p = await app.graphToPrompt();
-    const prompt = p.output;
-    const isolatedPrompt = {};
-    const traceDependencies = (nodeId) => {
-      if (!prompt[nodeId] || isolatedPrompt[nodeId]) return;
-      isolatedPrompt[nodeId] = prompt[nodeId];
-      const inputs = prompt[nodeId].inputs;
-      for (let key in inputs) {
-        const val = inputs[key];
-        if (Array.isArray(val) && val.length === 2) traceDependencies(String(val[0]));
-      }
-    };
-    traceDependencies(String(node.id));
-    const originalGraphToPrompt = app.graphToPrompt;
-    const virtualNodeTypes = [
-      "SetNode", "GetNode", "SetNodeAny", "GetNodeAny",
-      "SetImage", "GetImage", "SetLatent", "GetLatent"
-    ];
-    app.graphToPrompt = async function (...args) {
-      const originalModes = new Map();
-      for (const n of app.graph._nodes) {
-        originalModes.set(n.id, n.mode);
-        const isVirtual = virtualNodeTypes.some(t => n.type?.includes(t));
-        if (!isolatedPrompt[String(n.id)] && !isVirtual) n.mode = 2;
-        else n.mode = 0;
-      }
-      try { return await originalGraphToPrompt.apply(this, args); }
-      finally {
-        for (const n of app.graph._nodes) {
-          const m = originalModes.get(n.id);
-          if (m !== undefined) n.mode = m;
-        }
-      }
-    };
-    try { await app.queuePrompt(0, 1); }
-    finally {
-      if (app.graphToPrompt !== originalGraphToPrompt) {
-        app.graphToPrompt = originalGraphToPrompt;
-      }
-    }
-  }
-
-
-
   // ========== 上游widget钩子 / 连接回调 ==========
   let detectTimer = null;
   const debounceDetect = () => {
@@ -1509,8 +1423,6 @@ function setupPadBlurUI(node) {
   setTimeout(init, 100);
 
   // 提交瞬间强制写入最新状态JSON（zoom 随 prompt 提交的最终保障）
-  //   serializeValue 的情形，旧写法在 this===undefined 时执行 this.value=...，报错
-  //   "Cannot set properties of undefined (setting 'value')" 。
   uiDataW.serializeValue = () => {
     const v = JSON.stringify(state);
     uiDataW.value = v;

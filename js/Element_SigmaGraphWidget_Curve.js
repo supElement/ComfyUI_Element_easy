@@ -11,6 +11,7 @@ import { app } from "/../scripts/app.js";
 import { $el } from "/../scripts/ui.js";
 import { api } from "/../scripts/api.js";
 import { eeMarkForward } from "./ee_canvas_utils.js";
+import { isNodes2_0, hideWidgetAndSlot } from "./ee_node_utils.js";
 
 
 const NODE_CLASS = "Element_SigmaGraph_Curve";
@@ -23,7 +24,7 @@ const LS_KEY = "sigma_graph_saveSlots";
 const UNDO_LIMIT = 1;
 const MIN_NODE_WIDTH = 240;
 const MIN_NODE_HEIGHT = 280;
-const NON_WIDGET_HEIGHT = 110;
+const NON_WIDGET_HEIGHT = 122; // 预览55 + 槽位行24 + 按钮行22 + 边距，canvas 为 flex 自适应
 const MIN_WIDGET_HEIGHT = 100;
 const GRAB_THRESHOLD = 0.08;
 const POINT_RADIUS = 4;
@@ -217,9 +218,6 @@ function setup(node) {
     if (node._sigmaSetupDone) return;
     node._sigmaSetupDone = true;
     
-    const isNodes2_0 = !!document.querySelector("comfy-app") ||
-                       !!document.querySelector(".comfy-vue") ||
-                       (window.comfyAPI && window.comfyAPI.vue);
                        
     const savedSize = node.properties?._ui_size;
     if (savedSize && Array.isArray(savedSize) && savedSize.length === 2) {
@@ -239,25 +237,8 @@ function setup(node) {
     }
     let isCurveMode = node.properties._curveMode;
 
-    const hideWidgetAndSlot = (widgetName) => {
-        const w = node.widgets?.find(x => x.name === widgetName);
-        if (w) {
-            w.type = "hidden";
-            w.hidden = true;
-            w.computeSize = () => [0, 0];
-            w.draw = () => {};
-            if (w.inputEl) {
-                w.inputEl.style.display = "none";
-                if (w.inputEl.parentElement) w.inputEl.parentElement.style.display = "none";
-            }
-        }
-        if (node.inputs) {
-            const idx = node.inputs.findIndex(i => i.name === widgetName);
-            if (idx !== -1) node.removeInput(idx);
-        }
-    };
-    
-    hideWidgetAndSlot(GRAPH_DATA_NAME);
+
+    hideWidgetAndSlot(node, GRAPH_DATA_NAME);
     
     if (node.size[0] < MIN_NODE_WIDTH) node.size[0] = MIN_NODE_WIDTH;
     if (node.size[1] < MIN_NODE_HEIGHT) node.size[1] = MIN_NODE_HEIGHT;
@@ -308,7 +289,7 @@ function setup(node) {
             flexDirection: "column",
             overflow: "hidden", 
             boxSizing: "border-box",
-            paddingBottom: isNodes2_0 ? "8px" : "0px"
+            paddingBottom: isNodes2_0() ? "8px" : "0px"
         }
     });
     
@@ -339,15 +320,23 @@ function setup(node) {
 
     eeMarkForward(wrap);
 
-    const domWidget = node.addDOMWidget(CANVAS_TYPE, "custom", wrap, { 
-        serialize: true, 
-        hideOnZoom: false 
+    // DOM widget 高度随节点高度联动（hue_curve_base 同款范式）。
+    // 原 nodes2_0 路径 computeSize 恒返 MIN_WIDGET_HEIGHT(100)，
+    // 鼠标拉高节点后多余高度全部变成节点底部空白。
+    let currentWidgetHeight = Math.max(
+        MIN_WIDGET_HEIGHT,
+        (node.properties?._ui_size?.[1] ?? node.size?.[1] ?? 0) - NON_WIDGET_HEIGHT
+    );
+
+    const domWidget = node.addDOMWidget(CANVAS_TYPE, "custom", wrap, {
+        serialize: true,
+        hideOnZoom: false
     });
-    
+
     if (domWidget) {
-        if (isNodes2_0) {
+        if (isNodes2_0()) {
             domWidget.computeSize = function(width) {
-                return [Math.max(MIN_NODE_WIDTH, Number(width) || MIN_NODE_WIDTH), MIN_WIDGET_HEIGHT];
+                return [Math.max(MIN_NODE_WIDTH, Number(width) || MIN_NODE_WIDTH), currentWidgetHeight];
             };
             try {
                 Object.defineProperty(domWidget, 'min_size', {
@@ -390,8 +379,11 @@ function setup(node) {
             size[1] = h;
         }
 
-        if (!isNodes2_0 && wrap) {
-            wrap.style.height = Math.max(MIN_WIDGET_HEIGHT, h - NON_WIDGET_HEIGHT) + "px";
+        // DOM widget 高度跟随节点高度：拉高节点时曲线区域随之变高，
+        // 而不是把多余高度堆成节点底部空白
+        currentWidgetHeight = Math.max(MIN_WIDGET_HEIGHT, h - NON_WIDGET_HEIGHT);
+        if (!isNodes2_0() && wrap) {
+            wrap.style.height = currentWidgetHeight + "px";
         }
         this.properties = this.properties || {};
         this.properties._ui_size = [w, h];
@@ -401,80 +393,87 @@ function setup(node) {
     };
 
     
-    const modeBtn = $el("button", {
-        textContent: "C",
-        title: "Switch between curve modes (C: Curve mode, L: Linear mode)",
+    // 曲线面板上方的按钮行（与 listGraph 相同的位置/高度/样式）：
+    // [curve][P] ←左侧挨着   spacer   reset → 右对齐
+    const btnBar = $el("div", {
         style: {
-            position: "absolute",
-            top: "4px",
-            right: "64px",
-            width: "24px",
-            height: "24px",
-            borderRadius: "50%",
+            display: "flex",
+            gap: "4px",
+            alignItems: "center",
+            flexShrink: "0",
+            marginBottom: "2px"
+        }
+    });
+
+    const modeBtn = $el("button", {
+        textContent: "curve",
+        title: "Switch between curve modes (curve: Curve mode, straight: Linear mode)",
+        style: {
+            height: "20px",
+            padding: "0 10px",
+            borderRadius: "4px",
             border: "1px solid #555",
             background: isCurveMode ? "#1E88E5" : "#505050",
             color: "#fff",
             cursor: "pointer",
-            zIndex: "10",
+            fontSize: "11px",
             fontWeight: "bold",
-            fontSize: "12px"
+            flexShrink: "0"
         }
     });
-    wrap.appendChild(modeBtn);
+    btnBar.appendChild(modeBtn);
 
     // ===== P 按钮：前面的点均匀分布，最后一个点保持不变 =====
     const alignBtn = $el("button", {
         textContent: "P",
         title: "Align first N-1 points uniformly, keep the last point unchanged (x and y).",
         style: {
-            position: "absolute",
-            top: "4px",
-            right: "32px",
-            width: "24px",
-            height: "24px",
-            borderRadius: "50%",
+            height: "20px",
+            width: "28px",
+            padding: "0",
+            borderRadius: "4px",
             border: "1px solid #555",
             background: "#505050",
             color: "#fff",
             cursor: "pointer",
-            zIndex: "10",
+            fontSize: "11px",
             fontWeight: "bold",
-            fontSize: "12px"
+            flexShrink: "0"
         }
     });
-    wrap.appendChild(alignBtn);
+    btnBar.appendChild(alignBtn);
     // ========================================================
 
     const resetBtn = $el("button", {
-        textContent: "R",
+        textContent: "reset",
         title: "Reset the curve to the default state.)",
         style: {
-            position: "absolute",
-            top: "4px",
-            right: "4px",
-            width: "24px",
-            height: "24px",
-            borderRadius: "50%",
+            height: "20px",
+            padding: "0 10px",
+            borderRadius: "4px",
             border: "1px solid #555",
             background: "#505050",
             color: "#fff",
             cursor: "pointer",
-            zIndex: "10",
+            fontSize: "11px",
             fontWeight: "bold",
-            fontSize: "12px"
+            flexShrink: "0",
+            marginLeft: "auto"
         }
     });
-    wrap.appendChild(resetBtn);
+    btnBar.appendChild(resetBtn);
+
+    wrap.insertBefore(btnBar, wrap.firstChild);
 
     function updateModeButtonVisual() {
         if (isCurveMode) {
-            modeBtn.textContent = "C";
+            modeBtn.textContent = "curve";
             modeBtn.style.background = "#1E88E5";
-            modeBtn.title = "Current mode: Curve (Click to switch to Linear mode)";
+            modeBtn.title = "Current mode: Curve (Click to switch to straight mode)";
         } else {
-            modeBtn.textContent = "L";
+            modeBtn.textContent = "straight";
             modeBtn.style.background = "#757575";
-            modeBtn.title = "Current mode: Linear (Click to switch to Curve mode)";
+            modeBtn.title = "Current mode: straight (Click to switch to curve mode)";
         }
     }
 
@@ -487,7 +486,7 @@ function setup(node) {
 
     // ===== 修正后的 P 按钮逻辑 =====
     alignBtn.onclick = () => {
-        const stepsW = node.widgets.find((w) => w.name === STEPS_NAME).value | 0;
+        const stepsW = Math.round(node.widgets.find((w) => w.name === STEPS_NAME).value || 0);
         if (stepsW < 1) return;
         let pts = strToPts(gw.value);
         pts.sort((a, b) => a.x - b.x);
@@ -761,7 +760,7 @@ function setup(node) {
             });
         }
 
-        const stepsW = node.widgets.find((w) => w.name === STEPS_NAME).value | 0;
+        const stepsW = Math.round(node.widgets.find((w) => w.name === STEPS_NAME).value || 0);
         const maxValueW = node.widgets.find((w) => w.name === "max_value")?.value ?? 1.0;
         const sigmaValues = isCurveMode 
             ? calcSmoothSigmas(pts, stepsW) 
@@ -772,6 +771,25 @@ function setup(node) {
     }
     
     node._sigmaDraw = draw;
+
+    // steps/max_value 变更后强制刷新预览。
+    // 不依赖 widget.callback —— 部分前端版本的值提交路径不触发自定义
+    // callback（实测截图：steps 6→7 后预览停留在 6 时刻的值）。
+    // onDrawBackground 每帧调用，代价仅为两次属性读取，值变化才重绘。
+    let _watchSteps = null, _watchMax = null;
+    const _origOnDrawBackground = node.onDrawBackground;
+    node.onDrawBackground = function () {
+        if (_origOnDrawBackground) _origOnDrawBackground.apply(this, arguments);
+        const sw = this.widgets && this.widgets.find((w) => w.name === STEPS_NAME);
+        const mw = this.widgets && this.widgets.find((w) => w.name === "max_value");
+        const s = sw ? sw.value : null;
+        const m = mw ? mw.value : null;
+        if (s !== _watchSteps || m !== _watchMax) {
+            _watchSteps = s;
+            _watchMax = m;
+            draw();
+        }
+    };
 
     let debounce;
     ta.addEventListener("input", () => {
@@ -801,7 +819,7 @@ function setup(node) {
     };
 
     let dragIdx = -1;
-	let dragPts = null;
+        let dragPts = null;
     let lastClickTime = 0;
     let lastClickX = 0;
     let lastClickY = 0;
@@ -829,7 +847,7 @@ function setup(node) {
 
             if (existingIdx >= 0) {
                 dragIdx = existingIdx;
-				dragPts = pts;
+                                dragPts = pts;
             } else {
                 pushUndo(gw.value); 
                 
@@ -860,7 +878,7 @@ function setup(node) {
                 pts.splice(insertIdx, 0, newPoint);
                 applyPoints(pts);
                 dragIdx = insertIdx;
-				dragPts = pts;
+                                dragPts = pts;
             }
 
             if (dragIdx >= 0) {
@@ -898,7 +916,7 @@ function setup(node) {
     canvas.onpointerup = (e) => {
         if (dragIdx >= 0) {
             e.target.releasePointerCapture(e.pointerId);
-	        if (dragPts) applyPoints(dragPts);         
+                if (dragPts) applyPoints(dragPts);         
             dragPts = null;
             dragIdx = -1;
         }
@@ -936,6 +954,7 @@ function setup(node) {
             const w = Math.max(MIN_NODE_WIDTH, Number(savedSize[0]) || MIN_NODE_WIDTH);
             const h = Math.max(MIN_NODE_HEIGHT, Number(savedSize[1]) || MIN_NODE_HEIGHT);
             this.size = [w, h];
+            currentWidgetHeight = Math.max(MIN_WIDGET_HEIGHT, h - NON_WIDGET_HEIGHT);
         }
         
         if (this.properties?._curveMode !== undefined) {
@@ -944,6 +963,16 @@ function setup(node) {
         }
         if (this.properties?._maxValue !== undefined && maxValueWidget) {
             maxValueWidget.value = this.properties._maxValue;
+        }
+        // 工作流存量数据可能是浮点 steps（老版前端/外部工具写入）。
+        // 显示层四舍五入、后端截断会产生"少 1"假象——加载时统一量化，
+        // 显示/执行/存档三者一致。
+        const _stepsW = this.widgets && this.widgets.find((w) => w.name === STEPS_NAME);
+        if (_stepsW) {
+            const _n = Number(_stepsW.value);
+            if (Number.isFinite(_n) && _n % 1 !== 0) {
+                _stepsW.value = Math.round(_n);
+            }
         }
         this.minSize = [MIN_NODE_WIDTH, MIN_NODE_HEIGHT];
     };

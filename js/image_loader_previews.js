@@ -2,6 +2,7 @@ import { app } from "../../scripts/app.js";
 import { $el } from "../../scripts/ui.js";
 import { api } from "../../scripts/api.js";
 import { eeMarkForward } from "./ee_canvas_utils.js";
+import { isNodes2_0, eeRunIsolatedPromptCore, eeAddWindowListener } from "./ee_node_utils.js";
 
 
 const NODE_NAME = "LoadImageWithPreview"; 
@@ -34,7 +35,7 @@ app.registerExtension({
                 .ee-btn:hover { background: #555; }
                 .ee-btn.active { background: #007acc; }
                 .ee-btn-lmask:active { background: #007acc !important; }  
-				
+                                
                 .ee-grid { 
                     display: grid; 
                     grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); 
@@ -128,7 +129,7 @@ app.registerExtension({
                 .ee-slider-container input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 14px; height: 14px; background: #007acc; border-radius: 50%; margin-top: -5px; cursor: pointer; }
                 .ee-slider-container input[type="range"]::-moz-range-track { height: 4px; background: #555; border-radius: 2px; }
                 .ee-slider-container input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; background: #007acc; border-radius: 50%; border: none; cursor: pointer; }
-				.ee-src-btn { background:#444; color:#fff; border:none; height:28px; line-height:28px; padding:0 8px; cursor:pointer; border-radius:3px; font-size:12px; font-weight:bold; flex-shrink:0; }
+                                .ee-src-btn { background:#444; color:#fff; border:none; height:28px; line-height:28px; padding:0 8px; cursor:pointer; border-radius:3px; font-size:12px; font-weight:bold; flex-shrink:0; }
                 .ee-src-btn:hover { background:#555; }
                 .ee-src-btn.active { background:#007acc; color:#fff; }
                 .ee-drop-overlay { position:absolute; left:0; top:0; right:0; bottom:0; display:none; align-items:center; justify-content:center; background:rgba(0,122,204,0.25); border:2px dashed #007acc; box-sizing:border-box; color:#fff; font-size:14px; font-weight:bold; z-index:5; pointer-events:none; }
@@ -142,10 +143,6 @@ app.registerExtension({
         nodeType.prototype.onNodeCreated = function () {
             if (onNodeCreated) onNodeCreated.apply(this, arguments);
 
-            const isNodes2_0 = !!document.querySelector("comfy-app") || 
-                               !!document.querySelector(".comfy-vue") || 
-                               (window.comfyAPI && window.comfyAPI.vue);
-
             const hideWidgetAndSlot = (widgetName) => {
                 const w = this.widgets?.find(w => w.name === widgetName);
                 if (w) {
@@ -154,7 +151,7 @@ app.registerExtension({
                     w.computeSize = () => [0, 0];
                     w.draw = () => {};
 
-                    if (isNodes2_0) {
+                    if (isNodes2_0()) {
                         if (w.inputEl) {
                             w.inputEl.style.display = "none";
                             if (w.inputEl.parentElement) w.inputEl.parentElement.style.display = "none";
@@ -188,17 +185,17 @@ app.registerExtension({
             };
             hideWidgetAndSlot("mask_data");
             hideWidgetAndSlot("shape_data"); 
-			hideWidgetAndSlot("crop_data");
+                        hideWidgetAndSlot("crop_data");
         };
     },
 
     async nodeCreated(node) {
         if (node.comfyClass !== NODE_NAME) return;
-		
-		//const storageKey = (type) => `${type}_${node.id}_${currentPath}`;
-		
+                
+                //const storageKey = (type) => `${type}_${node.id}_${currentPath}`;
+                
         const isNewNode = typeof node.id !== 'number' || node.id < 0;
-		let lastScrollTop = 0;
+                let lastScrollTop = 0;
         let editorCtx = null;
         if (isNewNode) {
             node.size = [580, 600];
@@ -235,13 +232,9 @@ app.registerExtension({
             draw: () => {}  
         };
         
-		let cropWidget = { name: "crop_data", type: "hidden", value: node.widgets?.find(w => w.name === "crop_data")?.value || node.widgets?.find(w => w.name === "crop_data")?.options?.default || "", hidden: true, computeSize: () => [0, 0], draw: () => {} };
+                let cropWidget = { name: "crop_data", type: "hidden", value: node.widgets?.find(w => w.name === "crop_data")?.value || node.widgets?.find(w => w.name === "crop_data")?.options?.default || "", hidden: true, computeSize: () => [0, 0], draw: () => {} };
         if (node.widgets) {
-            const isNodes2_0 = !!document.querySelector("comfy-app") || 
-                               !!document.querySelector(".comfy-vue") || 
-                               (window.comfyAPI && window.comfyAPI.vue);
-
-            if (!isNodes2_0) {
+            if (!isNodes2_0()) {
                 const hideDom = (name) => {
                     const oldW = node.widgets.find(w => w.name === name);
                     if (oldW) {
@@ -284,107 +277,11 @@ app.registerExtension({
         const container = $el("div.ee-container");
 
         // ====== ▶ 只运行到本节点：直提依赖子图（修复刷新后首次点击无效）======
+        // ====== ▶ 只运行到本节点：隔离执行核心（ee_node_utils）======
         const runToNode = async () => {
             if (!isImageConnected()) return;
-            try {
-                const p = await app.graphToPrompt();
-                const prompt = p.output;
-                const selectedNodeId = String(node.id);
-                const isolatedPrompt = {};
-                const traceDependencies = (nodeId) => {
-                    if (!prompt[nodeId] || isolatedPrompt[nodeId]) return;
-                    isolatedPrompt[nodeId] = prompt[nodeId];
-                    const inputs = prompt[nodeId].inputs;
-                    for (let key in inputs) {
-                        const val = inputs[key];
-                        if (Array.isArray(val) && val.length === 2) {
-                            traceDependencies(String(val[0]));
-                        }
-                    }
-                };
-                traceDependencies(selectedNodeId);
-                if (!isolatedPrompt[selectedNodeId]) {
-                    console.warn("[IsolatedPreview] node not found in prompt:", selectedNodeId);
-                    return;
-                }
-                const res = await api.fetchApi("/prompt", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        prompt: isolatedPrompt,
-                        client_id: api.clientId ?? undefined,
-                        extra_data: { front: true },
-                    }),
-                });
-                if (!res.ok) {
-                    const errText = await res.text().catch(() => "");
-                    throw new Error(`/prompt ${res.status}: ${errText.slice(0, 300)}`);
-                }
-                try {
-                    const j = await res.json();
-                    console.log("[IsolatedPreview] queued:", j?.prompt_id);
-                } catch (e) {}
-            } catch (err) {
-                console.error("[IsolatedPreview] direct run failed, trying legacy mute path:", err);
-                try {
-                    await legacyIsolatedRun();
-                } catch (e2) {
-                    console.error("[IsolatedPreview] legacy path failed:", e2);
-                }
-            }
+            await eeRunIsolatedPromptCore(node, "IsolatedPreview");
         };
-	    
-        async function legacyIsolatedRun() {
-            const p = await app.graphToPrompt();
-            const prompt = p.output;
-            const isolatedPrompt = {};
-            const traceDependencies = (nodeId) => {
-                if (!prompt[nodeId] || isolatedPrompt[nodeId]) return;
-                isolatedPrompt[nodeId] = prompt[nodeId];
-                const inputs = prompt[nodeId].inputs;
-                for (let key in inputs) {
-                    const val = inputs[key];
-                    if (Array.isArray(val) && val.length === 2) {
-                        traceDependencies(String(val[0]));
-                    }
-                }
-            };
-            traceDependencies(String(node.id));
-            const originalGraphToPrompt = app.graphToPrompt;
-            const virtualNodeTypes = [
-                "SetNode", "GetNode", "SetNodeAny", "GetNodeAny",
-                "SetImage", "GetImage", "SetLatent", "GetLatent"
-            ];
-            app.graphToPrompt = async function (...args) {
-                const originalModes = new Map();
-                for (const n of app.graph._nodes) {
-                    originalModes.set(n.id, n.mode);
-                    const isVirtual = virtualNodeTypes.some(t => n.type?.includes(t));
-                    if (!isolatedPrompt[String(n.id)] && !isVirtual) {
-                        n.mode = 2; // Mute 无关节点
-                    } else {
-                        n.mode = 0;
-                    }
-                }
-                try {
-                    return await originalGraphToPrompt.apply(this, args);
-                } finally {
-                    for (const n of app.graph._nodes) {
-                        const m = originalModes.get(n.id);
-                        if (m !== undefined) n.mode = m;
-                    }
-                }
-            };
-            try {
-                await app.queuePrompt(0, 1);
-            } finally {
-                if (app.graphToPrompt !== originalGraphToPrompt) {
-                    app.graphToPrompt = originalGraphToPrompt;
-                }
-            }
-        }
-	    
-		
         const runBtn = $el("button.ee-btn", {
             textContent: "▶",
             title: " 只运行到本节点，加载连入的图像\n Run only to this node (load the connected input image)",
@@ -407,8 +304,8 @@ app.registerExtension({
             onclick: () => runToNode()
         });
 
-		
-		// ====== 浏览来源切换（input / folder_path）======
+                
+                // ====== 浏览来源切换（input / folder_path）======
         let browseSource = "fpath";          
         let inputDir = "";                   
         const isAbsPath = (p) => /^[a-zA-Z]:[\\/]/.test(p) || p.startsWith("\\\\") || p.startsWith("/");
@@ -544,12 +441,11 @@ app.registerExtension({
                 });
             }
         };
-        window.addEventListener("wheel", handleWheel, { capture: true, passive: false });
-
+        const removeWinWheel = eeAddWindowListener("wheel", handleWheel, { capture: true, passive: false });
 
         const oldOnRemoved = node.onRemoved;
         node.onRemoved = function() {
-            window.removeEventListener("wheel", handleWheel, { capture: true, passive: false });
+            removeWinWheel();
             if (oldOnRemoved) oldOnRemoved.apply(this, arguments);
         };
         
@@ -613,8 +509,8 @@ app.registerExtension({
         const boxBtn = $el("button.ee-btn.tool-btn", { textContent: "🔳 Box", title: " 盒子/方框 (shift键画正方形) \n Box/Rectangle (use Shift key to draw a square)", style: { width: BTN_WIDTH, height: BTN_HEIGHT, padding: "0", lineHeight: "1px", verticalAlign: "middle" }, onclick: (e) => setTool('rect', e.target) });
         const circleBtn = $el("button.ee-btn.tool-btn", { textContent: "⭕ Circle", title: " 圆/椭圆 (shift键画正圆) \n Circle/Ellipse (use Shift key to draw a perfect circle)", style: { width: BTN_WIDTH, height: BTN_HEIGHT, padding: "0", lineHeight: "1px", verticalAlign: "middle" }, onclick: (e) => setTool('circle', e.target) });
         const toolBtnMap = { brush: brushBtn, eraser: eraserBtn, rect: boxBtn, circle: circleBtn };
-		
-		// ====== Mask/La/Undo/Clear ======
+                
+                // ====== Mask/La/Undo/Clear ======
         const targetToggleBtn = $el("button.ee-btn", {
             textContent: "Mask",
             title: " 切换绘制目标 Mask(遮罩)/Image(图像)\n Toggle draw target between Mask and Image",
@@ -716,7 +612,7 @@ app.registerExtension({
         
         container.appendChild(header);
         container.appendChild(gridView);
-		container.appendChild(editorView);
+                container.appendChild(editorView);
         gridView.setAttribute("data-ee-native-scroll", "1"); 
         eeMarkForward(container);
 
@@ -784,14 +680,14 @@ app.registerExtension({
                 toolbar.style.flexWrap = "wrap";
                 toolbarRow2.style.marginLeft = "0";
             }
-			updateCropGroupLayout();
+                        updateCropGroupLayout();
         };
 
         let currentPath = "";
         let originalImageSize = { w: 1024, h: 1024 };
         let history = []; 
-		
-		// ====== Crop 状态与逻辑 ======
+                
+                // ====== Crop 状态与逻辑 ======
         let cropMode = false;
         let cropRect = null;        
         let cropDrag = null;
@@ -807,23 +703,24 @@ app.registerExtension({
         const snapV = (v, d) => Math.max(0, Math.round(v / d) * d);
         const snapQ = (v, d) => Math.round(v / d) * d;
         
-        const exportCrop = () => {
-            if (cropRect) {
+        const exportCrop = (snap = true) => {
+            if (cropRect && snap) {
                 const d = cropDivNow();
                 const W = cropCanvas.width, H = cropCanvas.height;
-                // 1) 强制吸附到 d 的网格：x,y 向下取整；w,h 就近取整
                 cropRect.x = Math.max(0, Math.floor(cropRect.x / d) * d);
                 cropRect.y = Math.max(0, Math.floor(cropRect.y / d) * d);
                 cropRect.w = Math.max(d, Math.round(cropRect.w / d) * d);
                 cropRect.h = Math.max(d, Math.round(cropRect.h / d) * d);
-                // 2) 超界时回退起点，宽高保持倍数不变
                 if (cropRect.x + cropRect.w > W) cropRect.x = Math.max(0, Math.floor((W - cropRect.w) / d) * d);
                 if (cropRect.y + cropRect.h > H) cropRect.y = Math.max(0, Math.floor((H - cropRect.h) / d) * d);
             }
-            cropWidget.value = cropRect ? JSON.stringify([Math.round(cropRect.x), Math.round(cropRect.y), Math.round(cropRect.w), Math.round(cropRect.h)]) : "";
-            try {
-                if (node.graph && node.graph.change) node.graph.change();
-            } catch (e) {}
+            const val = cropRect ? JSON.stringify([Math.round(cropRect.x), Math.round(cropRect.y), Math.round(cropRect.w), Math.round(cropRect.h)]) : "";
+            if (cropWidget.value !== val) {
+                cropWidget.value = val;
+                try {
+                    if (node.graph && node.graph.change) node.graph.change();
+                } catch (e) {}
+            }
         };
 
 
@@ -843,8 +740,8 @@ app.registerExtension({
             cropCtx.lineWidth = Math.max(2, 2 * getScaleX());
             cropCtx.strokeRect(r.x, r.y, r.w, r.h);
         };
-		
-		// ====== 从 crop_data 恢复裁切框======
+                
+                // ====== 从 crop_data 恢复裁切框======
         const restoreCrop = () => {
             try {
                 const raw = cropWidget ? (cropWidget.value || "") : "";
@@ -853,16 +750,19 @@ app.registerExtension({
                 if (!Array.isArray(arr) || arr.length !== 4) return;
                 const [x, y, w, h] = arr.map(v => Math.max(0, Math.round(Number(v) || 0)));
                 if (w <= 0 || h <= 0) return;
-                const W = cropCanvas.width || 1, H = cropCanvas.height || 1;
-                const cx = Math.min(Math.max(0, x), W - 1);
-                const cy = Math.min(Math.max(0, y), H - 1);
-                cropRect = { x: cx, y: cy, w: Math.max(1, Math.min(w, W - cx)), h: Math.max(1, Math.min(h, H - cy)) };
-                exportCrop();
+                // 恢复时信任工作流存的值，不按当前 canvas 位图尺寸钳制：
+                // 节点重建后 ResizeObserver 会在图片加载完成前（位图还是
+                // originalImageSize 初始假值 1024 的中间态）触发一次
+                // resizeCanvas→restoreData，此时按位图钳制会把大图右/下
+                // 区域的 crop 截断，真实尺寸到达后 exportCrop 把截断值
+                // 写回并随保存固化——这是多工作流切换后 crop"时不时变"的
+                // 根因。越界钳制交给真实尺寸就绪后的 resizeCanvas 正当钳制。
+                cropRect = { x: Math.max(0, x), y: Math.max(0, y), w: Math.max(1, w), h: Math.max(1, h) };
                 redrawCrop();
             } catch (e) {}
         };
 
-		
+                
         const setCropMode = (on) => {
             cropMode = on;
             cropBtn.classList.toggle("active", on);
@@ -992,14 +892,17 @@ app.registerExtension({
                     cropRect.h = Math.min(cropRect.h, cropCanvas.height);
                     cropRect.x = Math.max(0, Math.min(cropRect.x, cropCanvas.width - cropRect.w));
                     cropRect.y = Math.max(0, Math.min(cropRect.y, cropCanvas.height - cropRect.h));
-                    exportCrop();
+                    // 只把越界部分钳回，不做 div 网格量化：合法 crop 每次
+                    // tab 切换回此分支都会经过，量化会把非 div 倍数的坐标
+                    // （外部填入/历史遗留）逐步挪位并固化。
+                    exportCrop(false);
                 }
                 redrawCrop();
                 restoreData();
             }
         };
 
-		// UI连线状态自适应更新
+                // UI连线状态自适应更新
         const updateMode = () => {
             const connected = isImageConnected();
             if (connected) {
@@ -1007,7 +910,7 @@ app.registerExtension({
                 editorView.style.display = "flex";
                 runBtn.style.display = "flex";
                 cropGroup.style.display = "flex";
-				requestAnimationFrame(updateCropGroupLayout);
+                                requestAnimationFrame(updateCropGroupLayout);
                 inputDirBtn.style.display = "none";
                 fpathBtn.style.display = "none";
                 lmaskBtn.style.display = "block";
@@ -1019,8 +922,8 @@ app.registerExtension({
             }
         };
 
-		
-		let lastImageLink = null;
+                
+                let lastImageLink = null;
         const transparentPixel = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
         
         const origOnConnectionsChange = node.onConnectionsChange;
@@ -1072,7 +975,7 @@ app.registerExtension({
                 editorView.style.display = "flex";
                 runBtn.style.display = "flex";
                 cropGroup.style.display = "flex";
-				requestAnimationFrame(updateCropGroupLayout);
+                                requestAnimationFrame(updateCropGroupLayout);
                 inputDirBtn.style.display = "none";
                 fpathBtn.style.display = "none";
                 lmaskBtn.style.display = "block";
@@ -1188,7 +1091,11 @@ app.registerExtension({
                 storageValue = joinPath(inputDir, filename);
             }
         
-            const isSwitchingImage = imageWidget && imageWidget.value !== storageValue;
+            // 用逻辑文件名与存储编码双比较：storageValue 会因 input/fpath 浏览
+            // 源不同而带上/不带目录前缀，单一比较会把同一张图误判为"切换了
+            // 图片"而清空 crop——同一张图跨工作流/跨浏览源恢复时尤甚。
+            const isSwitchingImage = imageWidget && imageWidget.value != null && imageWidget.value !== ""
+                && imageWidget.value !== filename && imageWidget.value !== storageValue;
             if (imageWidget) imageWidget.value = storageValue;
             localStorage.setItem('ee_image_' + node.id + '_' + currentPath, storageValue);
             editorCtx = { type: "file", value: storageValue, folder: viewFolder };
@@ -1207,7 +1114,7 @@ app.registerExtension({
             editorView.style.display = "flex";
             runBtn.style.display = "flex";
             cropGroup.style.display = "flex";
-			requestAnimationFrame(updateCropGroupLayout);
+                        requestAnimationFrame(updateCropGroupLayout);
             inputDirBtn.style.display = "none";
             fpathBtn.style.display = "none";
             lmaskBtn.style.display = "block";
@@ -1232,7 +1139,7 @@ app.registerExtension({
             editorView.style.display = "flex";
             runBtn.style.display = "flex";
             cropGroup.style.display = "flex";
-			requestAnimationFrame(updateCropGroupLayout);
+                        requestAnimationFrame(updateCropGroupLayout);
             inputDirBtn.style.display = "none";
             fpathBtn.style.display = "none";
             lmaskBtn.style.display = "block";
@@ -1350,7 +1257,7 @@ app.registerExtension({
             const name = `pasted_${stamp}_${node.id}.${ext}`;
             await uploadAndSelect(file, name);
         };
-        window.addEventListener("paste", handlePaste, true);   
+        const removeWinPaste = eeAddWindowListener("paste", handlePaste, true);
 
         let isDrawing = false, isWindowTracking = false, startX = 0, startY = 0, snapshot = null, currentPos = { x: 0, y: 0 };
 
@@ -1393,10 +1300,10 @@ app.registerExtension({
         window.addEventListener('keyup', (e) => { if (e.key === 'Shift') isShiftPressed = false; });
 
         maskCanvas.addEventListener("mousedown", (e) => {
-			if (e.button !== 0) return;   // ★ 中键不画画/不建裁切框；右键保留给浏览器/未来功能
+                        if (e.button !== 0) return;   // ★ 中键不画画/不建裁切框；右键保留给浏览器/未来功能
             const pos = getPos(e);
             if (!pos.isInside) return;
-			    if (cropMode) {
+                            if (cropMode) {
                     isDrawing = true;
                     const d = cropDivNow();
                     const ed = cropEdgeAt(pos);
@@ -1509,12 +1416,12 @@ app.registerExtension({
             } else {
                 if (snapshot) {  
                     targetCtx.putImageData(snapshot, 0, 0); 
-					targetCtx.globalCompositeOperation = "source-over"; 
-					targetCtx.lineWidth = shapeThickness * scaleX; 
-					targetCtx.strokeStyle = drawColor; 
-					targetCtx.fillStyle = drawColor; 
-					targetCtx.globalAlpha = drawOpacity;
-					const savedLineCap = targetCtx.lineCap;
+                                        targetCtx.globalCompositeOperation = "source-over"; 
+                                        targetCtx.lineWidth = shapeThickness * scaleX; 
+                                        targetCtx.strokeStyle = drawColor; 
+                                        targetCtx.fillStyle = drawColor; 
+                                        targetCtx.globalAlpha = drawOpacity;
+                                        const savedLineCap = targetCtx.lineCap;
                     const savedLineJoin = targetCtx.lineJoin;
                     let endX = pos.rawX, endY = pos.rawY;
                     if (currentTool === 'rect') {
@@ -1530,7 +1437,7 @@ app.registerExtension({
                         targetCtx.beginPath(); targetCtx.ellipse(startX, startY, radiusX, radiusY, 0, 0, Math.PI * 2);
                         if (shapeFill) targetCtx.fill(); targetCtx.stroke();
                     }
-					targetCtx.lineCap = savedLineCap;
+                                        targetCtx.lineCap = savedLineCap;
                     targetCtx.lineJoin = savedLineJoin;
                     targetCtx.globalAlpha = 1.0;
                 }
@@ -1549,7 +1456,7 @@ app.registerExtension({
         const handleWindowMouseUp = (e) => {
             if (!isDrawing) { cleanupWindowTracking(); return; }
             const pos = getPos(e);
-			if (cropMode) { isDrawing = false; cropDrag = null; exportCrop(); cleanupWindowTracking(); return; }
+                        if (cropMode) { isDrawing = false; cropDrag = null; exportCrop(); cleanupWindowTracking(); return; }
             if ((currentTool === 'rect' || currentTool === 'circle') && snapshot) {
                 const scaleX = maskCanvas.width / maskCanvas.getBoundingClientRect().width;
                 const targetCtx = drawTargetIsImage ? shapeCtx : maskCtx;
@@ -1557,12 +1464,12 @@ app.registerExtension({
                 const drawOpacity = drawTargetIsImage ? shapeOpacity : 1.0;
                 let endX = pos.rawX, endY = pos.rawY;
                 targetCtx.putImageData(snapshot, 0, 0); 
-				targetCtx.globalCompositeOperation = "source-over"; 
-				targetCtx.lineWidth = shapeThickness * scaleX; 
-				targetCtx.strokeStyle = drawColor; 
-				targetCtx.fillStyle = drawColor; 
-				targetCtx.globalAlpha = drawOpacity;
-				const savedLineCap = targetCtx.lineCap;
+                                targetCtx.globalCompositeOperation = "source-over"; 
+                                targetCtx.lineWidth = shapeThickness * scaleX; 
+                                targetCtx.strokeStyle = drawColor; 
+                                targetCtx.fillStyle = drawColor; 
+                                targetCtx.globalAlpha = drawOpacity;
+                                const savedLineCap = targetCtx.lineCap;
                 const savedLineJoin = targetCtx.lineJoin;
                 
                 if (currentTool === 'rect') {
@@ -1578,7 +1485,7 @@ app.registerExtension({
                     targetCtx.beginPath(); targetCtx.ellipse(startX, startY, radiusX, radiusY, 0, 0, Math.PI * 2);
                     if (shapeFill) targetCtx.fill(); targetCtx.stroke();
                 }
-				targetCtx.lineCap = savedLineCap;
+                                targetCtx.lineCap = savedLineCap;
                 targetCtx.lineJoin = savedLineJoin;
                 targetCtx.globalAlpha = 1.0;
             }
@@ -1647,7 +1554,7 @@ app.registerExtension({
             if (colorData && colorData.startsWith("data:image")) {
                 const mImg = new Image(); mImg.onload = () => { maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height); maskCtx.drawImage(mImg, 0, 0); }; mImg.src = colorData;
             }
-			restoreCrop();
+                        restoreCrop();
         };
 
         if (pathWidget) {
@@ -1670,20 +1577,24 @@ app.registerExtension({
         }       
 
         setTimeout(() => {
-			
+                        
             updateMode();
             
             if (!isImageConnected()) {
                 currentPath = pathWidget.value;
+                // 工作流自身存的值优先；localStorage 只作为从未选过图的新节点的回退。
+                // 原实现 localStorage 优先——node.id 跨工作流不唯一（各 tab 独立
+                // 编号，撞号是常态），另一工作流同 id 节点的最后选择会覆盖本工作
+                // 流已存的图，是切换 tab 后 crop 被清/漂移的主通道。
                 const lastSelectedImage = localStorage.getItem('ee_image_' + node.id + '_' + currentPath);
-                const targetImage = lastSelectedImage || (imageWidget ? imageWidget.value : null);
+                const targetImage = (imageWidget && imageWidget.value) || lastSelectedImage;
                 
                 if (targetImage) {
                     const savedScroll = localStorage.getItem('ee_scroll_' + node.id + '_' + currentPath);
                     lastScrollTop = savedScroll ? parseInt(savedScroll, 10) : 0;
                     openEditor(targetImage);
                 } else {
-					showGrid();
+                                        showGrid();
                     //loadImages();
                 }
             }
@@ -1704,7 +1615,7 @@ app.registerExtension({
                 keysToRemove.forEach(key => localStorage.removeItem(key));
             } catch (e) {}
             cleanupWindowTracking();
-            window.removeEventListener("paste", handlePaste, true);
+            removeWinPaste();
             window.removeEventListener("pointerdown", onEEPanDown, true);
             window.removeEventListener("pointerup", onEEPanUp, true);
             window.removeEventListener("pointercancel", onEEPanAbort, true);

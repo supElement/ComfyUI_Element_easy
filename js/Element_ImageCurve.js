@@ -1,6 +1,7 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 import { eeMarkForward } from "./ee_canvas_utils.js";
+import { isNodes2_0, hideWidgetAndSlot, eeRunIsolatedPreview } from "./ee_node_utils.js";
 
 
 app.registerExtension({
@@ -12,36 +13,38 @@ app.registerExtension({
             
             nodeType.prototype.onNodeCreated = function () {
                 if (onNodeCreated) onNodeCreated.apply(this, arguments);
-                
+
+                // image 输入显示为普通端口形状（实心）：optional 声明只用于
+                // "未连接不阻塞校验"，端口外观保持默认实心（官方构造会对
+                // optional 设置空心环，这里改回，观感与 rgthree 等工具节点一致）
+                try {
+                    const _img = this.inputs?.find((i) => i.name === "image");
+                    if (_img) _img.shape = (typeof LiteGraph !== "undefined" && LiteGraph.ROUND_SHAPE) || 2;
+                } catch (e) {}
+
+                // 自愈历史坏值：空跑时代码曾把 frame_index 钳成 -1 并随
+                // 工作流固化（batch_size=[0] → maxFrameIndex=-1），导致
+                // 后续运行校验失败 "Value -1 smaller than min of 0"。
+                // 加载时钳回合法区间 [0, max]。
+                try {
+                    const _fw = this.widgets?.find((w) => w.name === "frame_index");
+                    if (_fw) {
+                        const _max = (typeof _fw.options?.max === "number" && _fw.options.max >= 0) ? _fw.options.max : 9999;
+                        if (_fw.options) _fw.options.max = _max;
+                        const _v = Number(_fw.value);
+                        if (!Number.isFinite(_v) || _v < 0) _fw.value = 0;
+                        else if (_v > _max) _fw.value = _max;
+                    }
+                } catch (e) {}
+
                 const MIN_NODE_WIDTH = 240;
-                const MIN_NODE_HEIGHT = 400; 
+                const MIN_NODE_HEIGHT = 400;
                 
                 if (this.size[0] < MIN_NODE_WIDTH) this.size[0] = MIN_NODE_WIDTH;
                 if (this.size[1] < MIN_NODE_HEIGHT) this.size[1] = MIN_NODE_HEIGHT;
 
-                const hideWidgetAndSlot = (widgetName) => {
-                    const w = this.widgets?.find(w => w.name === widgetName);
-                    if (w) {
-                        w.type = "hidden"; 
-                        w.hidden = true;
-                        w.computeSize = () => [0, 0];
-                        w.draw = () => {};
-                        if (w.inputEl) {
-                            w.inputEl.style.display = "none";
-                            if (w.inputEl.parentElement) {
-                                w.inputEl.parentElement.style.display = "none";
-                            }
-                        }
-                    }
-                    if (this.inputs) {
-                        const idx = this.inputs.findIndex(i => i.name === widgetName);
-                        if (idx !== -1) {
-                            this.removeInput(idx);
-                        }
-                    }
-                };
-                hideWidgetAndSlot("curve_data");
-                hideWidgetAndSlot("output_mode");
+                hideWidgetAndSlot(this, "curve_data");
+                hideWidgetAndSlot(this, "output_mode");
                 
                 const curveWidget = this.widgets?.find(w => w.name === "curve_data");
                 const outputModeWidget = this.widgets?.find(w => w.name === "output_mode");
@@ -216,8 +219,8 @@ app.registerExtension({
 
                 container.appendChild(viewArea);
                 const ctx = canvas.getContext("2d");
-				eeMarkForward(container);
-				
+                                eeMarkForward(container);
+                                
                 const resizeObserver = new ResizeObserver((entries) => {
                     for (let entry of entries) {
                         const { width, height } = entry.contentRect;
@@ -249,7 +252,7 @@ app.registerExtension({
                     size[1] = Math.max(MIN_NODE_HEIGHT, trueMinHeight);
                     return size;
                 };
-				
+                                
                 const onResize = this.onResize;
                 this.onResize = function(size) {
                     if (onResize) onResize.apply(this, arguments);
@@ -343,7 +346,7 @@ app.registerExtension({
                     })();
                 };
 
-                hideWidgetAndSlot("saturation");
+                hideWidgetAndSlot(this, "saturation");
                 const satWidget = this.widgets?.find(w => w.name === "saturation");
                 
                 const paramsToBind = ["preview_size", "frame_index"];
@@ -500,19 +503,16 @@ app.registerExtension({
                 modeControlArea.style.gap = "8px";
                 modeControlArea.style.boxSizing = "border-box";
 
-                const isNodes2_0 = !!document.querySelector("comfy-app") || 
-                                   !!document.querySelector(".comfy-vue") || 
-                                   (window.comfyAPI && window.comfyAPI.vue);
 
-                modeControlArea.style.marginBottom = isNodes2_0 ? "10px" : "0px";
+                modeControlArea.style.marginBottom = isNodes2_0() ? "10px" : "0px";
 
                 const loadBtn = document.createElement("button");
                 loadBtn.innerText = "Preview";
                 loadBtn.style.flex = "7";
                 loadBtn.style.width = "auto";
                 loadBtn.style.height = "24px";
-				loadBtn.style.lineHeight = "22px";
-				loadBtn.style.marginTop = "8px";
+                                loadBtn.style.lineHeight = "22px";
+                                loadBtn.style.marginTop = "8px";
                 loadBtn.style.border = "none";
                 loadBtn.style.borderRadius = "8px";
                 loadBtn.style.cursor = "pointer";
@@ -524,123 +524,16 @@ app.registerExtension({
                 
                 // ====== Preview：直提依赖子图（修复刷新后首次点击无效）======
                 // 直接 POST /prompt 提交子图
-                loadBtn.onclick = async () => {
-                    const isImageConnected = () => {
-                        return this.inputs?.some(i => i.name === "image" && i.link !== null);
-                    };
-                    if (!isImageConnected()) {
-                        console.log("No image input connected, skipping preview");
-                        return;
-                    }
-                    try {
-                        const p = await app.graphToPrompt();
-                        const prompt = p.output;
-                        const selectedNodeId = String(this.id);
-                        const isolatedPrompt = {};
-                        const traceDependencies = (nodeId) => {
-                            if (!prompt[nodeId] || isolatedPrompt[nodeId]) return;
-                            isolatedPrompt[nodeId] = prompt[nodeId];
-                            const inputs = prompt[nodeId].inputs;
-                            for (let key in inputs) {
-                                const val = inputs[key];
-                                if (Array.isArray(val) && val.length === 2) {
-                                    traceDependencies(String(val[0]));
-                                }
-                            }
-                        };
-                        traceDependencies(selectedNodeId);
-                        if (!isolatedPrompt[selectedNodeId]) {
-                            console.warn("[IsolatedPreview] node not found in prompt:", selectedNodeId);
-                            return;
-                        }
-                        const res = await api.fetchApi("/prompt", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({
-                                prompt: isolatedPrompt,
-                                client_id: api.clientId ?? undefined,
-                                extra_data: { front: true },
-                            }),
-                        });
-                        if (!res.ok) {
-                            const errText = await res.text().catch(() => "");
-                            throw new Error(`/prompt ${res.status}: ${errText.slice(0, 300)}`);
-                        }
-                        try {
-                            const j = await res.json();
-                            console.log("[IsolatedPreview] queued:", j?.prompt_id);
-                        } catch (e) {}
-                    } catch (err) {
-                        console.error("[IsolatedPreview] direct run failed, trying legacy mute path:", err);
-                        try {
-                            await legacyIsolatedRun(this);
-                        } catch (e2) {
-                            console.error("[IsolatedPreview] legacy path failed:", e2);
-                        }
-                    }
-                };
-			    
-                // 遗留兜底（仅当直提失败时启用，控制台会明确记录）
-                async function legacyIsolatedRun(ctx) {
-                    const p = await app.graphToPrompt();
-                    const prompt = p.output;
-                    const isolatedPrompt = {};
-                    const traceDependencies = (nodeId) => {
-                        if (!prompt[nodeId] || isolatedPrompt[nodeId]) return;
-                        isolatedPrompt[nodeId] = prompt[nodeId];
-                        const inputs = prompt[nodeId].inputs;
-                        for (let key in inputs) {
-                            const val = inputs[key];
-                            if (Array.isArray(val) && val.length === 2) {
-                                traceDependencies(String(val[0]));
-                            }
-                        }
-                    };
-                    traceDependencies(String(ctx.id));
-                    const originalGraphToPrompt = app.graphToPrompt;
-                    const virtualNodeTypes = [
-                        "SetNode", "GetNode", "SetNodeAny", "GetNodeAny",
-                        "SetImage", "GetImage", "SetLatent", "GetLatent"
-                    ];
-                    app.graphToPrompt = async function (...args) {
-                        const originalModes = new Map();
-                        for (const n of app.graph._nodes) {
-                            originalModes.set(n.id, n.mode);
-                            const isVirtual = virtualNodeTypes.some(t => n.type?.includes(t));
-                            if (!isolatedPrompt[String(n.id)] && !isVirtual) {
-                                n.mode = 2; // Mute 无关节点
-                            } else {
-                                n.mode = 0;
-                            }
-                        }
-                        try {
-                            return await originalGraphToPrompt.apply(this, args);
-                        } finally {
-                            for (const n of app.graph._nodes) {
-                                const m = originalModes.get(n.id);
-                                if (m !== undefined) n.mode = m;
-                            }
-                        }
-                    };
-                    try {
-                        await app.queuePrompt(0, 1);
-                    } finally {
-                        if (app.graphToPrompt !== originalGraphToPrompt) {
-                            app.graphToPrompt = originalGraphToPrompt;
-                        }
-                    }
-                }
-			    
-
+                loadBtn.onclick = () => eeRunIsolatedPreview(this, "ImageCurve");
                 modeControlArea.appendChild(loadBtn);
                 
                 const modeBtn = document.createElement("button");
                 modeBtn.innerText = "Multi Img";
                 modeBtn.style.flex = "3";
                 modeBtn.style.width = "auto";
-				modeBtn.style.lineHeight = "22px";
+                                modeBtn.style.lineHeight = "22px";
                 modeBtn.style.height = "24px";
-				modeBtn.style.marginTop = "8px";
+                                modeBtn.style.marginTop = "8px";
                 modeBtn.style.border = "none";
                 modeBtn.style.borderRadius = "8px";
                 modeBtn.style.cursor = "pointer";
@@ -670,7 +563,7 @@ app.registerExtension({
                 
                 modeControlArea.appendChild(modeBtn);
                 container.appendChild(modeControlArea);
-				
+                                
 
                 let isDragging = false;
                 let dragIndex = -1;
@@ -909,8 +802,14 @@ app.registerExtension({
                 onExecuted?.apply(this, arguments);
 
                 // 动态 Frame 最大值
+                if (message?.batch_size?.length === 0) {
+                    // rgthree 语义（无输入零操作）的空消息：不碰 frame_index，
+                    // 但要防止历史上 batch_size=[0] 曾把 max 写坏为 -1
+                    const fw0 = this.widgets?.find(w => w.name === "frame_index");
+                    if (fw0) { fw0.options.max = Math.max(fw0.options.max ?? 0, 9999); if (fw0.value < 0) fw0.value = 0; }
+                }
                 if (message?.batch_size?.length > 0) {
-                    const maxFrameIndex = message.batch_size[0] - 1;
+                    const maxFrameIndex = Math.max(0, message.batch_size[0] - 1);
                     const frameWidget = this.widgets.find(w => w.name === "frame_index");
                     if (frameWidget) {
                         frameWidget.options.max = maxFrameIndex;

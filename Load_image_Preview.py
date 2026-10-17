@@ -112,9 +112,10 @@ class LoadImageWithPreview:
                 "unique_id": "UNIQUE_ID",
             }
         }
+    
+    RETURN_TYPES = ("IMAGE", "IMAGE", "MASK", "STRING")
+    RETURN_NAMES = ("image", "Original image", "mask", "filename")
 
-    RETURN_TYPES = ("IMAGE", "MASK", "STRING", "STRING")
-    RETURN_NAMES = ("image", "mask", "filename", "JSON_info")
     FUNCTION = "load_image"
     CATEGORY = "Element_easy/image"
     DESCRIPTION = "Browse folders and load images with auto-formatted metadata."
@@ -135,6 +136,7 @@ class LoadImageWithPreview:
         final_text = ""
 
         if image is not None:
+            original_image_tensor = image
             img_tensor = image[0]
             i_val = 255. * img_tensor.cpu().numpy()
             base_img = Image.fromarray(np.clip(i_val, 0, 255).astype(np.uint8))
@@ -196,6 +198,8 @@ class LoadImageWithPreview:
                 final_text = f"Error reading metadata: {e}"
 
             base_img = node_helpers.pillow(Image.open, image_path)
+            orig_img = node_helpers.pillow(ImageOps.exif_transpose, base_img)
+            original_image_tensor = torch.from_numpy(np.array(orig_img.convert("RGB")).astype(np.float32) / 255.0)[None,]
             filename = os.path.basename(selected_image)
 
             for i in ImageSequence.Iterator(base_img):
@@ -251,6 +255,6 @@ class LoadImageWithPreview:
                 pass
 
         if ui_data is not None:
-            return {"ui": ui_data, "result": (output_image, mask_tensor, filename, final_text)}
+            return {"ui": ui_data, "result": (output_image, original_image_tensor, mask_tensor, filename)}
+        return (output_image, original_image_tensor, mask_tensor, filename)
 
-        return (output_image, mask_tensor, filename, final_text)

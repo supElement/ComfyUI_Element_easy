@@ -160,7 +160,7 @@
 <a id="loadimage_preview"></a>
 ## LoadImage_Preview
 
-<sub>v1.3.5 新增 · v1.6.1 优化</sub>
+<sub>v1.3.5 新增 · v1.6.1 优化 · v1.6.7 修改输出端口</sub>
 
 浏览指定路径下的图像文件，选中后进入编辑面板进行简单编辑：自由绘制线条、mask、方框、圆，以及裁剪图像。
 
@@ -170,7 +170,7 @@
 - 编辑模式下支持 `Ctrl+V` 粘贴图像，支持从网页或资源管理器直接拖入
 - ComfyUI 的 input 目录常驻节点中，folder path 指定的目录作为额外增加的目录
 
-<img width="1453" height="913" alt="LoadImage_Preview" src="https://github.com/user-attachments/assets/ed8d3d43-b18d-482b-84f1-6c0f6b87add5" />
+<img width="1453" height="913" alt="Untitled-1" src="https://github.com/user-attachments/assets/8ea3ad14-90d6-499e-8afe-41b9c84f6792" />
 
 ---
 

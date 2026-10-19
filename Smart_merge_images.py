@@ -743,7 +743,8 @@ class SmartMergeImages:
             print("[Smart Merge] 警告：低纹理图像，纹理检测失效 | Warning: low-texture image, texture detection ineffective")
 
         reliability = inner_mask_f * consistency_mask * texture_mask
-        reliability = np.clip(reliability, 0.2, 1.0)
+        # reliability = np.clip(reliability, 0.2, 1.0)
+        reliability = np.clip(reliability, 0.0, 1.0)
 
         flow = flow_fwd.copy()
         max_flow = float(max_flow_px)
@@ -1195,7 +1196,9 @@ class SmartMergeImages:
         h_t, w_t = train_img.shape[:2]
         pts_q, pts_t = None, None
         self._match_level = None
-
+        self._disk_pts_q = None
+        self._disk_pts_t = None
+        
         # 匹配降采样: DISK 显存/耗时与像素数成正比, 全尺寸大背景可吃掉 10GB+ 显存。
         # 匹配只需 ~1280px, 关键点坐标最后按各自缩放比除回原尺度, 精度损失 <1px。
         MATCH_MAX_DIM = 1280
@@ -1263,6 +1266,21 @@ class SmartMergeImages:
             return None, None, 0, None
         magsac_flag = getattr(cv2, 'USAC_MAGSAC', cv2.RANSAC)
         H, inliers = cv2.findHomography(pts_q, pts_t, magsac_flag, 4.0)
+        
+        # ★ 宽松内点(供TPS残差场): MAGSAC 4px阈值会剔掉真实的非刚性畸变点,
+        #   按"对H投影误差<15px"重筛 —— 真误匹配由TPS内部邻域一致性再清
+        try:
+            _ones = np.hstack([pts_q, np.ones((len(pts_q), 1))])
+            _proj = (H @ _ones.T).T
+            _proj = _proj[:, :2] / _proj[:, 2:]
+            _err = np.linalg.norm(_proj - pts_t, axis=1)
+            _keep = _err < 15.0
+            if int(_keep.sum()) >= 8:
+                self._disk_pts_q = pts_q[_keep]
+                self._disk_pts_t = pts_t[_keep]
+        except Exception:
+            self._disk_pts_q = None
+
         if H is None or inliers is None or np.sum(inliers) < 4:
             return None, None, 0, None
         if not self._homography_is_sane(H, h_q, w_q, h_t, w_t):
@@ -1398,16 +1416,55 @@ class SmartMergeImages:
             flags=cv2.INTER_LINEAR
         )
 
+        # ★ 无桥接TPS: 单应性吃全局, DISK宽松内点残差场吃非刚性
+        if use_tps and getattr(self, "_disk_pts_q", None) is not None and len(self._disk_pts_q) >= 8:
+            try:
+                _ones = np.hstack([self._disk_pts_q, np.ones((len(self._disk_pts_q), 1))])
+                q = (H @ _ones.T).T
+                q = q[:, :2] / q[:, 2:]
+                tps_fg, tps_mask = self.warp_tps(
+                    warped_fg, warped_mask, train_img, q, self._disk_pts_t, reg_lambda=1.5)
+                if tps_fg is not None:
+                    g0_med, g0_p85 = self._flow_residual_score(warped_fg, warped_mask, train_img)
+                    g1_med, g1_p85 = self._flow_residual_score(tps_fg, tps_mask, train_img)
+                    if g1_med <= g0_med + 0.5 and g1_p85 <= g0_p85 + 1.0:
+                        warped_fg, warped_mask = tps_fg, tps_mask
+                        print(f"[Smart Merge] TPS(DISK内点) 通过: {g0_med:.2f}px→{g1_med:.2f}px | TPS accepted")
+                    else:
+                        print(f"[Smart Merge] TPS(DISK内点) 拒绝: {g0_med:.2f}px→{g1_med:.2f}px | TPS rejected")
+            except Exception as e:
+                print(f"[Smart Merge] TPS(DISK内点) 失败: {e} | TPS failed")
+
+
+        # if warp_method:
+            # refined_fg, refined_mask = self.refine_with_optical_flow(
+                # warped_fg, warped_mask, train_img, optical_flow, device
+            # )
+            # g0m, _ = self._flow_residual_score(warped_fg, warped_mask, train_img)
+            # g1m, _ = self._flow_residual_score(refined_fg, refined_mask, train_img)
+            # if g1m < g0m - 0.05:
+                # print(f"[Smart Merge] H+光流精修生效: {g0m:.2f}px→{g1m:.2f}px | H+flow accepted")
+                # return refined_fg, refined_mask, True
+            # print(f"[Smart Merge] H+光流精修拒绝: {g0m:.2f}px→{g1m:.2f}px | H+flow rejected")
+            # return warped_fg, warped_mask, True
+        # return warped_fg, warped_mask, True
+
         if warp_method:
+            g0m, g0p = self._flow_residual_score(warped_fg, warped_mask, train_img)
+            if g0m < 1.2:
+                print(f"[Smart Merge] H后残差已很小({g0m:.2f}px), 跳过光流精修 | residual tiny, flow skipped")
+                return warped_fg, warped_mask, True
             refined_fg, refined_mask = self.refine_with_optical_flow(
                 warped_fg, warped_mask, train_img, optical_flow, device
             )
-            g0m, _ = self._flow_residual_score(warped_fg, warped_mask, train_img)
-            g1m, _ = self._flow_residual_score(refined_fg, refined_mask, train_img)
-            if g1m < g0m - 0.05:
-                print(f"[Smart Merge] H+光流精修生效: {g0m:.2f}px→{g1m:.2f}px | H+flow accepted")
+            g1m, g1p = self._flow_residual_score(refined_fg, refined_mask, train_img)
+            # 验收与TPS路径统一: 中位数显著改善 且 p85不恶化(防"整体略好、局部波浪")
+            if g1m < g0m - 0.3 and g1p <= g0p + 0.5:
+                print(f"[Smart Merge] H+光流精修生效: {g0m:.2f}px→{g1m:.2f}px "
+                      f"(p85 {g0p:.2f}→{g1p:.2f}) | H+flow accepted")
                 return refined_fg, refined_mask, True
-            print(f"[Smart Merge] H+光流精修拒绝: {g0m:.2f}px→{g1m:.2f}px | H+flow rejected")
+            print(f"[Smart Merge] H+光流精修拒绝: {g0m:.2f}px→{g1m:.2f}px "
+                  f"(p85 {g0p:.2f}→{g1p:.2f}) | H+flow rejected")
             return warped_fg, warped_mask, True
         return warped_fg, warped_mask, True
 
@@ -1796,6 +1853,7 @@ class SmartMergeImages:
                     union_mask = np.maximum(union_mask, warped_mask)
                     img_bg = img_result.copy()
                 
+                # 整图光流精修
                 if union_mask.max() > 0.5 and (use_tps or warp_method):
                     try:
                         img_result = self.global_flow_polish(img_result, original_bg, union_mask)

@@ -167,7 +167,6 @@ class SmartMergeImages:
         return hashlib.md5(joined.encode("utf-8")).hexdigest()[:24]
 
     # ================= 输入归一化 / Input normalization =================
-    # 配合 INPUT_IS_LIST=True: 引擎会把 List 原样传入, 这里统一展平为条目列表。
 
     @staticmethod
     def _normalize_image_items(image_input):
@@ -645,17 +644,41 @@ class SmartMergeImages:
         return H
 
     def refine_with_optical_flow(self, warped_fg, warped_mask, train_img, optical_flow=False, device="cpu", max_flow_px=None):
-        """optical_flow: False=Farneback, True=DIS (布尔开关)"""
+        """optical_flow: False=Farneback, True=DIS (布尔开关)
+        ★ 只在掩码 bbox(+边距) 内计算光流 —— 全帧 Farneback 是大图卡顿主因,
+          bbox 外区域本来流场就≈0, 原样保留即可。"""
         if max_flow_px is None:
             max_flow_px = self.MAX_FLOW_PX
-        gray_warped = cv2.cvtColor(warped_fg, cv2.COLOR_RGB2GRAY)
-        gray_target = cv2.cvtColor(train_img, cv2.COLOR_RGB2GRAY)
+        h_t, w_t = train_img.shape[:2]
+        mask_u8 = (warped_mask > 0.5).astype(np.uint8)
+        ys, xs = np.where(mask_u8 > 0)
+        if len(ys) < 100:
+            return warped_fg, warped_mask
+        margin = 64
+        y0 = max(0, int(ys.min()) - margin)
+        y1 = min(h_t, int(ys.max()) + margin)
+        x0 = max(0, int(xs.min()) - margin)
+        x1 = min(w_t, int(xs.max()) + margin)
+        sub_fg = warped_fg[y0:y1, x0:x1]
+        sub_mask = warped_mask[y0:y1, x0:x1]
+        sub_bg = train_img[y0:y1, x0:x1]
+        gray_warped = cv2.cvtColor(sub_fg, cv2.COLOR_RGB2GRAY)
+        gray_target = cv2.cvtColor(sub_bg, cv2.COLOR_RGB2GRAY)
         if optical_flow:
             try:
-                return self._refine_with_dis(gray_warped, gray_target, warped_fg, warped_mask, train_img, max_flow_px=max_flow_px)
+                r_fg, _ = self._refine_with_dis(gray_warped, gray_target, sub_fg, sub_mask, sub_bg,
+                                                max_flow_px=max_flow_px)
             except Exception as e:
                 print(f"[Smart Merge] DIS 不可用 ({e}), 降级 Farneback | DIS unavailable, falling back to Farneback")
-        return self._refine_with_farneback(gray_warped, gray_target, warped_fg, warped_mask, train_img, max_flow_px=max_flow_px)
+                r_fg, _ = self._refine_with_farneback(gray_warped, gray_target, sub_fg, sub_mask, sub_bg,
+                                                      max_flow_px=max_flow_px)
+        else:
+            r_fg, _ = self._refine_with_farneback(gray_warped, gray_target, sub_fg, sub_mask, sub_bg,
+                                                  max_flow_px=max_flow_px)
+        out_fg = warped_fg.copy()
+        out_fg[y0:y1, x0:x1] = r_fg
+        return out_fg, warped_mask.copy()
+
 
 
     def _refine_with_dis(self, gray_warped, gray_target, warped_fg, warped_mask, train_img, max_flow_px=15.0):
@@ -867,6 +890,44 @@ class SmartMergeImages:
         ws = float(wgt.sum())
         return float((err * wgt).sum() / ws) if ws > 1.0 else 1e9
 
+    @classmethod
+    def _flow_residual_score(cls, warped_fg, warped_mask, train_img):
+        """几何残差评分(单位: px): 掩码内稠密光流幅值的中位数/p85, 只度量"还错位多少像素",
+        与内容差异(编辑本身)、Lanczos重采样无关 —— 用于 TPS 验收, 替代被污染的 _align_score。
+        Geometric residual in px (median & p85 of dense-flow magnitude inside the mask),
+        independent of content/photometric changes."""
+        if warped_fg.shape[:2] != train_img.shape[:2]:
+            return 1e9, 1e9
+        mask_u8 = (warped_mask > 0.5).astype(np.uint8)
+        ys, xs = np.where(mask_u8 > 0)
+        if len(ys) < 400:
+            return 1e9, 1e9
+        pad = 32
+        y0, y1 = max(0, int(ys.min()) - pad), min(warped_fg.shape[0], int(ys.max()) + pad)
+        x0, x1 = max(0, int(xs.min()) - pad), min(warped_fg.shape[1], int(xs.max()) + pad)
+        g1 = cv2.cvtColor(warped_fg[y0:y1, x0:x1], cv2.COLOR_RGB2GRAY)
+        g2 = cv2.cvtColor(train_img[y0:y1, x0:x1], cv2.COLOR_RGB2GRAY)
+        m = cv2.erode(mask_u8[y0:y1, x0:x1], np.ones((15, 15), np.uint8)) > 0
+        if float(m.sum()) < 400.0:
+            return 1e9, 1e9
+        flow = cv2.calcOpticalFlowFarneback(g1, g2, None, 0.5, 2, 11, 2, 5, 1.2, 0)
+        flow_b = cv2.calcOpticalFlowFarneback(g2, g1, None, 0.5, 2, 11, 2, 5, 1.2, 0)
+
+        h, w = g1.shape
+        gx, gy = np.meshgrid(np.arange(w, dtype=np.float32), np.arange(h, dtype=np.float32))
+        fb = cv2.remap(flow_b, gx + flow[..., 0], gy + flow[..., 1], interpolation=cv2.INTER_LINEAR)
+        fb_err = np.linalg.norm(flow + fb, axis=2)
+        mag = np.linalg.norm(flow, axis=2)
+        valid = m & (fb_err < 2.0)          # 前后向一致性: 内容被编辑过的像素被剔除
+        if int(valid.sum()) < 200:
+            valid = m                        # 内容大改时退化为仅掩码
+        if int(valid.sum()) < 100:
+            return 1e9, 1e9
+        med = float(np.median(mag[valid]))
+        p85 = float(np.percentile(mag[valid], 85))   # p85 抓"局部尖峰"
+        return med, p85
+
+
 
     def match_with_loftr(self, query_img, train_img, device="cpu"):
         """LoFTR 半稠密匹配: 输入必须是 (N,1,H,W) 灰度图"""
@@ -935,7 +996,7 @@ class SmartMergeImages:
         return pts_q[keep_mask], pts_t[keep_mask]
 
     def warp_tps(self, warped_fg_src, warped_mask_src, train_img, pts_src, pts_dst,
-                 reg_lambda=1.5, max_disp=64.0, max_points=300):
+                 reg_lambda=5, max_disp=64.0, max_points=1500):
         """TPS 全局薄板样条: 均匀降采样→全局平滑场(数学保证无波浪)→粗网格评估→场高斯平滑"""
         from scipy.interpolate import RBFInterpolator
         from scipy.spatial import cKDTree
@@ -976,6 +1037,28 @@ class SmartMergeImages:
             mag = np.linalg.norm(disp, axis=1)
             med_mag = float(np.median(mag))
 
+        # 邻域中值一致性离群剔除
+        if n >= 12:
+            from scipy.spatial import cKDTree
+            _t = cKDTree(src)
+            _k = int(min(9, n))
+            _, _idx = _t.query(src, k=_k)            # 含自身
+            _loc = np.median(disp[_idx], axis=1)      # 邻域共识位移
+            _dev = np.linalg.norm(disp - _loc, axis=1)
+            _mad = float(np.median(_dev))
+            _thr = max(2.0, 3.0 * _mad)
+            _keep = _dev <= _thr
+            if int(_keep.sum()) < max(8, n // 4):     # 剔得过狠 → 退化为保留偏差最小的一半
+                _keep = _dev <= float(np.median(_dev))
+            if int(_keep.sum()) < n:
+                print(f"[Smart Merge] TPS 离群剔除: 保留 {_keep.sum()}/{n} 点 (阈值 {_thr:.2f}px) | outliers removed")
+                src, dst = src[_keep], dst[_keep]
+                n = len(src)
+                disp = dst - src
+                mag = np.linalg.norm(disp, axis=1)
+                med_mag = float(np.median(mag))
+
+
         rng = np.random.default_rng(0)
         perm = rng.permutation(n)
         n_fit = max(8, int(n * 0.8))
@@ -991,6 +1074,13 @@ class SmartMergeImages:
         else:
             smooth_err = 0.0
 
+        # 按位移分布自适应收紧限幅 (固定 64px 对小残差场景太宽松, 尖峰可存活)
+        _p95 = float(np.percentile(mag, 95)) if len(mag) else 0.0
+        _cap = float(min(max_disp, max(12.0, 4.0 * _p95)))
+        if _cap < max_disp:
+            print(f"[Smart Merge] TPS 限幅收紧: {max_disp:.0f}→{_cap:.1f}px | cap tightened")
+        max_disp = _cap
+
         disp = disp * np.clip(max_disp / np.maximum(mag, 1e-6), 0.0, 1.0)[:, None]
         rbf = RBFInterpolator(src, src + disp, kernel="thin_plate_spline",
                               smoothing=reg_lambda)
@@ -1002,12 +1092,12 @@ class SmartMergeImages:
         tree = cKDTree(src)
         dnn, _ = tree.query(gp, k=1)
         ref = max(float(np.median(tree.query(src, k=2)[0][:, 1])), 12.0)
-        decay = 0.35 + 0.65 * np.exp(-((dnn / (3.0 * ref)) ** 2))
+        decay = 0.20 + 0.80 * np.exp(-((dnn / (3.0 * ref)) ** 2))
         fg = fg * decay[:, None]
         fmag = np.linalg.norm(fg, axis=1)
         fg = fg * np.clip(max_disp / np.maximum(fmag, 1e-6), 0.0, 1.0)[:, None]
         gh, gw = gx.shape
-        k = int(max(3, step)) | 1
+        k = int(max(5, step)) | 1
         fg2 = fg.reshape(gh, gw, 2).astype(np.float32)
         fg2[:, :, 0] = cv2.GaussianBlur(fg2[:, :, 0], (k, k), 0)
         fg2[:, :, 1] = cv2.GaussianBlur(fg2[:, :, 1], (k, k), 0)
@@ -1024,7 +1114,7 @@ class SmartMergeImages:
               f"CV残差{smooth_err:.1f}px 覆盖{cov}/256")
         return warped_fg, warped_mask
 
-    def refine_second_pass(self, warped_fg, warped_mask, train_img, device, max_disp=16.0):
+    def refine_second_pass(self, warped_fg, warped_mask, train_img, device, max_disp=64.0):
         """二阶段精校: 已warp的块与BG同坐标系、小位移, 再做一次LoFTR稀疏匹配求残差场"""
         try:
             h_t, w_t = train_img.shape[:2]
@@ -1049,7 +1139,7 @@ class SmartMergeImages:
             pts_b = pts_b + off[None, :]
             return self.warp_tps(warped_fg, warped_mask, train_img,
                                  pts_w, pts_b, reg_lambda=1.5,
-                                 max_disp=max_disp, max_points=240)
+                                 max_disp=max_disp, max_points=1500)
         except Exception as e:
             print(f"[Smart Merge] 二阶段精校失败: {e}")
             return None, None
@@ -1065,8 +1155,8 @@ class SmartMergeImages:
         except AttributeError:
             dis = cv2.DISOpticalFlow.create(cv2.DISOPTICAL_FLOW_PRESET_MEDIUM)
         flow = dis.calc(gm, go, None).astype(np.float32)
-        flow[:, :, 0] = cv2.GaussianBlur(flow[:, :, 0], (15, 15), 0)
-        flow[:, :, 1] = cv2.GaussianBlur(flow[:, :, 1], (15, 15), 0)
+        flow[:, :, 0] = cv2.GaussianBlur(flow[:, :, 0], (25, 25), 0)
+        flow[:, :, 1] = cv2.GaussianBlur(flow[:, :, 1], (25, 25), 0)
         mag = np.linalg.norm(flow, axis=2)
         sel = union_mask > 0.5
         if not np.any(sel) or float(np.median(mag[sel])) < 0.6:
@@ -1105,8 +1195,28 @@ class SmartMergeImages:
         h_t, w_t = train_img.shape[:2]
         pts_q, pts_t = None, None
         self._match_level = None
-        img_q_tensor = torch.from_numpy(query_img).permute(2, 0, 1).float().to(device)[None] / 255.0
-        img_t_tensor = torch.from_numpy(train_img).permute(2, 0, 1).float().to(device)[None] / 255.0
+
+        # 匹配降采样: DISK 显存/耗时与像素数成正比, 全尺寸大背景可吃掉 10GB+ 显存。
+        # 匹配只需 ~1280px, 关键点坐标最后按各自缩放比除回原尺度, 精度损失 <1px。
+        MATCH_MAX_DIM = 1280
+        s_q = min(1.0, MATCH_MAX_DIM / float(max(h_q, w_q)))
+        s_t = min(1.0, MATCH_MAX_DIM / float(max(h_t, w_t)))
+        if s_q < 1.0:
+            query_m = cv2.resize(query_img, (int(round(w_q * s_q)), int(round(h_q * s_q))),
+                                 interpolation=cv2.INTER_AREA)
+        else:
+            query_m = query_img
+        if s_t < 1.0:
+            train_m = cv2.resize(train_img, (int(round(w_t * s_t)), int(round(h_t * s_t))),
+                                 interpolation=cv2.INTER_AREA)
+        else:
+            train_m = train_img
+        print(f"[Smart Merge] 匹配降采样: crop {w_q}x{h_q}→{query_m.shape[1]}x{query_m.shape[0]}, "
+              f"BG {w_t}x{h_t}→{train_m.shape[1]}x{train_m.shape[0]} | matching downscale")
+
+        img_q_tensor = torch.from_numpy(np.ascontiguousarray(query_m)).permute(2, 0, 1).float().to(device)[None] / 255.0
+        img_t_tensor = torch.from_numpy(np.ascontiguousarray(train_m)).permute(2, 0, 1).float().to(device)[None] / 255.0
+
         # ========== DISK + LightGlue (唯一特征匹配方案) ==========
         try:
             disk, lg_matcher = self.get_kornia_models(device)
@@ -1121,22 +1231,33 @@ class SmartMergeImages:
                             kps_q_t[None], torch.ones(1, len(kps_q_t), 1, 1, device=device))
                         lafs_t = KF.laf_from_center_scale_ori(
                             kps_t_t[None], torch.ones(1, len(kps_t_t), 1, 1, device=device))
-                        hw_q = torch.tensor([h_q, w_q], device=device)
-                        hw_t = torch.tensor([h_t, w_t], device=device)
+                        # ★ 注意: hw 必须用"缩放后"的尺寸, 传给 LightGlue 做坐标归一化
+                        hw_q = torch.tensor(query_m.shape[:2], device=device)
+                        hw_t = torch.tensor(train_m.shape[:2], device=device)
                         match_res = lg_matcher(
                             features_q.descriptors, features_t.descriptors,
                             lafs_q, lafs_t, hw1=hw_q, hw2=hw_t,
                         )
                         idxs = _parse_lightglue_output(match_res)
                         if idxs is not None and idxs.shape[0] >= 4:
-                            pts_q = kps_q_t[idxs[:, 0]].detach().cpu().numpy()
-                            pts_t = kps_t_t[idxs[:, 1]].detach().cpu().numpy()
+                            # ★ 关键点除回各自原图尺度 → 后续 findHomography 全部在原始坐标系
+                            pts_q = kps_q_t[idxs[:, 0]].detach().cpu().numpy() / s_q
+                            pts_t = kps_t_t[idxs[:, 1]].detach().cpu().numpy() / s_t
                             self._match_level = "DISK"
-            if self._match_level is None:
-                print("[Smart Merge] DISK+LightGlue 匹配点数不足 | DISK+LightGlue matched too few points")
+                if self._match_level is None:
+                    print("[Smart Merge] DISK+LightGlue 匹配点数不足 | DISK+LightGlue matched too few points")
         except Exception as e:
             print(f"[Smart Merge] DISK + LightGlue 匹配运行失败: {e} | DISK+LightGlue matching failed: {e}")
             pts_q, pts_t = None, None
+
+        # 释放匹配显存
+        try:
+            del img_q_tensor, img_t_tensor, features_q, features_t
+        except Exception:
+            pass
+        if getattr(device, "type", "") == "cuda":
+            torch.cuda.empty_cache()
+
         # ========== Homography ==========
         if pts_q is None or pts_t is None or len(pts_q) < 4:
             return None, None, 0, None
@@ -1201,40 +1322,46 @@ class SmartMergeImages:
                     tps_fg, tps_mask = self.warp_tps(
                         warped_fg0, warped_mask0, train_img, q, t, reg_lambda=1.5)
                     if tps_fg is not None:
-                        s0 = self._align_score(warped_fg0, warped_mask0, train_img)
-                        s1 = self._align_score(tps_fg, tps_mask, train_img)
+                        g0_med, g0_p85 = self._flow_residual_score(warped_fg0, warped_mask0, train_img)
+                        g1_med, g1_p85 = self._flow_residual_score(tps_fg, tps_mask, train_img)
                         p0t = self._photometric_score(warped_fg0, warped_mask0, train_img)
                         p1t = self._photometric_score(tps_fg, tps_mask, train_img)
-                        if s1 < s0 - max(0.5, 0.02 * s0) and p1t <= p0t + 0.5:   
-                        # if s1 < s0 + 0.5:
+                        # 验收改为几何残差(px)口径
+                        # "强制生效"策略 —— 只有几何真正恶化才拦截, 小残差照常交给光流
+                        if g1_med <= g0_med + 0.5 and g1_p85 <= g0_p85 + 1.0 and p1t <= p0t + 2.0:
                             warped_fg, warped_mask = tps_fg, tps_mask
-                            print(f"[Smart Merge] TPS 验收通过 ({s0:.1f}→{s1:.1f}) | TPS accepted")
+                            print(f"[Smart Merge] TPS 验收通过: 几何残差 {g0_med:.2f}px→{g1_med:.2f}px "
+                                  f"(p85 {g0_p85:.2f}→{g1_p85:.2f}) | TPS accepted")
                         else:
-                            print(f"[Smart Merge] TPS 验收未通过 ({s0:.1f}→{s1:.1f}), 回退桥接H | TPS rejected")
+                            print(f"[Smart Merge] TPS 拒绝: 几何残差 {g0_med:.2f}px→{g1_med:.2f}px "
+                                  f"(p85 {g0_p85:.2f}→{g1_p85:.2f}), 光度 {p0t:.1f}→{p1t:.1f} | TPS rejected")
+
                     # ★ 二阶段精校(ENABLE_SECOND_PASS 可关): BG坐标系内小位移残差校正
                     if second_pass:
                         fg2, mask2 = self.refine_second_pass(
                             warped_fg, warped_mask, train_img, device, max_disp=16.0)
                         if fg2 is not None:
-                            s2a = self._align_score(warped_fg, warped_mask, train_img)
-                            s2b = self._align_score(fg2, mask2, train_img)
+                            g2a, _ = self._flow_residual_score(warped_fg, warped_mask, train_img)
+                            g2b, _ = self._flow_residual_score(fg2, mask2, train_img)
                             p2a = self._photometric_score(warped_fg, warped_mask, train_img)
                             p2b = self._photometric_score(fg2, mask2, train_img)
-                            if s2b < s2a - max(0.5, 0.01 * s2a) and p2b <= p2a + 0.5:
+                            if g2b <= g2a - 0.2 and p2b <= p2a + 0.5:
                                 warped_fg, warped_mask = fg2, mask2
-                                print(f"[Smart Merge] 二阶段精校通过 ({s2a:.1f}→{s2b:.1f}) | pass2 accepted")
+                                print(f"[Smart Merge] 二阶段精校通过 ({g2a:.2f}px→{g2b:.2f}px) | pass2 accepted")
                             else:
-                                print(f"[Smart Merge] 二阶段精校无改善 ({s2a:.1f}→{s2b:.1f}) | pass2 rejected")
+                                print(f"[Smart Merge] 二阶段精校无改善 ({g2a:.2f}px→{g2b:.2f}px) | pass2 rejected")
 
                     if warp_method:
-
                         fg_r, mask_r = self.refine_with_optical_flow(
                             warped_fg, warped_mask, train_img, optical_flow=optical_flow,
                             device=device, max_flow_px=10.0)
-                        s0 = self._align_score(warped_fg, warped_mask, train_img)
-                        s1 = self._align_score(fg_r, mask_r, train_img)
-                        if s1 < s0:
+                        g0m, _ = self._flow_residual_score(warped_fg, warped_mask, train_img)
+                        g1m, _ = self._flow_residual_score(fg_r, mask_r, train_img)
+                        if g1m < g0m - 0.05:
                             warped_fg, warped_mask = fg_r, mask_r
+                            print(f"[Smart Merge] 逐块光流生效: {g0m:.2f}px→{g1m:.2f}px | per-crop flow accepted")
+                        else:
+                            print(f"[Smart Merge] 逐块光流拒绝: {g0m:.2f}px→{g1m:.2f}px | per-crop flow rejected")
                     self._match_level = "TPS+LoFTR"
                     return warped_fg, warped_mask, True
 
@@ -1246,7 +1373,8 @@ class SmartMergeImages:
             )
 
         if H is None:
-            if warp_method in ("Homography + Optical Flow", "Optical Flow"):
+            if warp_method:
+                print("[Smart Merge] 特征匹配彻底失败, 纯光流对齐 | pure optical-flow alignment")
                 refined_fg, refined_mask = self.optical_flow_only_align(
                     query_img, train_img, optical_flow, device)
                 return refined_fg, refined_mask, True
@@ -1270,13 +1398,19 @@ class SmartMergeImages:
             flags=cv2.INTER_LINEAR
         )
 
-        if warp_method in ("Homography + Optical Flow", "Optical Flow"):
+        if warp_method:
             refined_fg, refined_mask = self.refine_with_optical_flow(
                 warped_fg, warped_mask, train_img, optical_flow, device
             )
-            return refined_fg, refined_mask, True
-
+            g0m, _ = self._flow_residual_score(warped_fg, warped_mask, train_img)
+            g1m, _ = self._flow_residual_score(refined_fg, refined_mask, train_img)
+            if g1m < g0m - 0.05:
+                print(f"[Smart Merge] H+光流精修生效: {g0m:.2f}px→{g1m:.2f}px | H+flow accepted")
+                return refined_fg, refined_mask, True
+            print(f"[Smart Merge] H+光流精修拒绝: {g0m:.2f}px→{g1m:.2f}px | H+flow rejected")
+            return warped_fg, warped_mask, True
         return warped_fg, warped_mask, True
+
 
     def make_edge_safe_soft_mask(self, mask_float, feather_kernel):
         h, w = mask_float.shape[:2]
@@ -1662,7 +1796,7 @@ class SmartMergeImages:
                     union_mask = np.maximum(union_mask, warped_mask)
                     img_bg = img_result.copy()
                 
-                if union_mask.max() > 0.5 and use_tps:
+                if union_mask.max() > 0.5 and (use_tps or warp_method):
                     try:
                         img_result = self.global_flow_polish(img_result, original_bg, union_mask)
                     except Exception as e:

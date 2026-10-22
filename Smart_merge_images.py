@@ -43,6 +43,8 @@ MODEL_FILES = {
 
 _failed_once = set()  
 
+GRID_TYPE = "ELEMENT_TILE_GRID"
+
 def ensure_model_files():
     """文件已存在 → 跳过(本地命中, 零请求); 缺失 → 从 HF 下载到 kornia 的缓存名。"""
     import urllib.request
@@ -414,6 +416,16 @@ class SmartMergeImages:
                                "more reliable placement than auto-matching, and optical-flow deformation correction still applies.\n"
                                "Natively accepts list / batch / single image; A and B counts/sizes need not match exactly (paired by index)."
                 }),
+                
+                "split_grid": (GRID_TYPE, {
+                    "tooltip": "可选: ElementTileSplit 的 grid 信息。连接后每个 crop 的 alpha/羽化处理改为 ElementTileMerge 的方式"
+                               "(基于 fade_top/bottom/left/right 线性渐变 + 圆角 mask 高斯羽化, 逐 tile 加权累加再平均)。\n"
+                               "色彩匹配、TPS、光流对齐逻辑保持不变。\n"
+                               "--------------------------------------------------\n"
+                               "Optional: grid from ElementTileSplit. When connected, per-tile alpha/feathering follows "
+                               "ElementTileMerge (fade-based linear ramp + rounded-corner gaussian feather, accumulated "
+                               "weighted average). Color match / TPS / optical-flow alignment remain unchanged."
+                }),
             },
         }
 
@@ -424,6 +436,96 @@ class SmartMergeImages:
 
     # 声明接受 List 输入, 阻止 ComfyUI 对 List 输入做隐式"逐项展开"
     INPUT_IS_LIST = True
+
+    # ============================================================
+    # ElementTileMerge 风格的 alpha / 羽化权重（split_grid 连接时启用）
+    # ============================================================
+    
+    @staticmethod
+    def _tile_fade_weight_in_bbox(tile_info, bbox, feather_px):
+        """在 bbox 内生成 fade 线性渐变权重 (bh, bw, 1)。对应 ElementTileMerge._tile_weight。
+        fade 距离按 tile 全局位置计算, bbox 是 crop 在画布上的裁切范围。"""
+        xmin, ymin, xmax, ymax = bbox
+        bh, bw = ymax - ymin, xmax - xmin
+        weight = np.ones((bh, bw), dtype=np.float32)
+        if feather_px <= 0:
+            return weight[:, :, None]
+    
+        tx = int(tile_info.get("x", 0))
+        ty = int(tile_info.get("y", 0))
+        tw = int(tile_info.get("width", 1))
+        th = int(tile_info.get("height", 1))
+        ft = int(tile_info.get("fade_top", 0))
+        fb = int(tile_info.get("fade_bottom", 0))
+        fl = int(tile_info.get("fade_left", 0))
+        fr = int(tile_info.get("fade_right", 0))
+    
+        ys = np.arange(ymin, ymax, dtype=np.float32)[:, None] + 0.5
+        xs = np.arange(xmin, xmax, dtype=np.float32)[None, :] + 0.5
+    
+        if ft > 0:
+            weight = np.minimum(weight, np.clip((ys - ty) / ft, 0, 1))
+        if fb > 0:
+            weight = np.minimum(weight, np.clip((ty + th - ys) / fb, 0, 1))
+        if fl > 0:
+            weight = np.minimum(weight, np.clip((xs - tx) / fl, 0, 1))
+        if fr > 0:
+            weight = np.minimum(weight, np.clip((tx + tw - xs) / fr, 0, 1))
+    
+        return weight[:, :, None]
+    
+    
+    @staticmethod
+    def _tile_corner_mask_in_bbox(tile_info, bbox, feather_px):
+        """在 bbox 内生成圆角硬 mask + 高斯羽化 (bh, bw, 1)。
+        对应 ElementTileMerge._generate_tile_mask + _gaussian_blur_isotropic。"""
+        xmin, ymin, xmax, ymax = bbox
+        bh, bw = ymax - ymin, xmax - xmin
+    
+        rtl = int(tile_info.get("radius_tl", 0))
+        rtr = int(tile_info.get("radius_tr", 0))
+        rbl = int(tile_info.get("radius_bl", 0))
+        rbr = int(tile_info.get("radius_br", 0))
+    
+        if rtl == 0 and rtr == 0 and rbl == 0 and rbr == 0:
+            return None
+    
+        tx = int(tile_info.get("x", 0))
+        ty = int(tile_info.get("y", 0))
+        tw = int(tile_info.get("width", 1))
+        th = int(tile_info.get("height", 1))
+    
+        ys = np.arange(ymin, ymax, dtype=np.float32)[:, None] + 0.5
+        xs = np.arange(xmin, xmax, dtype=np.float32)[None, :] + 0.5
+        ly = ys - ty
+        lx = xs - tx
+    
+        mask = np.ones((bh, bw), dtype=bool)
+        if rtl > 0:
+            m = (lx < rtl) & (ly < rtl)
+            dist = np.sqrt((lx - rtl) ** 2 + (ly - rtl) ** 2)
+            mask &= ~(m & (dist > rtl))
+        if rtr > 0:
+            m = (lx > tw - rtr) & (ly < rtr)
+            dist = np.sqrt((lx - (tw - rtr)) ** 2 + (ly - rtr) ** 2)
+            mask &= ~(m & (dist > rtr))
+        if rbl > 0:
+            m = (lx < rbl) & (ly > th - rbl)
+            dist = np.sqrt((lx - rbl) ** 2 + (ly - (th - rbl)) ** 2)
+            mask &= ~(m & (dist > rbl))
+        if rbr > 0:
+            m = (lx > tw - rbr) & (ly > th - rbr)
+            dist = np.sqrt((lx - (tw - rbr)) ** 2 + (ly - (th - rbr)) ** 2)
+            mask &= ~(m & (dist > rbr))
+    
+        mask = mask.astype(np.float32)
+    
+        if feather_px > 1.0:
+            sigma = max(0.5, feather_px / 3.0)
+            mask = cv2.GaussianBlur(mask, (0, 0), sigma)
+    
+        return mask[:, :, None]
+
 
     def edge_weighted_color_sync(self, fg, bg, mask_float):
         """
@@ -437,6 +539,8 @@ class SmartMergeImages:
         r = bg.astype(np.float32) / 255.0
         
         edge_mask = ((mask_float > 0.1) & (mask_float < 0.8)).astype(np.float32)
+        # edge_mask = (mask_float < 0.8).astype(np.float32)
+        # edge_mask = ((mask_float > 0.0) & (mask_float < 0.8)).astype(np.float32)
         
         if edge_mask.sum() < 500:
             edge_mask = (mask_float > 0.5).astype(np.float32)
@@ -1560,7 +1664,7 @@ class SmartMergeImages:
 
     def smart_merge(self, original_image, edited_crop_B, warp_method, color_match, optical_flow, feather_kernel,
                     use_tps=True, second_pass=False, merge_mode="All to One", use_gpu=False, force_recompute=False,
-                    original_crop_A=None, unique_id=None, prompt=None, extra_pnginfo=None):
+                    original_crop_A=None, split_grid=None, unique_id=None, prompt=None, extra_pnginfo=None):
 
         # INPUT_IS_LIST 模式下, 所有输入(含控件/隐藏参数)都可能以 list 形式到达 → 解包为标量
         warp_method = self._unwrap_scalar(warp_method, False)
@@ -1575,6 +1679,7 @@ class SmartMergeImages:
         unique_id = self._unwrap_scalar(unique_id)
         prompt = self._unwrap_scalar(prompt)
         extra_pnginfo = self._unwrap_scalar(extra_pnginfo)
+        split_grid = self._unwrap_scalar(split_grid)
 
         # ================= 输入归一化 =================
         # INPUT_IS_LIST=True 时 List 会原样到达这里; batch/单张也统一展开为条目列表。
@@ -1630,6 +1735,51 @@ class SmartMergeImages:
         total_crops = B_orig_loop * crops_per_bg
         new_aligns_to_save = [None] * total_crops if not align_cache_hit else None
 
+        # ============================================================
+        # 若连接 split_grid，启用 ElementTileMerge 式 alpha 累加
+        # ============================================================
+        use_grid_alpha = split_grid is not None
+        
+        # ---- split_grid 坐标系基准：tile 坐标是 out 空间，original_bg 是 src 空间 ----
+        try:
+            GRID_U_UP = float((split_grid or {}).get("unified_upscale", 1.0) or 1.0)
+        except Exception:
+            GRID_U_UP = 1.0
+        if GRID_U_UP <= 0:
+            GRID_U_UP = 1.0
+        _inv_scale = 1.0 / GRID_U_UP
+
+        def _tile_info_to_src(ti):
+            """把 grid tile 的坐标从输出空间缩放到源空间（SmartMerge 的 original_bg 尺寸）。"""
+            if ti is None:
+                return None
+            return {
+                "x":           float(ti.get("x", 0))           * _inv_scale,
+                "y":           float(ti.get("y", 0))           * _inv_scale,
+                "width":       float(ti.get("width", 1))       * _inv_scale,
+                "height":      float(ti.get("height", 1))      * _inv_scale,
+                "fade_top":    float(ti.get("fade_top", 0))    * _inv_scale,
+                "fade_bottom": float(ti.get("fade_bottom", 0)) * _inv_scale,
+                "fade_left":   float(ti.get("fade_left", 0))   * _inv_scale,
+                "fade_right":  float(ti.get("fade_right", 0))  * _inv_scale,
+                "radius_tl":   float(ti.get("radius_tl", 0))   * _inv_scale,
+                "radius_tr":   float(ti.get("radius_tr", 0))   * _inv_scale,
+                "radius_bl":   float(ti.get("radius_bl", 0))   * _inv_scale,
+                "radius_br":   float(ti.get("radius_br", 0))   * _inv_scale,
+            }
+
+        print(f"[SmartMerge] grid coordinate scale: unified_upscale={GRID_U_UP:.3f}")
+        
+        grid_tiles = []
+        if use_grid_alpha:
+            try:
+                grid_tiles = (split_grid or {}).get("tiles", []) or []
+            except Exception:
+                grid_tiles = []
+            if not grid_tiles:
+                print("[Smart Merge] split_grid 已连接但没有 tiles, 回退到默认 alpha | split_grid has no tiles, falling back")
+                use_grid_alpha = False
+
         for i in range(B_orig_loop):
             try:
                 img_bg = self._item_to_uint8_rgb(items_orig[i])
@@ -1642,6 +1792,18 @@ class SmartMergeImages:
 
                 original_bg = img_bg.copy()
                 union_mask = np.zeros(img_bg.shape[:2], dtype=np.float32)
+                
+                # split_grid 时用累加器代替逐 crop 覆盖（保持色彩匹配与对齐逻辑不变）
+                if use_grid_alpha:
+                    # 复刻 ElementTileMerge：背景层 + 手绘层分组
+                    grid_bg_canvas = np.zeros(img_bg.shape[:2] + (3,), dtype=np.float32)
+                    grid_bg_weight = np.zeros(img_bg.shape[:2] + (1,), dtype=np.float32)
+                    grid_layer_canvas = {}   # layer_idx -> (H,W,3) f32
+                    grid_layer_weight = {}   # layer_idx -> (H,W,1) f32
+                else:
+                    grid_bg_canvas = grid_bg_weight = None
+                    grid_layer_canvas = grid_layer_weight = None
+                
                 img_result = img_bg.copy()
 
                 # 倒序循环贴
@@ -1747,6 +1909,27 @@ class SmartMergeImages:
                     crop_result = crop_bg.copy()
                     current_color_match = color_match
 
+                    # 【修复】连接 split_grid 时，用 ElementTileMerge 风格的 fade×corner 权重
+                    # 做边缘统计，命中 fade/圆角带（背景延续区），保护原图色相。
+                    # 未连接 split_grid 时保持原样（用 crop_mask_float）。
+                    if use_grid_alpha:
+                        tile_info_cm = grid_tiles[crop_idx] if crop_idx < len(grid_tiles) else None
+                        if tile_info_cm is not None:
+                            feather_px_cm = float(max(1, int(feather_kernel))) if feather_kernel > 0 else 0.0
+                            bbox_cm = (xmin, ymin, xmax, ymax)
+                            fade_w_cm = self._tile_fade_weight_in_bbox(tile_info_cm, bbox_cm, feather_px_cm)
+                            corner_mask_cm = self._tile_corner_mask_in_bbox(tile_info_cm, bbox_cm, feather_px_cm)
+                            # 与 alpha 完全相同的 weight（对齐 ElementTileMerge 的 weight_c）
+                            color_weight_mask = fade_w_cm[:, :, 0]
+                            if corner_mask_cm is not None:
+                                color_weight_mask = color_weight_mask * corner_mask_cm[:, :, 0]
+                            # 仅用于排除 padding（padding 处 crop_mask_float=0）
+                            color_weight_mask = color_weight_mask * crop_mask_float
+                        else:
+                            color_weight_mask = crop_mask_float
+                    else:
+                        color_weight_mask = crop_mask_float
+
                     # ===== 色彩迁移(以 crop_bg 为参考) =====
                     if current_color_match == "Patch_based_color":
                         band_width = max(15, int(feather_kernel))
@@ -1764,9 +1947,9 @@ class SmartMergeImages:
                         current_color_match = "Alpha Soft Blend"
                     
                     elif current_color_match == "Edge_Weighted_Color":
-                        crop_fg = self.edge_weighted_color_sync(crop_fg, crop_bg, crop_mask_float)
+                        # 【关键】改用 color_weight_mask 做边缘统计
+                        crop_fg = self.edge_weighted_color_sync(crop_fg, crop_bg, color_weight_mask)
                         current_color_match = "Alpha Soft Blend"  
-                    
                     elif current_color_match == "LAB_Mean":
                         lab_bg = cv2.cvtColor(crop_bg, cv2.COLOR_RGB2LAB).astype(np.float32)
                         lab_fg = cv2.cvtColor(crop_fg, cv2.COLOR_RGB2LAB).astype(np.float32)
@@ -1786,86 +1969,147 @@ class SmartMergeImages:
                         crop_fg = cv2.cvtColor(lab_fg, cv2.COLOR_LAB2RGB)
 
                     # ===== 融合 =====
-                    if current_color_match == "Laplacian Pyramid Blend":
-                        try:
-                            num_levels = 4
-                            if feather_kernel < 16:
-                                num_levels = 3
-                            elif feather_kernel > 64:
-                                num_levels = 5
-                            soft_mask = self.make_edge_safe_soft_mask(crop_mask_float, feather_kernel)
-                            crop_result = self.laplacian_pyramid_blend(crop_fg, crop_bg, soft_mask, num_levels=num_levels)
-                            current_color_match = "__DONE__"
-                        except Exception as e:
-                            print(f"[Smart Merge] 拉普拉斯金字塔融合失败: {e}, 降级 Alpha | Laplacian pyramid blend failed: {e}, downgraded to Alpha")
-                            current_color_match = "Alpha Soft Blend"
+                    if use_grid_alpha:
+                        tile_info = grid_tiles[crop_idx] if crop_idx < len(grid_tiles) else None
+                        if tile_info is None:
+                            use_grid_alpha_this = False
+                        else:
+                            use_grid_alpha_this = True
+                            feather_px = float(max(1, int(feather_kernel))) if feather_kernel > 0 else 0.0
 
-                    elif current_color_match == "SeamlessClone (PS Auto Blend)":
-                        clone_mask_8u = crop_mask_8u.copy()
-                        shrink_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-                        clone_mask_8u = cv2.erode(clone_mask_8u, shrink_kernel, iterations=1)
-                        bx, by, bw, bh = cv2.boundingRect(clone_mask_8u)
-                        safe_pad = 5
-                        if (bw > 10 and bh > 10 and bx > safe_pad and by > safe_pad
-                                and (bx + bw) < (w_crop - safe_pad) and (by + bh) < (h_crop - safe_pad)):
-                            x1, y1 = bx - safe_pad, by - safe_pad
-                            x2, y2 = bx + bw + safe_pad, by + bh + safe_pad
-                            src_crop = crop_fg[y1:y2, x1:x2]
-                            dst_crop = crop_bg[y1:y2, x1:x2]
-                            mask_crop = clone_mask_8u[y1:y2, x1:x2]
-                            center = ((x2 - x1) // 2, (y2 - y1) // 2)
+                            bbox = (xmin, ymin, xmax, ymax)
+                            fade_w = self._tile_fade_weight_in_bbox(tile_info, bbox, feather_px)
+                            corner_mask = self._tile_corner_mask_in_bbox(tile_info, bbox, feather_px)
+
+                            # weight = fade × corner（ElementTileMerge 的 weight）
+                            weight_local = fade_w.copy()
+                            if corner_mask is not None:
+                                weight_local = weight_local * corner_mask
+                            # × crop_mask_float 排除 warp 到背景外的 padding
+                            weight_local = weight_local * crop_mask_float[:, :, None]
+
+                            tile_kind = tile_info.get("kind", "layer")
+                            tile_layer = int(tile_info.get("layer") or 0)
+
+                            if tile_kind in {"gap", "fallback", "unified"} or tile_layer < 0:
+                                # 背景层
+                                grid_bg_canvas[ymin:ymax, xmin:xmax] += crop_fg.astype(np.float32) * weight_local
+                                grid_bg_weight[ymin:ymax, xmin:xmax] += weight_local
+                            else:
+                                # 手绘层：按 layer_idx 分组（对应 ElementTileMerge 的 layer_groups）
+                                if tile_layer not in grid_layer_canvas:
+                                    grid_layer_canvas[tile_layer] = np.zeros(img_bg.shape[:2] + (3,), dtype=np.float32)
+                                    grid_layer_weight[tile_layer] = np.zeros(img_bg.shape[:2] + (1,), dtype=np.float32)
+                                grid_layer_canvas[tile_layer][ymin:ymax, xmin:xmax] += crop_fg.astype(np.float32) * weight_local
+                                grid_layer_weight[tile_layer][ymin:ymax, xmin:xmax] += weight_local
+                    else:
+                        use_grid_alpha_this = False
+
+                    # 只有当没有走 grid 分支时，才执行原有的融合逻辑
+                    if not use_grid_alpha_this:
+                    
+                    
+                        if current_color_match == "Laplacian Pyramid Blend":
                             try:
-                                cloned_crop = cv2.seamlessClone(src_crop, dst_crop, mask_crop, center, cv2.NORMAL_CLONE)
-                                crop_result[y1:y2, x1:x2] = cloned_crop
+                                num_levels = 4
+                                if feather_kernel < 16:
+                                    num_levels = 3
+                                elif feather_kernel > 64:
+                                    num_levels = 5
+                                soft_mask = self.make_edge_safe_soft_mask(crop_mask_float, feather_kernel)
+                                crop_result = self.laplacian_pyramid_blend(crop_fg, crop_bg, soft_mask, num_levels=num_levels)
                                 current_color_match = "__DONE__"
                             except Exception as e:
-                                print(f"[Smart Merge] 泊松融合失败: {e} | Poisson seamless clone failed: {e}")
+                                print(f"[Smart Merge] 拉普拉斯金字塔融合失败: {e}, 降级 Alpha | Laplacian pyramid blend failed: {e}, downgraded to Alpha")
                                 current_color_match = "Alpha Soft Blend"
-                        else:
-                            current_color_match = "Alpha Soft Blend"
+                        
+                        elif current_color_match == "SeamlessClone (PS Auto Blend)":
+                            clone_mask_8u = crop_mask_8u.copy()
+                            shrink_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+                            clone_mask_8u = cv2.erode(clone_mask_8u, shrink_kernel, iterations=1)
+                            bx, by, bw, bh = cv2.boundingRect(clone_mask_8u)
+                            safe_pad = 5
+                            if (bw > 10 and bh > 10 and bx > safe_pad and by > safe_pad
+                                    and (bx + bw) < (w_crop - safe_pad) and (by + bh) < (h_crop - safe_pad)):
+                                x1, y1 = bx - safe_pad, by - safe_pad
+                                x2, y2 = bx + bw + safe_pad, by + bh + safe_pad
+                                src_crop = crop_fg[y1:y2, x1:x2]
+                                dst_crop = crop_bg[y1:y2, x1:x2]
+                                mask_crop = clone_mask_8u[y1:y2, x1:x2]
+                                center = ((x2 - x1) // 2, (y2 - y1) // 2)
+                                try:
+                                    cloned_crop = cv2.seamlessClone(src_crop, dst_crop, mask_crop, center, cv2.NORMAL_CLONE)
+                                    crop_result[y1:y2, x1:x2] = cloned_crop
+                                    current_color_match = "__DONE__"
+                                except Exception as e:
+                                    print(f"[Smart Merge] 泊松融合失败: {e} | Poisson seamless clone failed: {e}")
+                                    current_color_match = "Alpha Soft Blend"
+                            else:
+                                current_color_match = "Alpha Soft Blend"
+                        
+                        # ===== Alpha 兜底融合 =====
+                        if current_color_match != "__DONE__":
+                            soft_mask = self.make_edge_safe_soft_mask(crop_mask_float, feather_kernel)
+                            soft_mask_3d = soft_mask[:, :, np.newaxis]
+                        
+                            fg_float = crop_fg.astype(np.float32)
+                            bg_float = crop_bg.astype(np.float32)
+                        
+                            if device.type == "cuda":
+                                fg_gpu = torch.from_numpy(fg_float).to(device)
+                                bg_gpu = torch.from_numpy(bg_float).to(device)
+                                mask_gpu = torch.from_numpy(soft_mask_3d).to(device)
+                                blended_gpu = (fg_gpu * mask_gpu) + (bg_gpu * (1.0 - mask_gpu))
+                                crop_result = torch.clamp(blended_gpu, 0, 255).byte().cpu().numpy()
+                            else:
+                                blended = (fg_float * soft_mask_3d) + (bg_float * (1.0 - soft_mask_3d))
+                                crop_result = np.clip(blended, 0, 255).astype(np.uint8)
+                        
+                        # ===== Step 5: 渐变过渡，避免硬边 =====
+                        edge_blend = np.zeros_like(crop_mask_float)
+                        edge_width = 5  # 渐变宽度
+                        
+                        if ymin == 0:
+                            weight = np.linspace(1, 0, edge_width)[:, None]
+                            edge_blend[:edge_width, :] = weight * crop_mask_float[:edge_width, :]
+                        if ymax == h_bg:
+                            weight = np.linspace(0, 1, edge_width)[:, None]
+                            edge_blend[-edge_width:, :] = weight * crop_mask_float[-edge_width:, :]
+                        if xmin == 0:
+                            weight = np.linspace(1, 0, edge_width)[None, :]
+                            edge_blend[:, :edge_width] = np.maximum(edge_blend[:, :edge_width], weight * crop_mask_float[:, :edge_width])
+                        if xmax == w_bg:
+                            weight = np.linspace(0, 1, edge_width)[None, :]
+                            edge_blend[:, -edge_width:] = np.maximum(edge_blend[:, -edge_width:], weight * crop_mask_float[:, -edge_width:])
+                        
+                        if edge_blend.max() > 0.01:
+                            eb3 = edge_blend[:, :, np.newaxis]
+                            crop_result = (crop_fg.astype(np.float32) * eb3 + crop_result.astype(np.float32) * (1.0 - eb3))
+                            crop_result = np.clip(crop_result, 0, 255).astype(np.uint8)
+                        
+                        img_result[ymin:ymax, xmin:xmax] = crop_result
+                        union_mask = np.maximum(union_mask, warped_mask)
+                        img_bg = img_result.copy()
+                    else:
+                        union_mask = np.maximum(union_mask, warped_mask)
+                
+                # ===== 循环结束: split_grid 模式下把累加器归一化为最终图像 =====
+                
+                if use_grid_alpha:
+                    # 1) 背景层归一化
+                    bg_alpha = grid_bg_weight   # (H,W,1)
+                    bg_img = grid_bg_canvas / np.maximum(bg_alpha, 1e-6)
+                    merged_grid = bg_img * bg_alpha + original_bg.astype(np.float32) * (1.0 - bg_alpha)
 
-                    # ===== Alpha 兜底融合 =====
-                    if current_color_match != "__DONE__":
-                        soft_mask = self.make_edge_safe_soft_mask(crop_mask_float, feather_kernel)
-                        soft_mask_3d = soft_mask[:, :, np.newaxis]
+                    # 2) 手绘层按 layer_idx 从大到小 alpha over（完全复刻 ElementTileMerge）
+                    for layer_idx in sorted(grid_layer_canvas.keys(), reverse=True):
+                        lc = grid_layer_canvas[layer_idx]
+                        lw = grid_layer_weight[layer_idx]
+                        layer_img = lc / np.maximum(lw, 1e-6)
+                        layer_alpha = np.clip(lw, 0.0, 1.0)
+                        merged_grid = layer_img * layer_alpha + merged_grid * (1.0 - layer_alpha)
 
-                        fg_float = crop_fg.astype(np.float32)
-                        bg_float = crop_bg.astype(np.float32)
-
-                        if device.type == "cuda":
-                            fg_gpu = torch.from_numpy(fg_float).to(device)
-                            bg_gpu = torch.from_numpy(bg_float).to(device)
-                            mask_gpu = torch.from_numpy(soft_mask_3d).to(device)
-                            blended_gpu = (fg_gpu * mask_gpu) + (bg_gpu * (1.0 - mask_gpu))
-                            crop_result = torch.clamp(blended_gpu, 0, 255).byte().cpu().numpy()
-                        else:
-                            blended = (fg_float * soft_mask_3d) + (bg_float * (1.0 - soft_mask_3d))
-                            crop_result = np.clip(blended, 0, 255).astype(np.uint8)
-
-                    # ===== Step 5: 渐变过渡，避免硬边 =====
-                    edge_blend = np.zeros_like(crop_mask_float)
-                    edge_width = 5  # 渐变宽度
-
-                    if ymin == 0:
-                        weight = np.linspace(1, 0, edge_width)[:, None]
-                        edge_blend[:edge_width, :] = weight * crop_mask_float[:edge_width, :]
-                    if ymax == h_bg:
-                        weight = np.linspace(0, 1, edge_width)[:, None]
-                        edge_blend[-edge_width:, :] = weight * crop_mask_float[-edge_width:, :]
-                    if xmin == 0:
-                        weight = np.linspace(1, 0, edge_width)[None, :]
-                        edge_blend[:, :edge_width] = np.maximum(edge_blend[:, :edge_width], weight * crop_mask_float[:, :edge_width])
-                    if xmax == w_bg:
-                        weight = np.linspace(0, 1, edge_width)[None, :]
-                        edge_blend[:, -edge_width:] = np.maximum(edge_blend[:, -edge_width:], weight * crop_mask_float[:, -edge_width:])
-
-                    if edge_blend.max() > 0.01:
-                        eb3 = edge_blend[:, :, np.newaxis]
-                        crop_result = (crop_fg.astype(np.float32) * eb3 + crop_result.astype(np.float32) * (1.0 - eb3))
-                        crop_result = np.clip(crop_result, 0, 255).astype(np.uint8)
-
-                    img_result[ymin:ymax, xmin:xmax] = crop_result
-                    union_mask = np.maximum(union_mask, warped_mask)
+                    img_result = np.clip(merged_grid, 0, 255).astype(np.uint8)
                     img_bg = img_result.copy()
                 
                 # 整图光流精修

@@ -912,15 +912,14 @@ class SmartMergeImages:
                                interpolation=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REPLICATE)
         return refined_fg, warped_mask.copy()
 
-    def optical_flow_only_align(self, query_img, train_img, optical_flow=False, device="cpu"):
+    def optical_flow_only_align(self, query_img, train_img, optical_flow=False, device="cpu", base_mask=None):
         h_t, w_t = train_img.shape[:2]
         h_q, w_q = query_img.shape[:2]
 
         if (h_q, w_q) == (h_t, w_t):
             query_resized = query_img
-            valid = np.ones((h_t, w_t), dtype=np.float32)
+            valid = base_mask if base_mask is not None else np.ones((h_t, w_t), dtype=np.float32)
         else:
-
             scale = min(w_t / float(w_q), h_t / float(h_q))
             new_w = max(1, int(round(w_q * scale)))
             new_h = max(1, int(round(h_q * scale)))
@@ -932,7 +931,10 @@ class SmartMergeImages:
             query_resized[y_off:y_off + new_h, x_off:x_off + new_w] = resized
 
             valid = np.zeros((h_t, w_t), dtype=np.float32)
-            valid[y_off:y_off + new_h, x_off:x_off + new_w] = 1.0
+            if base_mask is not None:
+                valid[y_off:y_off + new_h, x_off:x_off + new_w] = cv2.resize(base_mask, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+            else:
+                valid[y_off:y_off + new_h, x_off:x_off + new_w] = 1.0
 
         full_mask = valid
         border = 10
@@ -1422,7 +1424,7 @@ class SmartMergeImages:
         return H, inliers, num_inliers, method_used
 
     def perform_kornia_alignment(self, query_img, train_img, warp_method=False, optical_flow=False,
-                                 device="cpu", preset_H=None, max_flow_px=None, use_tps=True, second_pass=False):
+                                 device="cpu", preset_H=None, max_flow_px=None, use_tps=True, second_pass=False, base_mask=None):
 
         h_q, w_q = query_img.shape[:2]
         h_t, w_t = train_img.shape[:2]
@@ -1459,12 +1461,9 @@ class SmartMergeImages:
                     q = (preset_H @ ones_b.T).T;  q = q[:, :2] / q[:, 2:]
                     ones_a = np.hstack([pts_a, np.ones((n_pts, 1))])
                     t = (self._bridge_H_A2BG @ ones_a.T).T;  t = t[:, :2] / t[:, 2:]
-                    base_mask = np.ones(query_img.shape[:2], dtype=np.float32)
-                    warped_fg0 = cv2.warpPerspective(query_img, preset_H, (w_t, h_t),
-                                                     flags=cv2.INTER_LANCZOS4,
-                                                     borderMode=cv2.BORDER_REFLECT101)
-                    warped_mask0 = cv2.warpPerspective(base_mask, preset_H, (w_t, h_t),
-                                                       flags=cv2.INTER_LINEAR)
+                    base_mask_inner = base_mask if base_mask is not None else np.ones(query_img.shape[:2], dtype=np.float32)
+                    warped_fg0 = cv2.warpPerspective(query_img, preset_H, (w_t, h_t), flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT101)
+                    warped_mask0 = cv2.warpPerspective(base_mask_inner, preset_H, (w_t, h_t), flags=cv2.INTER_LINEAR)
                     warped_fg, warped_mask = warped_fg0, warped_mask0
                     tps_fg, tps_mask = self.warp_tps(
                         warped_fg0, warped_mask0, train_img, q, t, reg_lambda=1.5)
@@ -1520,19 +1519,23 @@ class SmartMergeImages:
             if warp_method:
                 print("[Smart Merge] 特征匹配彻底失败, 纯光流对齐 | pure optical-flow alignment")
                 refined_fg, refined_mask = self.optical_flow_only_align(
-                    query_img, train_img, optical_flow, device)
+                    query_img, train_img, optical_flow, device, base_mask=base_mask)
                 return refined_fg, refined_mask, True
+            if base_mask is None:
+                base_mask = np.ones((h_q, w_q), dtype=np.float32)
             wf = np.zeros_like(train_img)
             wm = np.zeros((h_t, w_t), dtype=np.float32)
             sc = min(w_t / float(w_q), h_t / float(h_q))
             nw, nh = max(1, int(round(w_q * sc))), max(1, int(round(h_q * sc)))
             rz = cv2.resize(query_img, (nw, nh), interpolation=cv2.INTER_LANCZOS4)
+            rz_mask = cv2.resize(base_mask, (nw, nh), interpolation=cv2.INTER_LINEAR) 
             yo, xo = max(0, (h_t - nh) // 2), max(0, (w_t - nw) // 2)
             wf[yo:yo + nh, xo:xo + nw] = rz
-            wm[yo:yo + nh, xo:xo + nw] = 1.0
+            wm[yo:yo + nh, xo:xo + nw] = rz_mask 
             return wf, wm, True
 
-        base_mask = np.ones((h_q, w_q), dtype=np.float32)
+        if base_mask is None:
+            base_mask = np.ones((h_q, w_q), dtype=np.float32)
         warped_fg = cv2.warpPerspective(
             query_img, H, (w_t, h_t),
             flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT101
@@ -1766,6 +1769,9 @@ class SmartMergeImages:
                 "radius_tr":   float(ti.get("radius_tr", 0))   * _inv_scale,
                 "radius_bl":   float(ti.get("radius_bl", 0))   * _inv_scale,
                 "radius_br":   float(ti.get("radius_br", 0))   * _inv_scale,
+                "mask":        ti.get("mask"),          
+                "kind":        ti.get("kind", "layer"), 
+                "layer":       ti.get("layer", 0),      
             }
 
         print(f"[SmartMerge] grid coordinate scale: unified_upscale={GRID_U_UP:.3f}")
@@ -1773,7 +1779,8 @@ class SmartMergeImages:
         grid_tiles = []
         if use_grid_alpha:
             try:
-                grid_tiles = (split_grid or {}).get("tiles", []) or []
+                raw_tiles = (split_grid or {}).get("tiles", []) or []
+                grid_tiles = [_tile_info_to_src(t) for t in raw_tiles]  
             except Exception:
                 grid_tiles = []
             if not grid_tiles:
@@ -1814,6 +1821,22 @@ class SmartMergeImages:
                     img_fg = self._item_to_uint8_rgb(items_B[crop_idx])
                     h_fg, w_fg = img_fg.shape[:2]
 
+                    # === 提取 split 节点传来的像素级 mask ===
+                    crop_idx_mask = None
+                    if use_grid_alpha and crop_idx < len(grid_tiles):
+                        m_tensor = grid_tiles[crop_idx].get("mask")
+                        if m_tensor is not None:
+                            if hasattr(m_tensor, "cpu"):
+                                crop_idx_mask = m_tensor.cpu().numpy()
+                                if crop_idx_mask.ndim == 4:
+                                    crop_idx_mask = crop_idx_mask[0, :, :, 0]
+                            elif isinstance(m_tensor, np.ndarray):
+                                crop_idx_mask = m_tensor
+                                if crop_idx_mask.ndim == 3:
+                                    crop_idx_mask = crop_idx_mask[..., 0]
+                            if crop_idx_mask is not None and crop_idx_mask.shape[:2] != (h_fg, w_fg):
+                                crop_idx_mask = cv2.resize(crop_idx_mask, (w_fg, h_fg), interpolation=cv2.INTER_LINEAR)
+
                     if align_cache_hit and crop_idx < len(cached_aligns) and cached_aligns[crop_idx] is not None:
                         cached = cached_aligns[crop_idx]
                         warped_fg = cached["warped_fg"].copy()
@@ -1850,6 +1873,7 @@ class SmartMergeImages:
                                         optical_flow=optical_flow, device=device,
                                         preset_H=H_Total,
                                         use_tps=use_tps, second_pass=second_pass,
+                                        base_mask=crop_idx_mask
                                     )
                                     if success_align:
                                         print("[Smart Merge] 桥接对齐 B→A→BG 完成 (含畸变校正) | Bridge alignment B→A→BG done (with deformation correction)")
@@ -1859,7 +1883,7 @@ class SmartMergeImages:
                             warped_fg, warped_mask, ok = self.perform_kornia_alignment(
                                 img_fg, original_bg,
                                 warp_method=warp_method,
-                                optical_flow=optical_flow, use_tps=use_tps, second_pass=second_pass, device=device
+                                optical_flow=optical_flow, use_tps=use_tps, second_pass=second_pass, device=device, base_mask=crop_idx_mask
                             )
                             if ok:
                                 success_align = True
@@ -1910,7 +1934,6 @@ class SmartMergeImages:
                     current_color_match = color_match
 
                     # 【修复】连接 split_grid 时，用 ElementTileMerge 风格的 fade×corner 权重
-                    # 做边缘统计，命中 fade/圆角带（背景延续区），保护原图色相。
                     # 未连接 split_grid 时保持原样（用 crop_mask_float）。
                     if use_grid_alpha:
                         tile_info_cm = grid_tiles[crop_idx] if crop_idx < len(grid_tiles) else None
@@ -1918,13 +1941,20 @@ class SmartMergeImages:
                             feather_px_cm = float(max(1, int(feather_kernel))) if feather_kernel > 0 else 0.0
                             bbox_cm = (xmin, ymin, xmax, ymax)
                             fade_w_cm = self._tile_fade_weight_in_bbox(tile_info_cm, bbox_cm, feather_px_cm)
-                            corner_mask_cm = self._tile_corner_mask_in_bbox(tile_info_cm, bbox_cm, feather_px_cm)
-                            # 与 alpha 完全相同的 weight（对齐 ElementTileMerge 的 weight_c）
-                            color_weight_mask = fade_w_cm[:, :, 0]
-                            if corner_mask_cm is not None:
-                                color_weight_mask = color_weight_mask * corner_mask_cm[:, :, 0]
-                            # 仅用于排除 padding（padding 处 crop_mask_float=0）
-                            color_weight_mask = color_weight_mask * crop_mask_float
+                            
+                            if crop_idx_mask is not None:
+                                sigma_cm = feather_px_cm / 3.0
+                                if feather_px_cm > 1.0:
+                                    blurred_mask_cm = cv2.GaussianBlur(crop_mask_float, (0, 0), sigma_cm)
+                                else:
+                                    blurred_mask_cm = crop_mask_float
+                                color_weight_mask = fade_w_cm[:, :, 0] * blurred_mask_cm
+                            else:
+                                corner_mask_cm = self._tile_corner_mask_in_bbox(tile_info_cm, bbox_cm, feather_px_cm)
+                                color_weight_mask = fade_w_cm[:, :, 0]
+                                if corner_mask_cm is not None:
+                                    color_weight_mask = color_weight_mask * corner_mask_cm[:, :, 0]
+                                color_weight_mask = color_weight_mask * crop_mask_float
                         else:
                             color_weight_mask = crop_mask_float
                     else:
@@ -1979,14 +2009,20 @@ class SmartMergeImages:
 
                             bbox = (xmin, ymin, xmax, ymax)
                             fade_w = self._tile_fade_weight_in_bbox(tile_info, bbox, feather_px)
-                            corner_mask = self._tile_corner_mask_in_bbox(tile_info, bbox, feather_px)
 
-                            # weight = fade × corner（ElementTileMerge 的 weight）
-                            weight_local = fade_w.copy()
-                            if corner_mask is not None:
-                                weight_local = weight_local * corner_mask
-                            # × crop_mask_float 排除 warp 到背景外的 padding
-                            weight_local = weight_local * crop_mask_float[:, :, None]
+                            if crop_idx_mask is not None:
+                                sigma = feather_px / 3.0
+                                if feather_px > 1.0:
+                                    blurred_mask = cv2.GaussianBlur(crop_mask_float, (0, 0), sigma)
+                                else:
+                                    blurred_mask = crop_mask_float
+                                weight_local = fade_w * blurred_mask[:, :, None]
+                            else:
+                                corner_mask = self._tile_corner_mask_in_bbox(tile_info, bbox, feather_px)
+                                weight_local = fade_w.copy()
+                                if corner_mask is not None:
+                                    weight_local = weight_local * corner_mask
+                                weight_local = weight_local * crop_mask_float[:, :, None]
 
                             tile_kind = tile_info.get("kind", "layer")
                             tile_layer = int(tile_info.get("layer") or 0)

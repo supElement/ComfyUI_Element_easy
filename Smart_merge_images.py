@@ -1743,14 +1743,27 @@ class SmartMergeImages:
         # ============================================================
         use_grid_alpha = split_grid is not None
         
-        # ---- split_grid 坐标系基准：tile 坐标是 out 空间，original_bg 是 src 空间 ----
         try:
             GRID_U_UP = float((split_grid or {}).get("unified_upscale", 1.0) or 1.0)
         except Exception:
             GRID_U_UP = 1.0
         if GRID_U_UP <= 0:
             GRID_U_UP = 1.0
-        _inv_scale = 1.0 / GRID_U_UP
+        
+        try:
+            WORK_W = int((split_grid or {}).get("work_w", 0) or 0)
+            WORK_H = int((split_grid or {}).get("work_h", 0) or 0)
+        except Exception:
+            WORK_W = WORK_H = 0
+        
+        USE_WORK_CANVAS = (split_grid is not None) and WORK_W > 0 and WORK_H > 0
+        
+        if USE_WORK_CANVAS:
+            _inv_scale = 1.0
+            print(f"[SmartMerge] 使用 split_grid work 画布: {WORK_W}x{WORK_H} (tile 坐标保持 out 空间) | using work canvas")
+        else:
+            _inv_scale = 1.0 / GRID_U_UP
+            print(f"[SmartMerge] 回退到原行为: tile 坐标反变换 (1/unified_upscale={_inv_scale:.3f}), 原图尺寸保持不变")
 
         def _tile_info_to_src(ti):
             """把 grid tile 的坐标从输出空间缩放到源空间（SmartMerge 的 original_bg 尺寸）。"""
@@ -1791,6 +1804,12 @@ class SmartMergeImages:
             try:
                 img_bg = self._item_to_uint8_rgb(items_orig[i])
 
+                # split_grid，原图 resize 到 work 画布，与 ElementTileMerge 行为一致
+                if USE_WORK_CANVAS and (img_bg.shape[1] != WORK_W or img_bg.shape[0] != WORK_H):
+                    print(f"[Smart Merge] original_image {img_bg.shape[1]}x{img_bg.shape[0]} → "
+                          f"{WORK_W}x{WORK_H} (match split_grid work canvas)")
+                    img_bg = cv2.resize(img_bg, (WORK_W, WORK_H), interpolation=cv2.INTER_LANCZOS4)
+                
                 start_idx = i * crops_per_bg
                 end_idx = min(start_idx + crops_per_bg, B_crop)
                 if start_idx >= B_crop:
@@ -1802,7 +1821,6 @@ class SmartMergeImages:
                 
                 # split_grid 时用累加器代替逐 crop 覆盖（保持色彩匹配与对齐逻辑不变）
                 if use_grid_alpha:
-                    # 复刻 ElementTileMerge：背景层 + 手绘层分组
                     grid_bg_canvas = np.zeros(img_bg.shape[:2] + (3,), dtype=np.float32)
                     grid_bg_weight = np.zeros(img_bg.shape[:2] + (1,), dtype=np.float32)
                     grid_layer_canvas = {}   # layer_idx -> (H,W,3) f32

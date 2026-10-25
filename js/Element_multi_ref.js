@@ -61,6 +61,7 @@ const ICONS = {
   play: '<path d="M7 4.5v15l13-7.5z" fill="currentColor" stroke="none"/>',
   stop: '<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/>',
   folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
   zone_img: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
   zone_frame: '<rect x="3" y="4" width="18" height="16" rx="2"/><line x1="7.5" y1="4" x2="7.5" y2="20"/><line x1="16.5" y1="4" x2="16.5" y2="20"/>',
   zone_av: '<path d="m22 8-6 4 6 4V8Z"/><rect x="2" y="6" width="14" height="12" rx="2"/>',
@@ -1602,6 +1603,7 @@ class MultiRefUI {
         <span class="emr-hint" style="color:#66718a;font-size:11px">Drop files · drag to swap · ✎ edit</span>
         <span class="emr-status">Ready</span>
         <button class="emr-btn" data-a="clearall">Clear</button>
+        <button class="emr-btn" data-a="resetnum" title="Reset run_preset_NUM = 0 · detach from current preset (next Save Preset creates a new preset)">Reset</button>
       </div>
       <div class="emr-grid">
         <div class="emr-col-img">${img9}</div>
@@ -1627,6 +1629,7 @@ class MultiRefUI {
           <button class="emr-btn emr-sqbtn" data-a="pnext" title="Apply next preset">${svgIcon(NAV_ICONS.next)}</button>
           <button class="emr-btn emr-sqbtn" data-a="plast" title="Apply last preset">${svgIcon(NAV_ICONS.last)}</button>
           <button class="emr-btn" data-a="presets">Presets</button>
+          <button class="emr-btn emr-sqbtn" data-a="relink" title="Relink missing media files — pick a folder containing same-name files">${svgIcon(ICONS.link, 14)}</button>
           <button class="emr-btn emr-sqbtn" data-a="savepreset" title="Save Preset">${svgIcon(ICONS.save, 14)}</button>
           <button class="emr-btn emr-sqbtn" data-a="expdir" title="Export folder settings (remembered, silent writes)">${svgIcon(ICONS.folder, 14)}</button>
           <button class="emr-btn emr-sqbtn" data-a="collectexport" title="Export presets + ALL referenced media files (video/audio/overlays/thumbs)">${svgIcon(ICONS.package, 14)}</button>
@@ -1647,7 +1650,20 @@ class MultiRefUI {
       this.mats = {}; this.slots = {}; this._waves = {}; this.prompt = "";
       this._wsSrcPid = null;
       const t = this.root.querySelector(".emr-prompt"); if (t) t.value = "";
-      this.updateState(); this.render(); this.status("Cleared (presets kept)");
+      this.updateState(); 
+	  this.render(); 
+	  this.status("Cleared (presets kept)");
+    };
+
+    this.root.querySelector('[data-a="resetnum"]').onclick = () => {
+      this._wsSrcPid = null;
+      const rp = this._runPresetWidget();
+      if (rp) {
+        rp.value = 0;
+        if (rp.inputEl) rp.inputEl.value = "0"; 
+      }
+      this.updateState();
+      this.status("Reset: run_preset_NUM = 0 · next Save Preset creates a new preset");
     };
 
     this.root.querySelector('[data-a="expdir"]').onclick = () => this.openDirSettings();
@@ -1662,6 +1678,7 @@ class MultiRefUI {
 
     // ---- 底部按钮 ----
     this.root.querySelector('[data-a="presets"]').onclick = () => this.openPresetsModal();
+	this.root.querySelector('[data-a="relink"]').onclick = () => this._relink();
     this.root.querySelector('[data-a="savepreset"]').onclick = () => this.savePreset();
     this.root.querySelector('[data-a="collectexport"]').onclick = () => this.collectAndExport();
     this.root.querySelector('[data-a="pfirst"]').onclick = () => this.navPreset("first");
@@ -2257,7 +2274,139 @@ class MultiRefUI {
     if (!window.showDirectoryPicker) return false;
     try { return await window.showDirectoryPicker({ mode }); } catch (_) { return null; }
   }
-  
+
+  /* ===== ★ Relink：检测 broken 素材 → 选目录 → 按同名文件重新上传并接回 ===== */
+
+  async _checkPathOk(p) {
+    if (!p) return false;
+    try {
+      const r = await fetch(`/element_multi_ref/raw_file?p=${encodeURIComponent(p)}`, { method: "HEAD" });
+      return r.ok;
+    } catch (_) { return false; }
+  }
+
+  // 弹出目录选择（优先 showDirectoryPicker 原生目录对话框，回退 webkitdirectory）
+  async _pickFolderFiles() {
+    if (window.showDirectoryPicker) {
+      let dh;
+      try { dh = await window.showDirectoryPicker({ mode: "read" }); }
+      catch (e) { return null; } // AbortError = 用户取消
+      const files = [];
+      const walk = async (dir) => {
+        for await (const [, h] of dir.entries()) {
+          if (h.kind === "file") { try { files.push(await h.getFile()); } catch (_) {} }
+          else { try { await walk(h); } catch (_) {} }
+        }
+      };
+      try { await walk(dh); } catch (e) { console.warn("[EMR] relink walk failed:", e); }
+      return files;
+    }
+    return await new Promise((resolve) => {
+      const inp = document.createElement("input");
+      inp.type = "file";
+      inp.multiple = true;
+      inp.webkitdirectory = true;
+      let settled = false;
+      inp.onchange = () => { if (!settled) { settled = true; resolve([...(inp.files || [])]); } };
+      const onFocus = () => {
+        setTimeout(() => {
+          if (!settled && (!inp.files || !inp.files.length)) { settled = true; resolve(null); }
+        }, 400);
+        window.removeEventListener("focus", onFocus);
+      };
+      window.addEventListener("focus", onFocus);
+      inp.click();
+    });
+  }
+
+  async _relink() {
+    const matRefs = new Map();
+    const addMat = (id, mat, ownerKey) => {
+      if (!mat) return;
+      if (!matRefs.has(id)) matRefs.set(id, { mat, owners: new Set() });
+      matRefs.get(id).owners.add(ownerKey);
+    };
+    for (const [id, m] of Object.entries(this.mats)) addMat(id, m, "workspace");
+    this.presets.forEach((p, i) => {
+      const snap = p.snapshot || {};
+      for (const [id, m] of Object.entries(snap.materials || {})) {
+        addMat(id, m, `preset:${p.pid || p.name || i}`);
+      }
+    });
+    if (!matRefs.size) { this.status("No materials to check"); return; }
+
+    this.status(`Checking ${matRefs.size} media file(s)…`);
+    const results = await Promise.all([...matRefs.entries()].map(async ([id, entry]) => {
+      const p = entry.mat.path || "";
+      const ok = p ? await this._checkPathOk(p) : false;
+      return { id, mat: entry.mat, ok, basename: p ? p.split(/[\\/]/).pop() : "" };
+    }));
+    const broken = results.filter(r => !r.ok);
+    if (!broken.length) {
+      this.status(`All ${matRefs.size} media file(s) present — nothing to relink`);
+      return;
+    }
+    const withName = broken.filter(b => b.basename);
+    if (!withName.length) {
+      this.status(`${broken.length} broken file(s) with no path — cannot relink by name`);
+      return;
+    }
+
+    const byBase = new Map();
+    for (const b of withName) {
+      const k = b.basename.toLowerCase();
+      if (!byBase.has(k)) byBase.set(k, []);
+      byBase.get(k).push(b);
+    }
+    this.status(`${withName.length} broken (${byBase.size} unique name${byBase.size > 1 ? "s" : ""}) — pick folder`);
+
+    const files = await this._pickFolderFiles();
+    if (!files) { this.status("Relink cancelled"); return; }
+    if (!files.length) { this.status("No files found in selected folder"); return; }
+
+    const found = new Map();
+    for (const f of files) {
+      const k = (f.name || "").toLowerCase();
+      if (byBase.has(k) && !found.has(k)) found.set(k, f);
+    }
+    if (!found.size) {
+      const sample = [...byBase.keys()].slice(0, 3).join(", ");
+      this.status(`No matching files (expected e.g.: ${sample}…)`);
+      return;
+    }
+
+    let okc = 0, failed = 0, doneN = 0;
+    for (const [key, file] of found.entries()) {
+      doneN++;
+      this.status(`Relinking ${doneN}/${found.size}: ${file.name}`);
+      try {
+        const fd = new FormData();
+        fd.append("file", file);
+        const r = await fetch("/element_multi_ref/upload", { method: "POST", body: fd });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || d.error) throw new Error(d.error || ("HTTP " + r.status));
+        for (const t of byBase.get(key)) {
+          t.mat.path = d.path;
+          t.mat.kind = d.kind;
+          t.mat.media = d.media || {};
+          t.mat._wave = d.waveform || [];
+          okc++;
+        }
+      } catch (e) {
+        console.warn("[EMR] relink upload failed:", file.name, e);
+        failed += byBase.get(key).length;
+      }
+    }
+
+    await this._persistLibrary();
+    this.updateState();
+    this.render();
+    const stillMissing = withName.length - okc;
+    this.status(`Relinked ${okc} reference(s)` +
+      (failed ? ` · ${failed} upload failed` : "") +
+      (stillMissing > 0 ? ` · ${stillMissing} still missing` : ""));
+  }
+
 
   async _writeTree(root, pkg, mediaMap) {
     const wf = async (rel, data) => {

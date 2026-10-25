@@ -66,7 +66,7 @@
 <a id="element-multi-ref"></a>
 ## Element Multi REF
 
-<sub>v1.5.7 新增 · v1.6.1优化</sub>
+<sub>v1.5.7 新增 · v1.6.1优化 · v1.6.8增强 </sub>
 
 详细说明：[中文](subMd/Element_multi_ref_zh.md) | [English](subMd/Element_multi_ref_en.md)</sub>
 
@@ -77,11 +77,11 @@
 - 面板底栏左下角有 4 个区域开关图标（参考图、首尾帧、音视频、Prompt），可自由组合面板以应对不同需求，甚至可以当作提示词预设节点使用；
 - 支持多个预设的存储、调用、载入、导出，以及收集归类所有参考和提示词；
 - `run_preset_NUM` 参数对应预设列表中的序号，接收随提示词队列变化的输入时，配合采样推理节点可实现连续生成或编辑多张图像/视频；
-⚠️ 注意：若加载了预设，`run_preset_NUM` 参数会自动变为预设的序号，此时若修改了参考区域的内容，必须将`run_preset_NUM` 参数设置为 0 （输出当前界面），或存储/另存预设，否则输出的结果将是没有修改之前的，这是正常行为。
+⚠️ 注意：若加载了预设，`run_preset_NUM` 参数会自动变为预设的序号，此时若修改了参考区域的内容，但没有存储/另存预设，输出的结果将是没有修改之前的，这是正常行为；若不想存储预设，想输出当前界面修改的内容，现在可以点击一次`reset`按钮（将`run_preset_NUM` 参数设置为0）。
+- 若删除了预设中使用的参考素材，现在可以通过relink按钮指定目录重新连接（目录中要包含文件名相同的文件）。
+- 辅助节点 **Element ref convert** 用于参考数据的格式转换。
 
-辅助节点 **Element ref convert** 用于参考数据的格式转换。
-
-<img width="1691" height="874" alt="Element Multi REF" src="https://github.com/user-attachments/assets/e8c32036-3a21-4864-93eb-228ffce3c82b" />
+<img width="1691" height="874" alt="650757311-e8c32036-3a21-4864-93eb-228ffce3c82b" src="https://github.com/user-attachments/assets/85383cea-931e-4da6-a46b-4d373c95ef49" />
 
 🎬 核心场景：分镜脚本批量处理
 

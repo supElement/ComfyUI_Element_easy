@@ -177,27 +177,21 @@
 <a id="smart-merge-images"></a>
 ## Smart merge images
 
-<sub>v1.4.3 新增 · v1.4.8 优化 · v1.6.3 修复 · v1.6.5 精简优化</sub>
+<sub>v1.4.3 新增 · v1.4.8 优化 · v1.7.0 优化</sub>
+
+详细说明：[中文](subMd/SmartMergeImages_zh.md) | [English](subMd/SmartMergeImages_en.md)</sub>
 
 🎬 核心场景：消除图像经过生图模型分块放大后产生的变形和色差
 
-把图分块丢给生图模型放大，再拼回去时，接缝处经常有色差、有变形，直接拼很难看。
+把图像分多块，或将图像中的部分区域丢给生图模型重新采样/编辑/放大后，再拼回去时，接缝处经常有色差、有变形，直接拼效果可能比较差。
 这个节点利用两张图的共同特征做智能对齐，把分块放大后的结果平滑拼回原图。
-
-怎么用（最优输入方案）：
-- original_image：原图
-- edited_crop_B：经过编辑或重绘的块
-- original_crop_A：从原图剪切的、没有修改或变形的块
-三个端口配合，节点会自动找到对齐关系，把编辑过的部分拼回原图。
-
-支持分块合并：edited_crop_B 端口输入多张图像时，输出为最终合并后的单张图像。
 
 需要下载 [模型文件](https://huggingface.co/cglearned/Smart_merge_images/tree/main) ，默认自动下载。
 
 Manual download：depth-save.pth / disk_lightglue_v0-1_arxiv-pth / loftr_outdoor.ckpt 
 To \ComfyUI\models\elementEasy\checkpoints
 
-<img width="2121" height="963" alt="image" src="https://github.com/user-attachments/assets/0e341594-8b59-45af-8ece-59382ace50e4" />
+<img width="1949" height="1171" alt="image" src="https://github.com/user-attachments/assets/702f1d85-2771-451d-ae3b-9111342118ae" />
 
 ---
 

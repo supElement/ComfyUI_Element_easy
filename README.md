@@ -356,3 +356,15 @@ mask 描边：内外描边宽度和模糊度单独控制，支持非描边区域
 节点的**视频导出（带音频）**功能需要系统安装 ffmpeg。Windows 用户从 [ffmpeg](https://www.gyan.dev/ffmpeg/builds/) 下载，解压后将 bin 目录加入 PATH。
 
 未安装 ffmpeg 时其余功能均正常，仅视频导出为无声视频。
+
+---
+
+## 关于赞助
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/supElement)
+
+**⚠️ 说明：**  
+无论您是否选择赞助，都不会对我的插件所提供的功能或使用体验产生任何影响。所有内容将始终保持免费且开源。  
+**请仅在您确实觉得这些工具对您有所帮助，或者通过使用它们获得了收益的情况下，再考虑进行赞助。** 
+
+---

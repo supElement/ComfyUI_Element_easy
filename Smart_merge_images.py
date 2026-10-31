@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 import numpy as np
 import cv2
 import os
@@ -200,6 +201,197 @@ class _GridCompositor:
         return np.clip(bg, 0, 255).astype(np.uint8)
 
 
+# ================= 色彩匹配 torch 后端 =================
+# 色彩链(改色置信度/全局偏移/边界与 patch 校色)的滤波、统计、校正场统一按张量计算:
+# 公式与原 numpy/cv2 版逐项对应, use_gpu 且 ComfyUI 选中加速设备时跑 GPU, 否则跑 CPU(torch)。
+# 必须留在 cv2 的两处: RGB↔LAB 转换与大核中值, 只有它们的 8bit 定点实现能保证逐值一致,
+# 自算的 1~2 级偏差会被方差比/改色置信度放大成可见色差; patch 的逐块统计量很小, 留在 numpy
+# 比逐块 GPU 同步更快。融合类操作(金字塔/无缝克隆)同样依赖 cv2。
+
+
+def _sm_pick_device(use_gpu):
+    """use_gpu 且 ComfyUI 选中 CUDA/XPU 时用 GPU; 关闭或 --cpu 时用 CPU。"""
+    if not use_gpu:
+        return torch.device("cpu")
+    try:
+        import comfy.model_management as mm
+        dev = mm.get_torch_device()
+    except Exception:
+        dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    return dev if dev is not None and dev.type in ("cuda", "xpu") else torch.device("cpu")
+
+
+def _sm_as_float(img, device):
+    """numpy 标量图(0..1) → (1,H,W,1) float32, 不做 255 归一。"""
+    t = torch.from_numpy(np.ascontiguousarray(img)).to(device=device, dtype=torch.float32)
+    return (t[..., None] if t.ndim == 2 else t).unsqueeze(0)
+
+
+def _sm_numpy(x):
+    return x[0].detach().cpu().numpy()
+
+
+def _sm_rgb_to_lab(rgb, device):
+    """uint8 RGB(HWC) → cv2 8bit LAB(0..255) 的 (1,H,W,3) float32。
+    OpenCV 的 LAB 是定点近似实现, 自算 float 版会有 1~2 级偏差; 旧实现全程经 cv2,
+    这里保持同源以保证统计量(方差比/改色置信度)逐值一致。"""
+    lab = cv2.cvtColor(np.ascontiguousarray(rgb), cv2.COLOR_RGB2LAB).astype(np.float32)
+    return torch.from_numpy(lab).to(device).unsqueeze(0)
+
+
+def _sm_lab_to_u8(lab):
+    """LAB(0..255) → uint8 RGB, 与旧实现 clip→uint8→cv2 逐值一致。"""
+    a = lab[0].detach().cpu().numpy()
+    a = np.clip(a, 0.0, 255.0).astype(np.uint8)
+    return cv2.cvtColor(a, cv2.COLOR_LAB2RGB)
+
+
+def _sm_fit(x, h, w, mode="bilinear"):
+    if x.shape[1:3] == (h, w):
+        return x
+    return F.interpolate(x.permute(0, 3, 1, 2), size=(h, w), mode=mode,
+                         align_corners=False if mode == "bilinear" else None).permute(0, 2, 3, 1)
+
+
+def _sm_gauss_kernel(ksize, sigma, device, dtype):
+    coords = torch.arange(ksize, dtype=dtype, device=device) - (ksize - 1) * 0.5
+    k = torch.exp(-(coords ** 2) / (2.0 * sigma ** 2))
+    return k / k.sum()
+
+
+def _sm_blur_bchw(x, kernel):
+    b, c, h, w = x.shape
+    radius = kernel.numel() // 2
+    mode = "reflect" if radius < min(h, w) else "replicate"
+    kw = kernel.view(1, 1, 1, -1).expand(c, 1, 1, -1).contiguous()
+    y = F.conv2d(F.pad(x, (radius, radius, 0, 0), mode=mode), kw, groups=c)
+    kh = kernel.view(1, 1, -1, 1).expand(c, 1, -1, 1).contiguous()
+    return F.conv2d(F.pad(y, (0, 0, radius, radius), mode=mode), kh, groups=c)
+
+
+def _sm_auto_ksize(sigma):
+    """cv2.GaussianBlur(src, (0,0), sigma) 对 float32 的核长反推: 8*sigma+1 取奇。"""
+    return max(1, int(round(sigma * 8.0 + 1.0)) | 1)
+
+
+def _sm_blur(x, sigma):
+    """sigma 驱动的各向同性高斯(HWC), 核长/边界(REFLECT_101)对齐 cv2。"""
+    sigma = float(max(sigma, 0.0))
+    if sigma < 0.5:
+        return x
+    k = _sm_gauss_kernel(_sm_auto_ksize(sigma), sigma, x.device, x.dtype)
+    return _sm_blur_bchw(x.permute(0, 3, 1, 2), k).permute(0, 2, 3, 1)
+
+
+def _sm_blur_ksize(x, ksize, sigma=None):
+    """固定核长高斯, 对齐 cv2.GaussianBlur((k,k),0)。"""
+    ksize = int(ksize) | 1
+    if ksize <= 1:
+        return x
+    if sigma is None:
+        sigma = 0.3 * ((ksize - 1) * 0.5 - 1.0) + 0.8     # cv2 由核长反推 sigma
+    k = _sm_gauss_kernel(ksize, max(sigma, 0.1), x.device, x.dtype)
+    return _sm_blur_bchw(x.permute(0, 3, 1, 2), k).permute(0, 2, 3, 1)
+
+
+def _sm_area_weights(n_out, n_in, device, dtype):
+    """INTER_AREA 一维权重: 每个输出格覆盖源像素的占比。torch 的 area 模式在
+    非整数缩放时与 cv2 不一致(实测低至 0.1 级), 这里显式构造面积权重。"""
+    scale = float(n_in) / float(n_out)
+    src = torch.arange(n_in, device=device, dtype=dtype)
+    start = torch.arange(n_out, device=device, dtype=dtype) * scale
+    w = (torch.minimum(start[:, None] + scale, src[None, :] + 1.0)
+         - torch.maximum(start[:, None], src[None, :])).clamp_min(0.0)
+    return w / w.sum(dim=1, keepdim=True)
+
+
+def _sm_area_resize(x, sh, sw):
+    """HWC 张量缩放到 (sh, sw): 缩小走面积平均(对齐 cv2.INTER_AREA), 放大走双线性。"""
+    h, w = x.shape[1:3]
+    if (sh, sw) == (h, w):
+        return x
+    if sh >= h or sw >= w:
+        return F.interpolate(x.permute(0, 3, 1, 2), size=(sh, sw), mode="bilinear",
+                             align_corners=False).permute(0, 2, 3, 1)
+    wy = _sm_area_weights(sh, h, x.device, x.dtype)
+    wx = _sm_area_weights(sw, w, x.device, x.dtype)
+    bchw = x.permute(0, 3, 1, 2)
+    bchw = torch.matmul(wy, bchw)
+    bchw = torch.matmul(bchw, wx.t())
+    return bchw.permute(0, 2, 3, 1)
+
+
+def _sm_fast_blur(x, sigma):
+    """大 sigma: 降采样→模糊→上采样, 与原 _fast_blur 同结构。"""
+    sigma = float(max(sigma, 0.0))
+    if sigma <= 6.0:
+        return _sm_blur(x, sigma)
+    h, w = x.shape[1:3]
+    ds = int(min(4, max(2, round(sigma / 4.0))))
+    sh, sw = max(8, h // ds), max(8, w // ds)
+    inner = max(0.5, sigma / ds)
+    small = _sm_area_resize(x, sh, sw).permute(0, 3, 1, 2)
+    small = _sm_blur_bchw(small, _sm_gauss_kernel(
+        _sm_auto_ksize(inner), inner, x.device, x.dtype))
+    return F.interpolate(small, size=(h, w), mode="bilinear",
+                         align_corners=False).permute(0, 2, 3, 1)
+
+
+def _sm_median_bchw(x, k):
+    """精确中值(BCHW), 按行分块控制显存。"""
+    k = int(k) | 1
+    if k <= 1:
+        return x
+    pad = k // 2
+    b, c, h, w = x.shape
+    out = torch.empty_like(x)
+    block = max(1, 4_000_000 // max(1, w * k * k))
+    for y in range(0, h, block):
+        y2 = min(h, y + block)
+        y0s, y1s = max(0, y - pad), min(h, y2 + pad)
+        tile = F.pad(x[:, :, y0s:y1s, :],
+                     (pad, pad, pad - (y - y0s), pad - (y1s - y2)), mode="replicate")
+        win = tile.unfold(2, k, 1).unfold(3, k, 1).reshape(b, c, y2 - y, w, k * k)
+        out[:, :, y:y2, :] = torch.median(win, dim=-1).values
+    return out
+
+
+def _sm_np_median(v, dim=0):
+    """np.median 语义: 偶数样本取中间两值的均值(torch.median 只取较小者)。"""
+    n = v.shape[dim]
+    if n % 2 == 1:
+        return torch.median(v, dim=dim).values
+    lo = torch.kthvalue(v, n // 2, dim=dim).values
+    hi = torch.kthvalue(v, n // 2 + 1, dim=dim).values
+    return 0.5 * (lo + hi)
+
+
+def _sm_median(x, k):
+    k = int(k) | 1
+    if k <= 1:
+        return x
+    return _sm_median_bchw(x.permute(0, 3, 1, 2), k).permute(0, 2, 3, 1)
+
+
+def _sm_fast_median(x, k):
+    """大核中值: 半分辨率执行, 等效半径不变。
+    走 cv2 的 8bit 定点实现: 中值结果的 1 级偏差会被可靠性的方差比(分母下限 1e-6)
+    在强边界处放大成可见色块, 这里必须与原实现逐值一致; 每次调用只有两次半分辨率
+    中值, CPU 往返开销可忽略。"""
+    k = int(k) | 1
+    if k <= 5:
+        return _sm_median(x, k)
+    h, w = x.shape[1:3]
+    img8 = np.clip(_sm_numpy(x), 0.0, 255.0).astype(np.uint8)
+    sh, sw = max(8, h // 2), max(8, w // 2)
+    small = cv2.resize(img8, (sw, sh), interpolation=cv2.INTER_AREA)
+    kk = max(3, (k // 2) | 1)
+    kk = min(kk, (min(sh, sw) - 1) | 1)
+    small = cv2.medianBlur(small, kk)
+    out = cv2.resize(small, (w, h), interpolation=cv2.INTER_LINEAR)
+    return torch.from_numpy(out.astype(np.float32)).to(x.device).unsqueeze(0)
+
+
 class SmartMergeImages:
     
     DEBUG = False    # 调试日志开关
@@ -239,6 +431,9 @@ class SmartMergeImages:
 
     GLOBAL_COLOR_STRENGTH = 0.35
     GLOBAL_COLOR_MAX_SHIFT = (10.0, 4.0, 4.0)
+
+    # 色彩链执行设备: smart_merge 按 use_gpu / ComfyUI 设备选择, 默认 CPU
+    _color_device = torch.device("cpu")
 
     # patch 色彩校正的 patch 边长 = 裁块短边 * 该比例(夹在 MIN..MAX)。
     # 与 feather 解耦: feather 只决定过渡带宽度, 不该反过来决定色偏估计的尺度。
@@ -491,12 +686,14 @@ class SmartMergeImages:
                     "label_on": "DIS",
                     "label_off": "Farneback",
                     "tooltip": "光流算法(仅 warp_method 开启时生效):\n"
-                               "· 关(Farneback): 最快, 纯 CPU\n"
+                               "· 关(Farneback): 最快\n"
                                "· 开(DIS): 质量更好, 贴边缘\n"
+                               "均走 OpenCV CPU(DIS 无 CUDA 版)\n"
                                "--------------------------------------------------\n"
                                "Optical-flow algorithm (only when warp_method is ON):\n"
-                               "· OFF (Farneback): fastest, CPU only\n"
-                               "· ON (DIS): better quality, edge-preserving"
+                               "· OFF (Farneback): fastest\n"
+                               "· ON (DIS): better quality, edge-preserving\n"
+                               "Both on OpenCV CPU (DIS has no CUDA version)"
                 }),
 
                 "use_tps": ("BOOLEAN", {
@@ -567,9 +764,9 @@ class SmartMergeImages:
                 }),
                 "use_gpu": ("BOOLEAN", {
                     "default": True,
-                    "tooltip": "使用 CUDA 加速特征匹配/光流/混合。无显卡或显存不足时可关闭。\n"
+                    "tooltip": "GPU 加速特征匹配(DISK/LoFTR)与色彩匹配。光流、TPS/warp、无缝克隆等 OpenCV 步骤仍在 CPU 运行。无显卡或显存不足时关闭。\n"
                                "--------------------------------------------------\n"
-                               "Use CUDA acceleration for matching / optical flow / blending. Turn off if no GPU or VRAM is insufficient."
+                               "Use GPU for feature matching (DISK/LoFTR) and color matching. OpenCV steps (optical flow, TPS/warp, seamless clone) stay on CPU. Turn off if no GPU or VRAM is insufficient."
                 }),
                 "force_recompute": ("BOOLEAN", {
                     "default": False,
@@ -742,36 +939,40 @@ class SmartMergeImages:
         shift = np.clip(shift, -limit, limit).astype(np.float32)
         return shift if float(np.max(np.abs(shift))) >= 0.25 else None
 
+    @torch.no_grad()
     def _apply_global_lab_shift(self, fg, shift, edit_mask=None):
-        lab = cv2.cvtColor(fg, cv2.COLOR_RGB2LAB).astype(np.float32)
+        dev = self._color_device
+        lab = _sm_rgb_to_lab(fg, dev)
+        shift_t = torch.as_tensor(shift, dtype=lab.dtype, device=dev)
         if edit_mask is None:
-            lab += shift[None, None, :]
+            lab = lab + shift_t
         else:
-            scale = self._edited_scale(edit_mask, fg.shape, sigma=8.0)
-            lab += shift[None, None, :] * scale[:, :, None]
-        return cv2.cvtColor(np.clip(lab, 0, 255).astype(np.uint8), cv2.COLOR_LAB2RGB)
+            lab = lab + shift_t * self._edited_scale(edit_mask, fg.shape, sigma=8.0)
+        return _sm_lab_to_u8(lab)
 
+    @torch.no_grad()
     def _lab_mean_color_sync(self, fg, bg, mask_float, edit_mask=None):
         """整块按 LAB 均值/方差对齐到背景(色差单一的场景)。"""
         sample = self._color_sample_mask(mask_float, edit_mask)
         if sample is None:
             return self._luminance_color_sync(fg, bg, mask_float, edit_mask=edit_mask)
-        stats = sample > 0.5
-        lab_bg = cv2.cvtColor(bg, cv2.COLOR_RGB2LAB).astype(np.float64)
-        lab_fg = cv2.cvtColor(fg, cv2.COLOR_RGB2LAB).astype(np.float64)
+        dev = self._color_device
+        lab_bg = _sm_rgb_to_lab(bg, dev)
+        lab_fg = _sm_rgb_to_lab(fg, dev)
+        stats = (_sm_as_float(sample, dev) > 0.5)[..., 0]
         bg_values = lab_bg[stats]
         fg_values = lab_fg[stats]
-        mean_bg, mean_fg = bg_values.mean(axis=0), fg_values.mean(axis=0)
-        std_bg = (np.percentile(bg_values, 90, axis=0)
-                  - np.percentile(bg_values, 10, axis=0)) / 2.563103
-        std_fg = (np.percentile(fg_values, 90, axis=0)
-                  - np.percentile(fg_values, 10, axis=0)) / 2.563103
-        scale = np.maximum(std_bg, 1.0) / np.maximum(std_fg, 1.0)
-        scale[0] = np.clip(scale[0], 0.5, 2.0)
-        scale[1] = np.clip(scale[1], 0.8, 1.25)
-        scale[2] = np.clip(scale[2], 0.8, 1.25)
+        mean_bg, mean_fg = bg_values.mean(dim=0), fg_values.mean(dim=0)
+        std_bg = (torch.quantile(bg_values, 0.9, dim=0)
+                  - torch.quantile(bg_values, 0.1, dim=0)) / 2.563103
+        std_fg = (torch.quantile(fg_values, 0.9, dim=0)
+                  - torch.quantile(fg_values, 0.1, dim=0)) / 2.563103
+        scale = std_bg.clamp_min(1.0) / std_fg.clamp_min(1.0)
+        limits = torch.tensor(((0.5, 2.0), (0.8, 1.25), (0.8, 1.25)),
+                              dtype=lab_fg.dtype, device=dev)
+        scale = scale.clamp(limits[:, 0], limits[:, 1])
         lab_fg = (lab_fg - mean_fg) * scale + mean_bg
-        return cv2.cvtColor(np.clip(lab_fg, 0, 255).astype(np.uint8), cv2.COLOR_LAB2RGB)
+        return _sm_lab_to_u8(lab_fg)
 
     def _alpha_blend_crop(self, fg, bg, mask_float, feather_kernel):
         """羽化 alpha 混合: 分块与背景按软 mask 过渡。"""
@@ -779,6 +980,7 @@ class SmartMergeImages:
         blended = fg.astype(np.float32) * soft + bg.astype(np.float32) * (1.0 - soft)
         return np.clip(blended, 0, 255).astype(np.uint8)
 
+    @torch.no_grad()
     def _luminance_color_sync(self, fg, bg, mask_float, edit_mask=None):
         """仅平移 LAB 的 L 通道以匹配中位亮度，保留对比度与 a/b 色相。"""
         sample_mask = self._color_sample_mask(mask_float, edit_mask)
@@ -787,24 +989,25 @@ class SmartMergeImages:
             sample_mask = np.clip(mask_float.astype(np.float32), 0.0, 1.0)
         if sample_mask is None:
             return fg
-        sample = sample_mask > 0.5
-        if int(sample.sum()) < 100:
+        if int((sample_mask > 0.5).sum()) < 100:
             return fg
-        lab_fg = cv2.cvtColor(fg, cv2.COLOR_RGB2LAB).astype(np.float32)
-        lab_bg = cv2.cvtColor(bg, cv2.COLOR_RGB2LAB).astype(np.float32)
-        differences = (lab_bg[:, :, 0] - lab_fg[:, :, 0])[sample]
-        shift = float(np.median(differences))
+        dev = self._color_device
+        lab_fg = _sm_rgb_to_lab(fg, dev)
+        lab_bg = _sm_rgb_to_lab(bg, dev)
+        sample = (_sm_as_float(sample_mask, dev) > 0.5)[..., 0]
+        differences = (lab_bg[..., 0:1] - lab_fg[..., 0:1])[sample]
+        shift = _sm_np_median(differences)
+        l_only = torch.tensor((1.0, 0.0, 0.0), dtype=lab_fg.dtype, device=dev)
         if fallback:
             # 全块一致的亮度偏移是光照差，不是局部改色；非均匀差异继续保护。
-            if float(np.median(np.abs(differences - shift))) > 3.0:
+            if float(_sm_np_median((differences - shift).abs())) > 3.0:
                 return fg
-            lab_fg[:, :, 0] += shift
+            lab_fg = lab_fg + shift * l_only
         elif edit_mask is None:
-            lab_fg[:, :, 0] += shift
+            lab_fg = lab_fg + shift * l_only
         else:
-            scale = self._edited_scale(edit_mask, fg.shape)
-            lab_fg[:, :, 0] += shift * scale
-        return cv2.cvtColor(np.clip(lab_fg, 0, 255).astype(np.uint8), cv2.COLOR_LAB2RGB)
+            lab_fg = lab_fg + shift * l_only * self._edited_scale(edit_mask, fg.shape)
+        return _sm_lab_to_u8(lab_fg)
 
     def _apply_color_match(self, fg, bg, mask_float, mode, feather_kernel,
                            edit_mask, apply_mask, grid_weight=False):
@@ -865,47 +1068,19 @@ class SmartMergeImages:
             return None
         return reliable
 
-    @staticmethod
-    def _fast_blur(img, sigma):
-        """大 sigma 高斯: 先降采样再模糊、后上采样。
-        色彩偏置/羽化场本身只含低频信息, 与全分辨率高斯差异 <0.1 LAB,
-        代价约为 1/ds²。"""
-        sigma = float(max(sigma, 0.0))
-        if sigma <= 6.0:
-            return cv2.GaussianBlur(img, (0, 0), sigma)
-        h, w = img.shape[:2]
-        ds = int(min(4, max(2, round(sigma / 4.0))))
-        sw, sh = max(8, w // ds), max(8, h // ds)
-        small = cv2.resize(img, (sw, sh), interpolation=cv2.INTER_AREA)
-        small = cv2.GaussianBlur(small, (0, 0), max(0.5, sigma / ds))
-        return cv2.resize(small, (w, h), interpolation=cv2.INTER_LINEAR)
-
+    @torch.no_grad()
     def _edited_scale(self, edit_mask, shape, sigma=8.0):
         """未编辑置信度 → 校正强度系数: 未编辑处 1, 已编辑处 PATCH_COLOR_EDITED_SCALE。
         编辑区内的校正估计没有内容对应关系, 满强度施加会把 AI 有意的颜色拉向背景。"""
         if edit_mask is None:
             return None
-        em = np.clip(np.asarray(edit_mask, dtype=np.float32), 0.0, 1.0)
-        if em.shape != shape[:2]:
-            em = cv2.resize(em, (shape[1], shape[0]), interpolation=cv2.INTER_LINEAR)
-        em = self._fast_blur(em, sigma)
+        h, w = shape[:2]
+        em = _sm_as_float(edit_mask, self._color_device).clamp(0.0, 1.0)
+        em = _sm_fast_blur(_sm_fit(em, h, w), sigma).clamp(0.0, 1.0)
         base = float(self.PATCH_COLOR_EDITED_SCALE)
         return base + (1.0 - base) * em
 
-    @staticmethod
-    def _fast_median_blur(img8, ksize):
-        """大核中值: 半分辨率执行, 等效半径不变。用于低频色偏估计, 不保留细节。"""
-        ksize = int(ksize) | 1
-        if ksize <= 5:
-            return cv2.medianBlur(img8, ksize)
-        h, w = img8.shape[:2]
-        sw, sh = max(8, w // 2), max(8, h // 2)
-        small = cv2.resize(img8, (sw, sh), interpolation=cv2.INTER_AREA)
-        k = max(3, (ksize // 2) | 1)
-        k = min(k, (min(sh, sw) - 1) | 1)
-        small = cv2.medianBlur(small, k)
-        return cv2.resize(small, (w, h), interpolation=cv2.INTER_LINEAR)
-
+    @torch.no_grad()
     def patch_based_color_sync(self, fg, bg, mask_float, patch_size=64, overlap=32,
                                edit_mask=None, apply_mask=None, grid_weight=False):
         """默认使用旧版全强度校正；提供 edit_mask 时启用鲁棒的改色保护校正。"""
@@ -923,13 +1098,15 @@ class SmartMergeImages:
         overlap = max(0, min(int(overlap), patch_size - 1))
         step = max(1, patch_size - overlap)
 
-        lab_fg = cv2.cvtColor(fg, cv2.COLOR_RGB2LAB).astype(np.float32)
-        lab_bg = cv2.cvtColor(bg, cv2.COLOR_RGB2LAB).astype(np.float32)
+        dev = self._color_device
+        lab_fg = _sm_rgb_to_lab(fg, dev)
+        lab_bg = _sm_rgb_to_lab(bg, dev)
         if protected:
             lp_sigma = max(2.0, patch_size / 4.0)
-            diff = self._fast_blur(lab_bg, lp_sigma) - self._fast_blur(lab_fg, lp_sigma)
+            diff = _sm_fast_blur(lab_bg, lp_sigma) - _sm_fast_blur(lab_fg, lp_sigma)
+            diff = diff[0].cpu().numpy()
         else:
-            diff = lab_bg - lab_fg
+            diff = (lab_bg - lab_fg)[0].cpu().numpy()
 
         y_positions = list(range(0, h - patch_size + 1, step))
         x_positions = list(range(0, w - patch_size + 1, step))
@@ -940,13 +1117,13 @@ class SmartMergeImages:
         y_positions = sorted(set(y_positions))
         x_positions = sorted(set(x_positions))
 
+        # 逐块统计留在 numpy: 每块只有几十个元素的统计, torch/GPU 的调度与同步开销更大
         hann = np.hanning(patch_size)[:, None] * np.hanning(patch_size)[None, :]
         if protected:
             hann = hann.astype(np.float32)
+        tau = self.PATCH_COLOR_MAD_TAU
         weight_map = np.zeros((h, w), dtype=np.float32)
         correction_sum = np.zeros((h, w, 3), dtype=np.float32)
-        max_shift = np.asarray(self.PATCH_COLOR_MAX_SHIFT, dtype=np.float32)
-        tau = self.PATCH_COLOR_MAD_TAU
         min_cov = float(self.PATCH_COLOR_MIN_COVERAGE) if protected else 0.1
         valid_patches = 0
 
@@ -957,184 +1134,161 @@ class SmartMergeImages:
                 if float(patch_sel.mean()) < min_cov:
                     continue
                 if protected:
-                    sel_small = patch_sel[::2, ::2]
-                    if int(sel_small.sum()) >= 30:
+                    sel = patch_sel[::2, ::2]
+                    if int(sel.sum()) >= 30:
                         diff_patch = diff[y:y2:2, x:x2:2]
-                        sel = sel_small
                     else:
                         diff_patch = diff[y:y2, x:x2]
                         sel = patch_sel
+                    if int(sel.sum()) < 30:
+                        continue
+                    values = diff_patch[sel]
+                    patch_correction = np.median(values, axis=0)
+                    mad = np.median(np.abs(values - patch_correction), axis=0)
+                    conf = float(np.exp(-(mad / tau) ** 2).min())
+                    if conf < 0.02:
+                        continue
                 else:
-                    diff_patch = diff[y:y2, x:x2]
-                    sel = patch_sel
-                patch_correction = np.zeros(3, dtype=np.float32)
-                conf = 1.0
-                ok = True
-                for c in range(3):
-                    vals = diff_patch[:, :, c][sel]
-                    if protected:
-                        if vals.size < 30:
-                            ok = False
-                            break
-                        med = float(np.median(vals))
-                        mad = float(np.median(np.abs(vals - med)))
-                        patch_correction[c] = med
-                        conf = min(conf, float(np.exp(-(mad / tau[c]) ** 2)))
-                    else:
-                        sorted_diff = np.sort(vals)
-                        trim = int(len(sorted_diff) * 0.1)
-                        trimmed = sorted_diff[trim:-trim] if trim > 0 else sorted_diff
-                        patch_correction[c] = np.mean(trimmed)
-                if not ok or (protected and conf < 0.02):
-                    continue
-
+                    values = diff[y:y2, x:x2][patch_sel]
+                    sorted_diff = np.sort(values, axis=0)
+                    trim = int(len(sorted_diff) * 0.1)
+                    trimmed = sorted_diff[trim:-trim] if trim > 0 else sorted_diff
+                    patch_correction = trimmed.mean(axis=0)
+                    conf = 1.0
                 patch_weight = hann * patch_sel.astype(np.float32) * conf
                 correction_sum[y:y2, x:x2] += patch_correction[None, None, :] * patch_weight[:, :, None]
                 weight_map[y:y2, x:x2] += patch_weight
                 valid_patches += 1
 
-        grid_smooth = grid_weight
-
         if valid_patches == 0:
             if protected:
                 self._dlog("[Smart Merge] Patch 色彩: 无可信分块, 跳过校正 | no reliable patch, color sync skipped")
                 return fg
-            result = lab_fg.copy()
-            for c in range(3):
-                fg_vals = lab_fg[:, :, c][mask_bool]
-                bg_vals = lab_bg[:, :, c][mask_bool]
-                if len(fg_vals) > 0:
-                    result[:, :, c] += np.median(bg_vals) - np.median(fg_vals)
-            return cv2.cvtColor(np.clip(result, 0, 255).astype(np.uint8), cv2.COLOR_LAB2RGB)
+            stats_mask = (_sm_as_float(mask_float, dev) > 0.5)[..., 0]
+            shift = (_sm_np_median(lab_bg[stats_mask])
+                     - _sm_np_median(lab_fg[stats_mask]))
+            return _sm_lab_to_u8(lab_fg + shift)
+
+        weight_map = torch.from_numpy(weight_map).to(dev)
+        correction_sum = torch.from_numpy(correction_sum).to(dev)
 
         if protected:
             valid = weight_map > 1e-8
-            correction_field = correction_sum / np.maximum(weight_map[:, :, None], 1e-8)
+            field = (correction_sum / weight_map[..., None].clamp_min(1e-8)).unsqueeze(0)
             fill_sigma = max(4.0, patch_size / 2.0)
             for c in range(3):
-                num = self._fast_blur(correction_field[:, :, c] * valid, fill_sigma)
-                den = self._fast_blur(valid.astype(np.float32), fill_sigma)
-                filled = np.where(den > 1e-6, num / np.maximum(den, 1e-6), 0.0)
-                correction_field[:, :, c] = np.where(valid, correction_field[:, :, c], filled)
-            correction_field = self._fast_blur(correction_field, max(2.0, patch_size / 3.0))
-            correction_field = np.clip(correction_field, -max_shift, max_shift)
+                vf = valid[None, ..., None].float()
+                num = _sm_fast_blur(field[..., c:c + 1] * vf, fill_sigma)
+                den = _sm_fast_blur(vf, fill_sigma)
+                filled = torch.where(den > 1e-6, num / den.clamp_min(1e-6), torch.zeros_like(num))
+                field[..., c] = torch.where(valid, field[..., c], filled[..., 0])
+            field = _sm_fast_blur(field, max(2.0, patch_size / 3.0))
+            max_shift = torch.tensor(self.PATCH_COLOR_MAX_SHIFT, dtype=field.dtype, device=dev)
+            field = field.clamp(-max_shift, max_shift)
             edited_scale = self._edited_scale(edit_mask, fg.shape, sigma=max(4.0, patch_size / 4.0))
             if grid_weight:
-                correction_field *= edited_scale[:, :, None]
+                field = field * edited_scale
             else:
                 apply_w = apply_mask if apply_mask is not None else mask_float
                 apply_w = np.clip(np.asarray(apply_w, dtype=np.float32), 0.0, 1.0)
                 if apply_w.shape != mask_bool.shape:
                     apply_w = mask_bool.astype(np.float32)
-                apply_w *= edited_scale
-                peak = float(apply_w.max())
+                aw = _sm_fit(_sm_as_float(apply_w, dev).clamp(0.0, 1.0), h, w) * edited_scale
+                peak = float(aw.max())
                 if peak > 1e-6:
-                    apply_w = apply_w / peak
-                correction_field *= apply_w[:, :, None]
+                    aw = aw / peak
+                field = field * aw
             self._dlog(f"[Smart Merge] Patch 色彩: {valid_patches} 有效块, "
                        f"限幅 ±{max_shift.tolist()} | {valid_patches} valid patches")
         else:
-            correction_field = correction_sum / np.maximum(weight_map[:, :, None], 1e-6)
-            for c in range(3):
-                correction_field[:, :, c] = cv2.medianBlur(correction_field[:, :, c].astype(np.float32), 5)
-            for c in range(3):
-                correction_field[:, :, c] = cv2.GaussianBlur(
-                    correction_field[:, :, c], (overlap // 2 * 2 + 1, overlap // 2 * 2 + 1), 0)
-            if grid_smooth:
-                valid = (weight_map > 1e-6).astype(np.float32)
-                ksize = overlap // 2 * 2 + 1
-                for c in range(3):
-                    num = cv2.GaussianBlur(correction_field[:, :, c] * valid, (ksize, ksize), 0)
-                    den = cv2.GaussianBlur(valid, (ksize, ksize), 0)
-                    filled = num / np.maximum(den, 1e-6)
-                    correction_field[:, :, c] = np.where(den > 1e-6, filled, correction_field[:, :, c])
+            field = (correction_sum / weight_map[..., None].clamp_min(1e-6)).unsqueeze(0)
+            field = _sm_median(field, 5)
+            ksize = overlap // 2 * 2 + 1
+            field = _sm_blur_ksize(field, ksize)
+            if grid_weight:
+                valid = (weight_map > 1e-6).float()
+                num = _sm_blur_ksize(field * valid[None, ..., None], ksize)
+                den = _sm_blur_ksize(valid[None, ..., None], ksize)
+                filled = num / den.clamp_min(1e-6)
+                field = torch.where((den > 1e-6).expand_as(field), filled, field)
             else:
-                correction_field *= mask_bool.astype(np.float32)[:, :, None]
+                field = field * _sm_as_float(mask_float, dev).clamp(0.0, 1.0)
 
-        result = np.clip(lab_fg + correction_field, 0, 255).astype(np.uint8)
-        return cv2.cvtColor(result, cv2.COLOR_LAB2RGB)
+        return _sm_lab_to_u8(lab_fg + field)
 
+    @torch.no_grad()
     def boundary_aware_color_sync(self, fg, bg, mask_float, band_width=21, strength=1.0, edit_mask=None):
         h, w = fg.shape[:2]
         protected = edit_mask is not None
         sample_mask = self._color_sample_mask(mask_float, edit_mask)
         if sample_mask is None:
             return fg
-        mask_8u = (np.clip(mask_float, 0, 1) * 255).astype(np.uint8)
-        if np.sum(mask_8u > 128) < 100:
+        if np.sum((np.clip(mask_float, 0, 1) * 255).astype(np.uint8) > 128) < 100:
             return fg
 
-        lab_fg = cv2.cvtColor(fg, cv2.COLOR_RGB2LAB).astype(np.float32)
-        lab_bg = cv2.cvtColor(bg, cv2.COLOR_RGB2LAB).astype(np.float32)
+        dev = self._color_device
+        lab_fg = _sm_rgb_to_lab(fg, dev)
+        lab_bg = _sm_rgb_to_lab(bg, dev)
+        sel = _sm_as_float(sample_mask, dev) > 0.5
 
         med_size = max(7, (band_width // 2) | 1)
         if protected:
             med_size = min(med_size, h if h % 2 else h - 1, w if w % 2 else w - 1)
             if med_size >= 3:
-                lab_fg_med = self._fast_median_blur(
-                    np.clip(lab_fg, 0, 255).astype(np.uint8), med_size).astype(np.float32)
-                lab_bg_med = self._fast_median_blur(
-                    np.clip(lab_bg, 0, 255).astype(np.uint8), med_size).astype(np.float32)
+                lab_fg_med = _sm_fast_median(lab_fg.clamp(0.0, 255.0).floor(), med_size)
+                lab_bg_med = _sm_fast_median(lab_bg.clamp(0.0, 255.0).floor(), med_size)
             else:
                 lab_fg_med = lab_fg
                 lab_bg_med = lab_bg
         else:
-            lab_fg_med = cv2.medianBlur(np.clip(lab_fg, 0, 255).astype(np.uint8), med_size).astype(np.float32)
-            lab_bg_med = cv2.medianBlur(np.clip(lab_bg, 0, 255).astype(np.uint8), med_size).astype(np.float32)
+            lab_fg_med = _sm_median(lab_fg.clamp(0.0, 255.0).floor(), med_size)
+            lab_bg_med = _sm_median(lab_bg.clamp(0.0, 255.0).floor(), med_size)
 
-        raw_diff = lab_bg_med - lab_fg_med
-        mask_3d = (sample_mask > 0.5).astype(np.float32)[:, :, np.newaxis]
-        masked_diff = raw_diff * mask_3d
-
+        masked_diff = (lab_bg_med - lab_fg_med) * sel.float()
         ksz = min(max(31, (band_width * 3) | 1), 151)
         gsigma = max(2.0, 0.15 * ksz)
-        correction_field = np.zeros_like(lab_fg)
+        correction_field = torch.zeros_like(lab_fg)
 
-        if protected:
-            diff_smooth_all = self._fast_blur(masked_diff, gsigma)
-            diff_sqr_all = self._fast_blur(masked_diff ** 2, gsigma)
         for c in range(3):
-            diff_ch = masked_diff[:, :, c]
+            diff_ch = masked_diff[..., c:c + 1]
             if protected:
-                diff_smooth = diff_smooth_all[:, :, c]
-                diff_sqr_smooth = diff_sqr_all[:, :, c]
+                diff_smooth = _sm_fast_blur(diff_ch, gsigma)
+                diff_sqr_smooth = _sm_fast_blur(diff_ch ** 2, gsigma)
             else:
-                diff_smooth = cv2.GaussianBlur(diff_ch, (ksz, ksz), 0)
-                diff_sqr_smooth = cv2.GaussianBlur(diff_ch ** 2, (ksz, ksz), 0)
-            variance = np.maximum(diff_sqr_smooth - diff_smooth ** 2, 0)
+                diff_smooth = _sm_blur_ksize(diff_ch, ksz)
+                diff_sqr_smooth = _sm_blur_ksize(diff_ch ** 2, ksz)
+            variance = (diff_sqr_smooth - diff_smooth ** 2).clamp_min(0.0)
 
-            pos = variance[::4, ::4] if protected else variance
+            pos = variance[:, ::4, ::4, :] if protected else variance
             pos = pos[pos > 0]
-            denom = np.median(pos) if pos.size > 0 else 1.0
-            reliability = np.exp(-variance / (denom + 1e-6))
-            reliability = reliability * (sample_mask > 0.5).astype(np.float32)
+            denom = _sm_np_median(pos) if pos.numel() > 0 else torch.tensor(1.0, device=dev)
+            reliability = torch.exp(-variance / (denom + 1e-6)) * sel.float()
 
             if protected:
-                weighted_num = self._fast_blur(diff_ch * reliability, gsigma)
-                weighted_den = self._fast_blur(reliability, gsigma) + 1e-6
+                weighted_num = _sm_fast_blur(diff_ch * reliability, gsigma)
+                weighted_den = _sm_fast_blur(reliability, gsigma) + 1e-6
             else:
-                weighted_num = cv2.GaussianBlur(diff_ch * reliability, (ksz, ksz), 0)
-                weighted_den = cv2.GaussianBlur(reliability, (ksz, ksz), 0) + 1e-6
-            correction_field[:, :, c] = weighted_num / weighted_den
+                weighted_num = _sm_blur_ksize(diff_ch * reliability, ksz)
+                weighted_den = _sm_blur_ksize(reliability, ksz) + 1e-6
+            correction_field[..., c:c + 1] = weighted_num / weighted_den
 
         if protected:
-            dist_from_boundary = cv2.distanceTransform((mask_float > 0.5).astype(np.uint8), cv2.DIST_L2, 5)
-            decay = 0.4 + 0.6 * np.exp(-dist_from_boundary / max(float(band_width), 1.0))
-            correction_field *= self._edited_scale(
-                edit_mask, fg.shape, sigma=max(4.0, band_width / 4.0))[:, :, None]
-            soft_mask = self._fast_blur(
-                mask_float.astype(np.float32), max(2.0, 0.15 * (band_width | 1)))
+            dist = cv2.distanceTransform((mask_float > 0.5).astype(np.uint8), cv2.DIST_L2, 5)
+            decay = 0.4 + 0.6 * torch.exp(
+                -_sm_as_float(dist, dev) / max(float(band_width), 1.0))
+            correction_field = correction_field * self._edited_scale(
+                edit_mask, fg.shape, sigma=max(4.0, band_width / 4.0))
+            soft_mask = _sm_fast_blur(_sm_as_float(mask_float, dev),
+                                      max(2.0, 0.15 * (band_width | 1)))
         else:
-            dist_from_boundary = cv2.distanceTransform(1 - (mask_float > 0.5).astype(np.uint8), cv2.DIST_L2, 5)
-            max_dist = dist_from_boundary.max() + 1e-6
-            decay = np.clip(0.4 + 0.6 * (1.0 - dist_from_boundary / max_dist), 0.4, 1.0)
-            soft_mask = cv2.GaussianBlur(mask_float.astype(np.float32), (band_width | 1, band_width | 1), 0)
+            dist = cv2.distanceTransform(1 - (mask_float > 0.5).astype(np.uint8), cv2.DIST_L2, 5)
+            max_dist = float(dist.max()) + 1e-6
+            decay = (0.4 + 0.6 * (1.0 - _sm_as_float(dist, dev) / max_dist)).clamp(0.4, 1.0)
+            soft_mask = _sm_blur_ksize(_sm_as_float(mask_float, dev), band_width | 1)
 
-        strength_vec = np.array([0.6, 1.0, 1.0]) * strength
-        lab_corrected = (lab_fg + correction_field * decay[:, :, np.newaxis]
-                         * soft_mask[:, :, np.newaxis] * strength_vec[None, None, :])
-        lab_corrected = np.clip(lab_corrected, 0, 255).astype(np.uint8)
-        return cv2.cvtColor(lab_corrected, cv2.COLOR_LAB2RGB)
+        strength_vec = torch.tensor((0.6, 1.0, 1.0), dtype=lab_fg.dtype, device=dev) * strength
+        lab_corrected = lab_fg + correction_field * decay * soft_mask * strength_vec
+        return _sm_lab_to_u8(lab_corrected)
 
     @staticmethod
     def _arr_fingerprint(arr, tag=""): 
@@ -1247,13 +1401,13 @@ class SmartMergeImages:
         gray_warped = self._to_flow_luma(sub_fg)
         gray_target = self._to_flow_luma(sub_bg)
 
-        # ★ 升级为与整图精修一致的"改色免疫"预处理:
-        #   CLAHE 恢复改色区亮度结构 → 直方图匹配消除分布差 → 预平滑保宏观几何
+        # 改色免疫 预处理:
+        # CLAHE 恢复改色区亮度结构 → 直方图匹配消除分布差 → 预平滑保宏观几何
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         gray_warped = clahe.apply(gray_warped)
         gray_target = clahe.apply(gray_target)
         gray_warped = self._match_histogram(gray_warped, gray_target)
-        # ★ 逐块路径同样做虚焦均衡(编辑块通常比原图实)
+        # 逐块路径同样做虚焦均衡(编辑块通常比原图实)
         gray_warped, _ = self._defocus_equalize(gray_warped, gray_target, sub_mask)
         gray_warped = cv2.GaussianBlur(gray_warped, (11, 11), 0)
         gray_target = cv2.GaussianBlur(gray_target, (11, 11), 0)
@@ -1469,31 +1623,33 @@ class SmartMergeImages:
         return cv2.GaussianBlur(sharp_l, (0, 0), best_sigma), best_sigma
 
 
-    @staticmethod
-    def _compute_edit_mask(warped_A, warped_B, d_lo=20.0, d_hi=60.0, valid_mask=None):
+    @torch.no_grad()
+    def _compute_edit_mask(self, warped_A, warped_B, d_lo=20.0, d_hi=60.0, valid_mask=None):
         """返回未编辑置信度；强色度和强亮度改变都会降低置信度。"""
-        la = cv2.cvtColor(warped_A, cv2.COLOR_RGB2LAB).astype(np.float32)
-        lb = cv2.cvtColor(warped_B, cv2.COLOR_RGB2LAB).astype(np.float32)
+        h, w = warped_A.shape[:2]
+        dev = self._color_device
+        if warped_B.shape[:2] != (h, w):
+            warped_B = cv2.resize(np.ascontiguousarray(warped_B), (w, h),
+                                  interpolation=cv2.INTER_LINEAR)
+        la = _sm_rgb_to_lab(warped_A, dev)
+        lb = _sm_rgb_to_lab(warped_B, dev)
 
-        d_ab = np.linalg.norm(la[:, :, 1:3] - lb[:, :, 1:3], axis=2)
-        d_l = np.abs(la[:, :, 0] - lb[:, :, 0])
+        d_ab = (la[..., 1:3] - lb[..., 1:3]).norm(dim=-1, keepdim=True)
+        d_l = (la[..., 0:1] - lb[..., 0:1]).abs()
 
         def _confidence(diff, lo, hi):
-            d_u8 = np.clip(diff, 0, 255).astype(np.uint8)
-            h, w = d_u8.shape
+            d = diff.clamp(0.0, 255.0).floor()          # 对齐 uint8 截断
             median_size = min(15, h if h % 2 else h - 1, w if w % 2 else w - 1)
             if median_size >= 3:
-                d_u8 = cv2.medianBlur(d_u8, median_size)
-            d = SmartMergeImages._fast_blur(d_u8.astype(np.float32), 6.2)
-            return np.clip((hi - d) / max(hi - lo, 1e-6), 0.0, 1.0)
+                d = _sm_median(d, median_size)
+            d = _sm_fast_blur(d, 6.2)
+            return ((hi - d) / max(hi - lo, 1e-6)).clamp(0.0, 1.0)
 
-        chroma_conf = _confidence(d_ab, d_lo, d_hi)
-        luma_conf = _confidence(d_l, 25.0, 60.0)
-        confidence = np.minimum(chroma_conf, luma_conf).astype(np.float32)
-        if valid_mask is not None and valid_mask.shape == confidence.shape:
-            valid = np.clip(valid_mask.astype(np.float32), 0.0, 1.0)
-            confidence = confidence * valid + (1.0 - valid)
-        return confidence
+        conf = torch.minimum(_confidence(d_ab, d_lo, d_hi), _confidence(d_l, 25.0, 60.0))
+        if valid_mask is not None and valid_mask.shape == (h, w):
+            valid = _sm_as_float(valid_mask, dev).clamp(0.0, 1.0)
+            conf = conf * valid + (1.0 - valid)
+        return _sm_numpy(conf[..., 0]).astype(np.float32)
 
 
     @staticmethod
@@ -2073,7 +2229,6 @@ class SmartMergeImages:
                     H_feat, feat_r, m_feat = H_b, r_b, m_b
                     query_for_match = q_b
                 else:
-                    # 没改善: 恢复第一次的特征点, 别让失败重试清空它们
                     self._disk_pts_q, self._disk_pts_t = pts_q0, pts_t0
                     print("[Smart Merge] 曲线提亮后仍未改善, 继续降级 | brightened retry no gain")
 
@@ -2085,7 +2240,6 @@ class SmartMergeImages:
             evid.append((m_feat or "B2BG_Feat", H_feat, feat_r))
 
         # 模板放置: 全图多尺度结构+灰度相关, ~0.1s 且与颜色/亮度编辑无关。
-        # 放在 LoFTR 之前: NCC 明显可信时直接采用, 省掉 LoFTR 的十几秒开销。
         H_coarse, ncc = self._coarse_placement_h(query_img, train_img)
         tm_r = _resid(H_coarse)
         if tm_r is not None:
@@ -2390,7 +2544,7 @@ class SmartMergeImages:
         return pts_q[keep_mask], pts_t[keep_mask]
 
     def warp_tps(self, warped_fg_src, warped_mask_src, train_img, pts_src, pts_dst,
-                 reg_lambda=5, max_disp=64.0, max_points=1500):
+                 reg_lambda=5, max_disp=64.0, max_points=1500):          #TPS最大位移量max_disp=128.0
         """TPS 全局薄板样条: 均匀降采样→全局平滑场(数学保证无波浪)→粗网格评估→场高斯平滑"""
         from scipy.interpolate import RBFInterpolator
         from scipy.spatial import cKDTree
@@ -2470,7 +2624,8 @@ class SmartMergeImages:
 
         # 按位移分布自适应收紧限幅 (固定 64px 对小残差场景太宽松, 尖峰可存活)
         _p95 = float(np.percentile(mag, 95)) if len(mag) else 0.0
-        _cap = float(min(max_disp, max(12.0, 4.0 * _p95)))
+        _cap = float(min(max_disp, max(12.0, 4.0 * _p95))) 
+        #_cap = float(min(max_disp, max(32.0, 4.0 * _p95))) #限幅下限，把 max(12.0, ...) 改为 max(32.0, ...)
         if _cap < max_disp:
             self._dlog(f"[Smart Merge] TPS 限幅收紧: {max_disp:.0f}→{_cap:.1f}px | cap tightened")
         max_disp = _cap
@@ -2479,14 +2634,15 @@ class SmartMergeImages:
         rbf = RBFInterpolator(src, src + disp, kernel="thin_plate_spline",
                               smoothing=reg_lambda)
         h, w = train_img.shape[:2]
-        step = max(8, int(np.ceil(np.sqrt(w * h / 120000.0))))   # 查询点总数≈12万, 控内存与耗时
+        step = max(8, int(np.ceil(np.sqrt(w * h / 120000.0)))) 
         gx, gy = np.meshgrid(np.arange(0, w, step), np.arange(0, h, step))
         gp = np.stack([gx.ravel(), gy.ravel()], axis=1)
         fg = rbf(gp) - gp
         tree = cKDTree(src)
         dnn, _ = tree.query(gp, k=1)
         ref = max(float(np.median(tree.query(src, k=2)[0][:, 1])), 12.0)
-        decay = 0.20 + 0.80 * np.exp(-((dnn / (3.0 * ref)) ** 2))
+        decay = 0.20 + 0.80 * np.exp(-((dnn / (3.0 * ref)) ** 2))  
+        #decay = 0.60 + 0.40 * np.exp(-((dnn / (3.0 * ref)) ** 2))  #衰减下限，把 0.20 改为 0.60，让远处区域也能获得足够的位移
         fg = fg * decay[:, None]
         fmag = np.linalg.norm(fg, axis=1)
         fg = fg * np.clip(max_disp / np.maximum(fmag, 1e-6), 0.0, 1.0)[:, None]
@@ -2495,9 +2651,7 @@ class SmartMergeImages:
         fg2 = fg.reshape(gh, gw, 2).astype(np.float32)
         fg2[:, :, 0] = cv2.GaussianBlur(fg2[:, :, 0], (k, k), 0)
         fg2[:, :, 1] = cv2.GaussianBlur(fg2[:, :, 1], (k, k), 0)
-        # ★ 只放大位移场, 不能放大绝对采样坐标。
-        # 旧写法 resize(map) 会把 0..w-step 的坐标域拉伸到 0..w,
-        # 等效于对整块图做额外的缩放/偏移, TPS 反而破坏对齐。
+        # 只放大位移场, 不能放大绝对采样坐标。
         fg_full = cv2.resize(fg2, (w, h), interpolation=cv2.INTER_LINEAR)
         yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
         map_x = xx - fg_full[:, :, 0]
@@ -2541,27 +2695,21 @@ class SmartMergeImages:
             return None, None
 
     def global_flow_polish(self, merged_img, original_bg, union_mask, max_disp=12.0, edit_mask=None,
-                           warp_smooth=1.0, optical_flow=False):
+                           warp_smooth=1.0, optical_flow=False):                    #max_disp=12.0 提高到 25.0
         """整图光流精修: 合成图 vs 原图, 补低纹理区残余位移。"""
         h, w = original_bg.shape[:2]
         gm_gray = cv2.cvtColor(merged_img, cv2.COLOR_RGB2GRAY)
         gm_l = self._to_flow_luma(merged_img)
         go_l = self._to_flow_luma(original_bg)
 
-        # ★★★ 修复: 光流输入"改色免疫"预处理 ★★★
-        # 根因: 改色(白杯→红杯)后 L 通道结构被彻底破坏, DIS 在改色物体边缘
-        # 产生"对齐颜色边界"的虚假大位移 → 边缘拉伸。
-        # CLAHE 局部对比归一化把红杯弱边缘增强到与白杯边缘形态对应,
-        # 光流从此只看见几何结构 → 改色区内部的真实畸变依然可修。
+        # 光流输入"改色免疫"预处理
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         gm_l = clahe.apply(gm_l)
         go_l = clahe.apply(go_l)
         # 仅在编辑区内做直方图匹配(全局会被背景主导), 消除残余分布差异
         gm_l = self._match_histogram_masked(gm_l, go_l, union_mask)
-        # ★★★ 虚焦→实焦均衡: 把实焦编辑图模糊回原图虚焦尺度,
-        #      恢复边缘宽度对应, 消除轮廓处系统性位移 ★★★
+        # 虚焦→实焦均衡: 把实焦编辑图模糊回原图虚焦尺度,
         gm_l, sigma_eq = self._defocus_equalize(gm_l, go_l, union_mask)
-        # 预平滑: 去高频颜色纹理噪声, 保留宏观几何(真实畸变以低频为主)
         gm_l = cv2.GaussianBlur(gm_l, (11, 11), 0)
         go_l = cv2.GaussianBlur(go_l, (11, 11), 0)
 
@@ -2586,8 +2734,7 @@ class SmartMergeImages:
         map_y = (grid_y + flow[:, :, 1]).astype(np.float32)
         bwd_at_fwd = cv2.remap(flow_b, map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
         fb_err = np.linalg.norm(flow + bwd_at_fwd, axis=2)
-        # ★ 收紧前后向一致性: 真实几何位移场前后向自洽(fb_err很小);
-        #   改色边缘的虚假位移不自洽 → 被此门槛抑制
+        # 收紧前后向一致性: 真实几何位移场前后向自洽(fb_err很小);
         consistency_gate = np.clip((2.0 - fb_err) / 1.5, 0.0, 1.0)
         texture_m = np.sqrt(cv2.Sobel(gm_l, cv2.CV_32F, 1, 0) ** 2
                             + cv2.Sobel(gm_l, cv2.CV_32F, 0, 1) ** 2)
@@ -2621,13 +2768,10 @@ class SmartMergeImages:
         flow *= final_gate[:, :, None]
         flow = self._fill_flow_from_reliable(flow, final_gate)
         flow *= um[:, :, None]
-        # ★★★ 颜色改变"边界带": 用邻域平滑值【替换】, 而不是置零 ★★★
-        # 置零(遮mask) → 轮廓处真实畸变不修; 保留 → 虚假高频位移拉伸边缘。
-        # 平滑值替换 = 丢掉边界带高频虚假分量, 同时延续周围低频真实位移场, 两全。
+        # 颜色改变"边界带": 用邻域平滑值【替换】, 而不是置零
         if edit_mask is not None:
             em_f = np.clip(edit_mask.astype(np.float32), 0.0, 1.0)
             band = np.abs(cv2.Laplacian(em_f, cv2.CV_32F, ksize=5))
-            # ★ 边界带自适应加宽: sigma_eq 越大(虚焦差越大), 失配过渡区越宽
             _k1 = 9 + int(min(sigma_eq, 8.0) * 3)
             _k1 += (_k1 + 1) % 2  # 保持奇数
             _k2 = 11 + int(min(sigma_eq, 8.0) * 2)
@@ -2642,10 +2786,6 @@ class SmartMergeImages:
 
                 flow[:, :, 0] = flow[:, :, 0] * (1.0 - band) + flow_smooth_x * band
                 flow[:, :, 1] = flow[:, :, 1] * (1.0 - band) + flow_smooth_y * band
-        # ★ 光流场低频化: 真实畸变场空间连续, 高频残余(含改色噪声)直接抹平
-        # warp_smooth 分级:
-        #   0.0 ~ 1.0  → 温和层(双边 sigmaColor 缩放 + 小核高斯), 1.0 时等价旧行为
-        #   1.0 ~ 2.0  → 强力层(大核高斯 + 多尺度下采样低通), 物理上强制 flow 只剩极低频
         try:
             ws = float(warp_smooth)
         except (TypeError, ValueError):
@@ -2682,7 +2822,6 @@ class SmartMergeImages:
         flow[:, :, 0] = cv2.GaussianBlur(flow[:, :, 0], (gk, gk), gs)
         flow[:, :, 1] = cv2.GaussianBlur(flow[:, :, 1], (gk, gk), gs)
 
-        # 多尺度低通: ds_exp > 0 才生效
         if ds_exp > 0.01:
             ds = 2.0 ** ds_exp
             h_f, w_f = flow.shape[:2]
@@ -2701,7 +2840,6 @@ class SmartMergeImages:
             return merged_img
         best_out, best_s, best_dir = merged_img, s0, 0
 
-        # ws 越大(越保守) → 光度约束越宽松, 让强平滑版即使轻微降质也被接受
         photometric_slack = 0.5 + max(0.0, ws - 1.0) * 2.0
         for sign in (-1.0,):
             map_x = grid_x + sign * flow[:, :, 0]
@@ -2766,7 +2904,6 @@ class SmartMergeImages:
         query_p = _clahe_rgb(query_m)
         train_p = _clahe_rgb(train_m)
         # 匹配前把分块的颜色分布拉向背景(只影响特征, 不参与合成):
-        # 改色/偏色块的关键点描述子因此更接近未编辑内容, 减少“改色区特征主导 H”。
         query_p = self._match_histogram_rgb(query_p, train_p)
         img_q_tensor = torch.from_numpy(np.ascontiguousarray(query_p)).permute(2, 0, 1).float().to(device)[None] / 255.0
         img_t_tensor = torch.from_numpy(np.ascontiguousarray(train_p)).permute(2, 0, 1).float().to(device)[None] / 255.0
@@ -2900,19 +3037,16 @@ class SmartMergeImages:
         if preset_valid:
             if is_grid_preset:
                 # grid 坐标只是布局参考。有桥接 A 时优先用 A→BG 的实测放置;
-                # 没有才退回 B→BG 特征匹配(带内点/偏离/评分三重门槛), 最后才是 grid 保底。
                 H, method_used, num_inliers = self._resolve_grid_alignment(
                     query_img, train_img, base_mask, preset_H, bridge_H, device)
                 is_bridge = True
             elif self._bridge_photometric_ok(preset_H, query_img, train_img):
-                # 桥接 B→A→BG 逻辑保持原样
                 H = preset_H
                 method_used = "Bridge(B→A→BG)"
                 num_inliers = -1
                 is_bridge = True
         
 
-        # ★ 前置生成结构 Mask
         if is_bridge:
             try:
                 fg_pre = cv2.warpPerspective(query_img, H, (w_t, h_t), flags=cv2.INTER_LANCZOS4)
@@ -2924,7 +3058,7 @@ class SmartMergeImages:
                 print(f"[Smart Merge] 预生成掩码失败: {e}")
                 self._last_edit_mask = None
         
-        # === TPS 非刚性对齐路径（推荐主路径）===
+        # === TPS 非刚性对齐路径 ===
         use_tps_path = (use_tps and preset_H is not None and is_bridge
                         and getattr(self, '_bridge_A_cached', None) is not None
                         and getattr(self, '_bridge_H_A2BG', None) is not None)
@@ -3016,9 +3150,8 @@ class SmartMergeImages:
                     if warp_method:
                         fg_r, mask_r = self.refine_with_optical_flow(
                             warped_fg, warped_mask, train_img, optical_flow=optical_flow,
-                            device=device, max_flow_px=10.0, edit_mask=em_for_score)   
+                            device=device, max_flow_px=10.0, edit_mask=em_for_score)    
                         em_refined = self._compute_edit_mask(train_img, fg_r, valid_mask=mask_r)
-                        # TPS 被拒时 warped_fg 未变, 基线残差直接复用, 不必重算
                         g0m = (self._flow_residual_score(
                             warped_fg, warped_mask, train_img, edit_mask=em_for_score)[0]
                             if g_base is None else g_base)
@@ -3033,8 +3166,6 @@ class SmartMergeImages:
                     self._match_level = "TPS+LoFTR"
                     return warped_fg, warped_mask, True
 
-
-        # 无 grid / 桥接不可用 → B→BG 直配(带候选竞争与放置兜底)
         if H is None:
             H, b2bg_method, b2bg_resid = self._select_b2bg_homography(
                 query_img, train_img, base_mask, device,
@@ -3293,7 +3424,8 @@ class SmartMergeImages:
         total_steps = B_orig_loop * crops_per_bg
         pbar = ProgressBar(total_steps) if HAS_PROGRESS_BAR else None
 
-        device = torch.device("cuda" if torch.cuda.is_available() and use_gpu else "cpu")
+        device = _sm_pick_device(use_gpu)
+        self._color_device = device
 
         # === 缓存查询 ===
         if force_recompute:
@@ -3468,7 +3600,6 @@ class SmartMergeImages:
 
                         if H_grid is not None:
                             # grid 只提供布局/保底。有原始裁块 A 时, 先实测 A→BG 的放置,
-                            # 作为主对齐; grid 负责在没有 A 或桥接失败时兜底。
                             H_bridge = None
                             self._bridge_A_cached = img_bridge_A
                             self._bridge_H_A2BG = None
@@ -3544,14 +3675,11 @@ class SmartMergeImages:
                             if ok:
                                 success_align = True
                             else:
-                                # 没有任何可靠放置(特征/模板/布局先验全部不成立):
-                                # 硬贴到画布中心会毁掉整图, 宁可跳过这一块。
                                 print(f"[Smart Merge] 分块 {crop_idx} 无可靠放置, 跳过以保护整图 | "
                                       f"tile {crop_idx} skipped: no reliable placement")
                                 skipped_tiles.append(crop_idx)
                                 continue
 
-                    # 编辑置信度只由 original_bg + warped_fg 决定, 命中缓存时直接复用。
                     if cached_edit_mask is not None and cached_edit_mask.shape == original_bg.shape[:2]:
                         self._last_edit_mask = cached_edit_mask.copy()
                     else:

@@ -454,7 +454,7 @@ def _sm_fast_median(x, k):
 
 class SmartMergeImages:
     
-    DEBUG = True    # 调试日志开关
+    DEBUG = False    # 调试日志开关
 
     @classmethod
     def _dlog(cls, *args, **kwargs):

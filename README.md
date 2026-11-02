@@ -177,7 +177,7 @@
 <a id="smart-merge-images"></a>
 ## Smart merge images
 
-<sub>v1.4.3 新增 · v1.4.8 优化 · v1.7.0 优化</sub>
+<sub>v1.4.3 新增 · v1.4.8 优化 · v1.7.2 优化</sub>
 
 详细说明：[中文](subMd/SmartMergeImages_zh.md) | [English](subMd/SmartMergeImages_en.md)</sub>
 
@@ -191,7 +191,7 @@
 Manual download：depth-save.pth / disk_lightglue_v0-1_arxiv-pth / loftr_outdoor.ckpt 
 To \ComfyUI\models\elementEasy\checkpoints
 
-<img width="1949" height="1171" alt="image" src="https://github.com/user-attachments/assets/702f1d85-2771-451d-ae3b-9111342118ae" />
+<img width="1949" height="1171" alt="68700067" src="https://github.com/user-attachments/assets/3682af85-9d8a-4936-9653-429e760907de" />
 
 ---
 

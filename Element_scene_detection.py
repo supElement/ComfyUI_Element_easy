@@ -203,6 +203,8 @@ def _build_proxy_job(video_path: str):
     tmp = None
     proc = None
     try:
+        if not os.path.isfile(video_path) or "://" in video_path:
+            raise ValueError(f"Invalid or unsafe video path: {video_path}")
         if os.path.exists(proxy) and os.path.getsize(proxy) > 0:
             st["status"] = "ready"
             st["progress"] = 1.0

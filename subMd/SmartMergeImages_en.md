@@ -39,12 +39,12 @@ Input can be a single image or multiple blocks (each block may have a different 
 It does **not** control TPS; it only decides whether optical flow runs after geometric alignment. The widget is named `Optical_Flow`; the switch shows `on` / `off`.
 - **OFF**: placement only (bridge homography / auto homography). If `use_tps` is ON, TPS non-rigid correction still runs; no optical flow at all.
 - **ON**: adds two optical-flow layers on top of placement/TPS:
-  1. Per-crop flow: each crop is locally aligned to the background, capped at about 10 px;
+  1. Per-crop flow: each crop is locally aligned to the background, capped at 10 px on the bridge path with `original_crop_A` / 15 px on the auto path without it; the auto path skips this step when the post-placement residual is already below 1.2 px;
   2. Global polish: the whole merged image is corrected once against the original, capped at 12 px, smoothed by `warp_smooth`.
 - Flow backend is automatic: DIS first, Farneback fallback when unavailable — there is no separate switch.
 - With `original_crop_A` connected, flow is estimated at the content's native resolution (scaled by the A/B width ratio, long side limited to 2048), so accuracy follows the content rather than the canvas.
 
-> **Note**: optical flow (both per-crop and global) is physically only suited for **fine adjustment** (about 10 px per crop, 12 px global cap). Large misalignment cannot be rescued by optical flow — use TPS or connect `original_crop_A`.
+> **Note**: optical flow (both per-crop and global) is physically only suited for **fine adjustment** (about 10–15 px per crop, 12 px global cap). Large misalignment cannot be rescued by optical flow — use TPS or connect `original_crop_A`.
 
 ### 2. Non-rigid correction `use_tps` (default ON)
 - **ON**: allows mild bending/stretching to fit the background. The common AI-redraw case of "content right but shape slightly off" is fixed by this. The bridge path uses LoFTR correspondences; the auto path (no A) uses DISK features.
@@ -77,7 +77,7 @@ The parameter with the biggest influence on final appearance. **Except `Alpha So
 ### 6. Color protection `color_protection` (default OFF)
 **Only affects the color-matching chain** (global coarse LAB correction + per-crop fine correction). Alignment / TPS / optical flow / feathering are unchanged.
 - **OFF (default)**: color matching does not distinguish edited from un-edited pixels; the whole block is unified to the background tone, and edited regions are pulled toward the background color too — strongest correction.
-- **ON**: only un-edited pixels are used to estimate the color shift; correction inside edited regions drops to about 25% (smoothly ramped by the un-edited confidence). AI recolors are preserved, but the color difference between edited region and background is preserved as well.
+- **ON**: only un-edited pixels are used to estimate the color shift; edited regions keep about 25% of the global coarse correction, while per-crop local color correction is not applied to edited regions at all (0%); un-edited regions keep full strength with a smooth ramp. AI recolors are fully preserved, but the color difference between edited region and background is preserved as well.
 
 ### 7. Feathering `feather_kernel` (default 20, range 0~256)
 The soft transition width at the paste edge; it also affects the scale of color correction:
@@ -89,10 +89,10 @@ The soft transition width at the paste edge; it also affects the scale of color 
 
 ### 8. Merge mode `merge_mode` (default All to One)
 - **All to One**: all edited blocks are pasted sequentially onto the **first** background; outputs 1 image.
-- **One to One**: backgrounds and edited blocks are paired in equal counts (each background gets `crops/backgrounds` blocks, at least 1); outputs the same number of images as backgrounds.
+- **One to One**: backgrounds and edited blocks are paired by count (each background gets `crops/backgrounds` blocks using integer division, at least 1); outputs the same number of images as backgrounds. When the crop count is not divisible by the background count, the leftover crops at the end are not merged.
 
 ### 9. `use_gpu` and `force_recompute`
-- **`use_gpu`** (default ON): accelerates feature matching (DISK/LoFTR) and color matching (LAB statistics run in torch). OpenCV steps (optical flow, TPS/warp, seamless clone) still run on CPU.
+- **`use_gpu`** (default ON): accelerates feature matching (DISK/LoFTR) and the per-pixel LAB math in color matching (torch; the global color-shift estimate runs on CPU with numpy/OpenCV). OpenCV steps (optical flow, TPS/warp, seamless clone) still run on CPU.
 - **`force_recompute`** (default OFF): clears the alignment cache and re-aligns from scratch. The cache holds 4 entries (LRU); its key covers input image fingerprints, the grid fingerprint, `Optical_Flow`, `second_pass`, `use_tps` and `merge_mode` — changing color mode, feathering or `use_gpu` does not re-run alignment.
 
 ### 10. Optional inputs `original_crop_A` / `split_grid`

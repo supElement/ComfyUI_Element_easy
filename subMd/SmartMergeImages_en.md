@@ -69,9 +69,9 @@ The parameter with the biggest influence on final appearance. **Except `Alpha So
 | Mode | Effect | Suited for | Caveats |
 |---|---|---|---|
 | `Patch_based_color` | Boundary-band sync first, then a patch-grid color sync, aligning tone to the background region by region | Large/uneven color casts; multi-block stitching | Slowest; block size depends on `feather_kernel` / `color_protection` (see 2.7) |
-| `LAB_Mean` | Aligns the whole block to the background in LAB by mean + robust std (10–90 percentile) | Uniform color cast, quick output | Heavily changed content may be washed out globally |
-| `Laplacian Pyramid Blend` | Per-crop pass shifts only the L-channel median, then multi-band blending fixes seams | Colors already close, only need luminance matching + seam cleanup | No a/b correction at the per-crop level (the global coarse pass still nudges a/b); 3–5 levels depending on feathering |
-| `SeamlessClone (PS Auto Blend)` | Per-crop luminance matching, then Poisson blending | Content basically unchanged, only need to remove seams | Heavily changed content will fade/gray — use with caution |
+| `LAB_Mean` | Aligns the whole block to the background in LAB by mean + robust std (10–90 percentile), then adds a low-frequency LAB difference field (clipped to 24/10/10) for spatially uneven casts | Uniform or uneven color cast, quick output | Heavily changed content may be washed out globally |
+| `Laplacian Pyramid Blend` | Per-crop pass shifts the L-channel median plus a low-frequency L field, then multi-band blending fixes seams | Colors already close, only need luminance matching + seam cleanup | No a/b correction at the per-crop level (the global coarse pass still nudges a/b); 3–5 levels depending on feathering |
+| `SeamlessClone (PS Auto Blend)` | Per-crop luminance matching (median + low-frequency L field), then Poisson blending | Content basically unchanged, only need to remove seams | Heavily changed content will fade/gray — use with caution |
 | `Alpha Soft Blend` | Feather blending only | Almost no color cast, fastest | The only mode that also skips the global LAB correction |
 
 ### 6. Color protection `color_protection` (default OFF)

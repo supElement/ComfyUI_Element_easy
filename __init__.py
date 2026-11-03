@@ -1,24 +1,24 @@
 # __init__.py
 __version__ = "1.5.5" 
 
-from .random_chars import RandomCharacterGenerator
-from .empty_image_rgb import EmptyImageRGB
-from .text_line_break import TextLineBreak
-from .mask_stroke import MaskStrokeElement
-from .mask_noise_element import MaskNoiseInjectionElement
-from .image_pad_blur import ImagePadBlur
-from .chessboard import ChessboardPattern_Element
-from .black_white_color import BlackWhiteColor
-from .frame_calc import FrameCalculator
-from .Image_Size import ElementEasyImageSize
-from .Element_SigmaGraph_Curve import Element_SigmaGraph_Curve
-from .Element_listGraph_Curve import Element_listGraph_Curve
-from .Element_ImageCurve import Element_ImageCurve
-from .Element_HueSat import ElementHueSat
-from .Element_HueHue import ElementHueHue
-from .Element_HueBright import ElementHueBright
-from .Load_image_Preview import LoadImageWithPreview
-from .Smart_merge_images import SmartMergeImages
+from .nodes.random_chars import RandomCharacterGenerator
+from .nodes.empty_image_rgb import EmptyImageRGB
+from .nodes.text_line_break import TextLineBreak
+from .nodes.mask_stroke import MaskStrokeElement
+from .nodes.mask_noise_element import MaskNoiseInjectionElement
+from .nodes.image_pad_blur import ImagePadBlur
+from .nodes.chessboard import ChessboardPattern_Element
+from .nodes.black_white_color import BlackWhiteColor
+from .nodes.frame_calc import FrameCalculator
+from .nodes.Image_Size import ElementEasyImageSize
+from .nodes.Element_SigmaGraph_Curve import Element_SigmaGraph_Curve
+from .nodes.Element_listGraph_Curve import Element_listGraph_Curve
+from .nodes.Element_ImageCurve import Element_ImageCurve
+from .nodes.Element_HueSat import ElementHueSat
+from .nodes.Element_HueHue import ElementHueHue
+from .nodes.Element_HueBright import ElementHueBright
+from .nodes.Load_image_Preview import LoadImageWithPreview
+from .nodes.Smart_merge_images import SmartMergeImages
 
 WEB_DIRECTORY = "js"
 
@@ -76,7 +76,7 @@ def _register_module(module):
 
 def _try_register(module_name: str) -> bool:
     try:
-        mod = importlib.import_module("." + module_name, __name__)
+        mod = importlib.import_module(".nodes." + module_name, __name__)
         _register_module(mod)
         return True
     except Exception as e:

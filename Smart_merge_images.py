@@ -433,6 +433,18 @@ def _sm_median(x, k):
     return _sm_median_bchw(x.permute(0, 3, 1, 2), k).permute(0, 2, 3, 1)
 
 
+def _sm_u8_median(x, k):
+    """全分辨率 8bit 中值(cv2 直方图)。输入已 floor 到整数, 结果与精确中值一致,
+    比 unfold+torch.median 快两个数量级。"""
+    k = int(k) | 1
+    if k <= 1:
+        return x
+    img = np.clip(_sm_numpy(x), 0.0, 255.0).astype(np.uint8)
+    out = np.stack([cv2.medianBlur(np.ascontiguousarray(img[..., c]), k)
+                    for c in range(img.shape[2])], axis=-1)
+    return torch.from_numpy(out.astype(np.float32)).to(x.device).unsqueeze(0)
+
+
 def _sm_fast_median(x, k):
     """大核中值: 半分辨率执行, 等效半径不变。
     走 cv2 的 8bit 定点实现: 中值结果的 1 级偏差会被可靠性的方差比(分母下限 1e-6)
@@ -512,9 +524,15 @@ class SmartMergeImages:
     PATCH_COLOR_MIN_COVERAGE = 0.15
     # 块内色差离散度(MAD)超过该值视为内容不一致(而非色偏), 置信度指数衰减
     PATCH_COLOR_MAD_TAU = (8.0, 6.0, 6.0)
-    # 已编辑内容内保留的校正比例: 采样已排除编辑像素, 但校正场仍会扩散进来。
-    # 满强度施加会把 AI 有意画的颜色(红衬衫)拉向背景的灰蓝 → 灰斑。
+    # 整图粗校正(全局光照对齐)在已编辑内容内保留的比例。
     PATCH_COLOR_EDITED_SCALE = 0.25
+    # 逐块局部校正在已编辑内容内保留的比例: 局部校正的目标就是"把这块改成原图
+    # 的样子", 对 AI 有意改色的内容完全是错的目标。暗部 bg-fg 差极大(亮衬衫 vs 暗红
+    # 阴影), 即使 8% 也会把阴影提亮几个 L 单位而发灰, 因此编辑区内完全不施加。
+    COLOR_LOCAL_EDITED_SCALE = 0.0
+
+    # 低频 LAB 差场上限(L, a, b): 只补缓变的整体/局部色偏, 不替代重绘。
+    LOWFREQ_COLOR_MAX_SHIFT = (24.0, 10.0, 10.0)
 
     
     # 连接 split_grid 时, 没有桥接裁块 A 的情况下, 特征匹配校正允许偏离
@@ -1040,7 +1058,17 @@ class SmartMergeImages:
         limits = torch.tensor(((0.5, 2.0), (0.8, 1.25), (0.8, 1.25)),
                               dtype=lab_fg.dtype, device=dev)
         scale = scale.clamp(limits[:, 0], limits[:, 1])
-        lab_fg = (lab_fg - mean_fg) * scale + mean_bg
+        affine = (lab_fg - mean_fg) * scale + mean_bg
+        if edit_mask is not None:
+            # 均值/方差只统计未编辑像素; 编辑区保留 AI 自己的颜色, 只留少量整体对齐。
+            ps = self._edited_scale(edit_mask, fg.shape,
+                                    base=self.COLOR_LOCAL_EDITED_SCALE)
+            affine = lab_fg + (affine - lab_fg) * ps
+        lab_fg = affine
+        # 全局仿射只对齐一个均值/方差; 再补一层低频差场, 覆盖空间不均匀的亮度差。
+        lab_fg = self._apply_lowfreq_lab_field(
+            lab_fg, lab_bg, sample, self._lowfreq_sigma(fg.shape),
+            self.LOWFREQ_COLOR_MAX_SHIFT, channels=3, edit_mask=edit_mask)
         return _sm_lab_to_u8(lab_fg)
 
     def _alpha_blend_crop(self, fg, bg, mask_float, feather_kernel):
@@ -1075,11 +1103,17 @@ class SmartMergeImages:
         elif edit_mask is None:
             lab_fg = lab_fg + shift * l_only
         else:
-            lab_fg = lab_fg + shift * l_only * self._edited_scale(edit_mask, fg.shape)
+            lab_fg = lab_fg + shift * l_only * self._edited_scale(
+                edit_mask, fg.shape, base=self.COLOR_LOCAL_EDITED_SCALE)
+        # 中位平移只修整体亮度; 再补低频 L 差场, 处理空间不均匀的亮度差。
+        lab_fg = self._apply_lowfreq_lab_field(
+            lab_fg, lab_bg, sample_mask, self._lowfreq_sigma(fg.shape),
+            self.LOWFREQ_COLOR_MAX_SHIFT, channels=1,
+            edit_mask=None if fallback else edit_mask)
         return _sm_lab_to_u8(lab_fg)
 
     def _apply_color_match(self, fg, bg, mask_float, mode, feather_kernel,
-                           edit_mask, apply_mask, grid_weight=False):
+                           edit_mask, apply_mask, grid_weight=False, canvas_sides=None):
         """返回 (处理后的 fg, 是否已完成背景融合)。"""
         if mode == "Patch_based_color":
             if edit_mask is None:
@@ -1113,8 +1147,17 @@ class SmartMergeImages:
         if mode == "Laplacian Pyramid Blend":
             levels = 3 if feather_kernel < 16 else (5 if feather_kernel > 64 else 4)
             soft = self.make_edge_safe_soft_mask(mask_float, feather_kernel)
+            # 画布边没有"外侧内容"可以羽化, 羽化把边界内推后, 最粗层按 >0.5 选到背景低频,
+            # 贴边就出现一条透出底图的浅色带。这里不改 alpha/soft (那会动到其它模式和
+            # split grid 的分块形状), 只给最粗层在画布侧补一个边界条件: 那一格用未羽化
+            # raw mask 的面积平均决定前景/背景 —— 点采样落在离边 1~2px 处仍会取到低值,
+            # 面积平均才反映"这一格里内容是否真的贴到画布边"。
+            canvas_mask = (np.clip(mask_float.astype(np.float32), 0.0, 1.0)
+                           if canvas_sides is not None and any(canvas_sides) else None)
             try:
-                return self.laplacian_pyramid_blend(fg, bg, soft, levels), True
+                return self.laplacian_pyramid_blend(
+                    fg, bg, soft, levels, canvas_mask=canvas_mask,
+                    canvas_sides=canvas_sides), True
             except Exception as e:
                 print(f"[Smart Merge] 拉普拉斯金字塔融合失败: {e}, 降级 Alpha | "
                       f"Laplacian pyramid blend failed: {e}, downgraded to Alpha")
@@ -1138,16 +1181,63 @@ class SmartMergeImages:
         return reliable
 
     @torch.no_grad()
-    def _edited_scale(self, edit_mask, shape, sigma=8.0):
-        """未编辑置信度 → 校正强度系数: 未编辑处 1, 已编辑处 PATCH_COLOR_EDITED_SCALE。
+    def _edited_scale(self, edit_mask, shape, sigma=8.0, base=None):
+        """未编辑置信度 → 校正强度系数: 未编辑处 1, 已编辑处 base。
         编辑区内的校正估计没有内容对应关系, 满强度施加会把 AI 有意的颜色拉向背景。"""
         if edit_mask is None:
             return None
         h, w = shape[:2]
         em = _sm_as_float(edit_mask, self._color_device).clamp(0.0, 1.0)
         em = _sm_fast_blur(_sm_fit(em, h, w), sigma).clamp(0.0, 1.0)
-        base = float(self.PATCH_COLOR_EDITED_SCALE)
-        return base + (1.0 - base) * em
+        # 暗部改色的 em 只有 0.01~0.05; 线性映射仍会透出百分之几的 bg 校正, 而阴影处
+        # bg-fg 可差 40+ L, 几个百分点就是可见的发灰。明确已编辑段归零, 明确未编辑段
+        # 直接到 1, 中间平滑过渡。
+        t = ((em - 0.2) / 0.6).clamp(0.0, 1.0)
+        t = t * t * (3.0 - 2.0 * t)
+        base = float(self.PATCH_COLOR_EDITED_SCALE if base is None else base)
+        return base + (1.0 - base) * t
+
+    @staticmethod
+    def _lowfreq_sigma(shape):
+        """低频差场的尺度: 跟随裁块短边, 只补缓变色偏而非细节。"""
+        h, w = shape[:2]
+        return float(np.clip(0.06 * min(h, w), 10.0, 64.0))
+
+    @torch.no_grad()
+    def _apply_lowfreq_lab_field(self, lab_fg, lab_bg, weight, sigma, limit,
+                                 channels=3, edit_mask=None):
+        """把 fg 的缓变 LAB 分量拉向 bg, 修正空间不均匀的色偏。
+
+        归一化卷积估计 bg-fg 的低频差, 边界不衰减; 再减去常数分量 —— 整体色偏
+        已由均值/中位平移处理, 这里只保留空间变化。weight 同时用于排除无效/已编辑
+        像素; channels=1 时只改 L。
+        """
+        sigma = float(max(sigma, 0.0))
+        if sigma < 0.5 or weight is None:
+            return lab_fg
+        dev = lab_fg.device
+        ch = 1 if int(channels) == 1 else 3
+        w = _sm_as_float(np.clip(weight, 0.0, 1.0), dev)
+        wsum = w.sum()
+        if float(wsum) < 1.0:
+            return lab_fg
+        fg_c = lab_fg[..., :ch]
+        bg_c = lab_bg[..., :ch]
+        num = _sm_fast_blur((bg_c - fg_c) * w, sigma)
+        den = _sm_fast_blur(w, sigma)
+        field = torch.where(den > 1e-3, num / den.clamp_min(1e-3), torch.zeros_like(num))
+        field = field - (field * w).sum(dim=(1, 2), keepdim=True) / wsum
+        lim = torch.tensor(tuple(limit[:ch]), dtype=field.dtype, device=dev)
+        field = torch.clamp(field, -lim, lim)
+        if edit_mask is not None:
+            field = field * self._edited_scale(
+                edit_mask, lab_fg.shape[1:], sigma=max(4.0, sigma / 3.0),
+                base=self.COLOR_LOCAL_EDITED_SCALE)
+        if ch == 1:
+            out = lab_fg.clone()
+            out[..., 0:1] = lab_fg[..., 0:1] + field
+            return out
+        return lab_fg + field
 
     @torch.no_grad()
     def patch_based_color_sync(self, fg, bg, mask_float, patch_size=64, overlap=32,
@@ -1254,7 +1344,9 @@ class SmartMergeImages:
             field = _sm_fast_blur(field, max(2.0, patch_size / 3.0))
             max_shift = torch.tensor(self.PATCH_COLOR_MAX_SHIFT, dtype=field.dtype, device=dev)
             field = field.clamp(-max_shift, max_shift)
-            edited_scale = self._edited_scale(edit_mask, fg.shape, sigma=max(4.0, patch_size / 4.0))
+            edited_scale = self._edited_scale(
+                edit_mask, fg.shape, sigma=max(4.0, patch_size / 4.0),
+                base=self.COLOR_LOCAL_EDITED_SCALE)
             if grid_weight:
                 field = field * edited_scale
             else:
@@ -1310,8 +1402,14 @@ class SmartMergeImages:
                 lab_fg_med = lab_fg
                 lab_bg_med = lab_bg
         else:
-            lab_fg_med = _sm_median(lab_fg.clamp(0.0, 255.0).floor(), med_size)
-            lab_bg_med = _sm_median(lab_bg.clamp(0.0, 255.0).floor(), med_size)
+            # 两种实现逐值等价: CPU 上 cv2 直方图中值快两个数量级,
+            # GPU 上保留 torch 中值, 避免来回搬运。
+            if dev.type == "cpu":
+                lab_fg_med = _sm_u8_median(lab_fg.clamp(0.0, 255.0).floor(), med_size)
+                lab_bg_med = _sm_u8_median(lab_bg.clamp(0.0, 255.0).floor(), med_size)
+            else:
+                lab_fg_med = _sm_median(lab_fg.clamp(0.0, 255.0).floor(), med_size)
+                lab_bg_med = _sm_median(lab_bg.clamp(0.0, 255.0).floor(), med_size)
 
         masked_diff = (lab_bg_med - lab_fg_med) * sel.float()
         ksz = min(max(31, (band_width * 3) | 1), 151)
@@ -1320,12 +1418,9 @@ class SmartMergeImages:
 
         for c in range(3):
             diff_ch = masked_diff[..., c:c + 1]
-            if protected:
-                diff_smooth = _sm_fast_blur(diff_ch, gsigma)
-                diff_sqr_smooth = _sm_fast_blur(diff_ch ** 2, gsigma)
-            else:
-                diff_smooth = _sm_blur_ksize(diff_ch, ksz)
-                diff_sqr_smooth = _sm_blur_ksize(diff_ch ** 2, ksz)
+            # 差场本身是平滑场: 大 sigma 走降采样模糊, 与全分辨率大核高斯等价
+            diff_smooth = _sm_fast_blur(diff_ch, gsigma)
+            diff_sqr_smooth = _sm_fast_blur(diff_ch ** 2, gsigma)
             variance = (diff_sqr_smooth - diff_smooth ** 2).clamp_min(0.0)
 
             pos = variance[:, ::4, ::4, :] if protected else variance
@@ -1333,12 +1428,8 @@ class SmartMergeImages:
             denom = _sm_np_median(pos) if pos.numel() > 0 else torch.tensor(1.0, device=dev)
             reliability = torch.exp(-variance / (denom + 1e-6)) * sel.float()
 
-            if protected:
-                weighted_num = _sm_fast_blur(diff_ch * reliability, gsigma)
-                weighted_den = _sm_fast_blur(reliability, gsigma) + 1e-6
-            else:
-                weighted_num = _sm_blur_ksize(diff_ch * reliability, ksz)
-                weighted_den = _sm_blur_ksize(reliability, ksz) + 1e-6
+            weighted_num = _sm_fast_blur(diff_ch * reliability, gsigma)
+            weighted_den = _sm_fast_blur(reliability, gsigma) + 1e-6
             correction_field[..., c:c + 1] = weighted_num / weighted_den
 
         if protected:
@@ -1346,14 +1437,17 @@ class SmartMergeImages:
             decay = 0.4 + 0.6 * torch.exp(
                 -_sm_as_float(dist, dev) / max(float(band_width), 1.0))
             correction_field = correction_field * self._edited_scale(
-                edit_mask, fg.shape, sigma=max(4.0, band_width / 4.0))
+                edit_mask, fg.shape, sigma=max(4.0, band_width / 4.0),
+                base=self.COLOR_LOCAL_EDITED_SCALE)
             soft_mask = _sm_fast_blur(_sm_as_float(mask_float, dev),
                                       max(2.0, 0.15 * (band_width | 1)))
         else:
             dist = cv2.distanceTransform(1 - (mask_float > 0.5).astype(np.uint8), cv2.DIST_L2, 5)
             max_dist = float(dist.max()) + 1e-6
             decay = (0.4 + 0.6 * (1.0 - _sm_as_float(dist, dev) / max_dist)).clamp(0.4, 1.0)
-            soft_mask = _sm_blur_ksize(_sm_as_float(mask_float, dev), band_width | 1)
+            soft_ksize = max(3, int(band_width) | 1)
+            soft_sigma = max(0.1, 0.3 * ((soft_ksize - 1) * 0.5 - 1.0) + 0.8)
+            soft_mask = _sm_fast_blur(_sm_as_float(mask_float, dev), soft_sigma)
 
         strength_vec = torch.tensor((0.6, 1.0, 1.0), dtype=lab_fg.dtype, device=dev) * strength
         lab_corrected = lab_fg + correction_field * decay * soft_mask * strength_vec
@@ -1452,8 +1546,8 @@ class SmartMergeImages:
         # 裁块 A 可以按内容原生分辨率送入, 此时它比 BG 小好几倍, 合法的 H 面积比也会远大于 1;
         # 上界放宽到"A 铺满整张 BG", 透视/边长比/凸性仍能拦住退化 H, 放置的正确性由随后的光度校验把关。
         max_area_ratio = max(6.0, float(w_t * h_t) / float(max(w_q * h_q, 1)))
-        if not SmartMergeImages._homography_is_sane(H, h_q, w_q, h_t, w_t,
-                                                   max_area_ratio=max_area_ratio):
+        if not self._homography_is_sane(H, h_q, w_q, h_t, w_t,
+                                        max_area_ratio=max_area_ratio):
             _sm_log("[Smart Merge] A→BG 单应性未通过体检(透视/形状/凸性), 弃用桥接 | A→BG homography failed sanity check, discarding bridge")
             return None, "单应性体检未过"
         return H, "OK"
@@ -1741,7 +1835,7 @@ class SmartMergeImages:
         只有统计编辑区内部像素, 才能精准恢复改色区的亮度结构。"""
         m = mask > 0.5
         if int(m.sum()) < 1000:
-            return SmartMergeImages._match_histogram(src, ref)
+            return FlowMixin._match_histogram(src, ref)
         src_vals, src_cnt = np.unique(src[m], return_counts=True)
         ref_vals, ref_cnt = np.unique(ref[m], return_counts=True)
         src_q = np.cumsum(src_cnt).astype(np.float64); src_q /= src_q[-1]
@@ -1808,7 +1902,7 @@ class SmartMergeImages:
                 best_sigma, best_diff = s, d
         if best_sigma <= 0.0:
             return sharp_l, 0.0
-        SmartMergeImages._dlog(
+        _sm_log(
             f"[Smart Merge] 虚焦→实焦均衡: 编辑图锐度{v_sharp:.0f} → 原图{v_ref:.0f}, "
             f"sigma={best_sigma} | defocus equalized (flow input only)")
         return cv2.GaussianBlur(sharp_l, (0, 0), best_sigma), best_sigma
@@ -1851,8 +1945,29 @@ class SmartMergeImages:
         la = _sm_rgb_to_lab(warped_A, dev)
         lb = _sm_rgb_to_lab(warped_B, dev)
 
-        d_ab = (la[..., 1:3] - lb[..., 1:3]).norm(dim=-1, keepdim=True)
+        vb_a, vb_b = la[..., 1:3] - 128.0, lb[..., 1:3] - 128.0
+        d_ab = (vb_a - vb_b).norm(dim=-1, keepdim=True)
         d_l = (la[..., 0:1] - lb[..., 0:1]).abs()
+        # 暗部 a/b 绝对值天然接近 0(阴影里的红色 chroma 只有十几), 只比绝对色度差
+        # 会把"白衬衫→暗红"判成未编辑, 于是色偏校正把阴影拉回原来的灰蓝。
+        # 色相角与亮度无关, 用色度加权的色相角差作为第三个判据。
+        c_a = vb_a.norm(dim=-1, keepdim=True)
+        c_b = vb_b.norm(dim=-1, keepdim=True)
+        cos_hue = (vb_a * vb_b).sum(dim=-1, keepdim=True) / (c_a * c_b).clamp_min(1e-3)
+        d_hue = torch.rad2deg(torch.acos(cos_hue.clamp(-1.0, 1.0)))
+        d_hue = d_hue * (torch.minimum(c_a, c_b) / 6.0).clamp(0.0, 1.0)
+        # 近黑区 a/b 只有个位数: 白衬衫暗部(色度 ~3)和暗红衬衫阴影(色度 ~15)的
+        # 绝对色差仍可能低于 d_ab 下限, 上面三个判据会判成"未编辑", 色彩匹配随后
+        # 按未编辑满强度校色, 把阴影里的红色拉回灰蓝(可见灰斑)。
+        # 色度差按平均亮度归一化后与光照无关: 同一颜色换光照归一化色度不变,
+        # 改色则必然变化; 分母 +16 抑制全黑区的 a/b 量化噪声放大。
+        lum_mean = (la[..., 0:1] + lb[..., 0:1]) * 0.5
+        c_norm = torch.maximum(c_a, c_b)
+        d_norm = d_ab * 255.0 / (lum_mean + 16.0)
+        # 绝对色差接近 0、或两边都接近中性(色度 <5)时没有改色证据, 不参与判定:
+        # 近黑噪声和"本来就无色"的区域不该被当成改色, 否则会误关掉暗部正常的色彩对齐。
+        d_norm = d_norm * ((d_ab - 1.5) / 3.0).clamp(0.0, 1.0)
+        d_norm = d_norm * ((c_norm - 5.0) / 5.0).clamp(0.0, 1.0)
 
         def _confidence(diff, lo, hi):
             d = diff.clamp(0.0, 255.0).floor()          # 对齐 uint8 截断
@@ -1863,6 +1978,10 @@ class SmartMergeImages:
             return ((hi - d) / max(hi - lo, 1e-6)).clamp(0.0, 1.0)
 
         conf = torch.minimum(_confidence(d_ab, d_lo, d_hi), _confidence(d_l, 25.0, 60.0))
+        conf = torch.minimum(conf, _confidence(d_hue, 10.0, 35.0))
+        # 归一化色度判据只补暗部: 亮部原来三个判据已经可靠, 放宽会误伤正常的亮度对齐。
+        dark_w = ((70.0 - lum_mean) / 30.0).clamp(0.0, 1.0)
+        conf = torch.minimum(conf, 1.0 - dark_w * (1.0 - _confidence(d_norm, 12.0, 35.0)))
         if valid_np is not None and valid_np.shape == (hh, ww):
             valid = _sm_as_float(valid_np, dev).clamp(0.0, 1.0)
             conf = conf * valid + (1.0 - valid)
@@ -2661,10 +2780,10 @@ class SmartMergeImages:
         y0, y1 = max(0, int(ys.min()) - pad), min(warped_fg.shape[0], int(ys.max()) + pad)
         x0, x1 = max(0, int(xs.min()) - pad), min(warped_fg.shape[1], int(xs.max()) + pad)
         
-        g1 = SmartMergeImages._to_flow_luma(warped_fg[y0:y1, x0:x1])
-        g2 = SmartMergeImages._to_flow_luma(train_img[y0:y1, x0:x1])
+        g1 = cls._to_flow_luma(warped_fg[y0:y1, x0:x1])
+        g2 = cls._to_flow_luma(train_img[y0:y1, x0:x1])
         # ★ 核心：几何打分前也要对齐明暗结构
-        g1 = SmartMergeImages._match_histogram(g1, g2)
+        g1 = cls._match_histogram(g1, g2)
         
         m = cv2.erode(mask_u8[y0:y1, x0:x1], np.ones((15, 15), np.uint8)) > 0
         m_geo = m
@@ -3587,7 +3706,8 @@ class SmartMergeImages:
         result[y1:y2, x1:x2] = cloned
         return result, True
 
-    def laplacian_pyramid_blend(self, img1, img2, mask, num_levels=4):
+    def laplacian_pyramid_blend(self, img1, img2, mask, num_levels=4,
+                                canvas_mask=None, canvas_sides=None):
         h, w = img1.shape[:2]
         divisor = 2 ** num_levels
         pad_h = (divisor - h % divisor) % divisor
@@ -3597,6 +3717,8 @@ class SmartMergeImages:
             img1 = cv2.copyMakeBorder(img1, 0, pad_h, 0, pad_w, cv2.BORDER_REFLECT)
             img2 = cv2.copyMakeBorder(img2, 0, pad_h, 0, pad_w, cv2.BORDER_REFLECT)
             mask = cv2.copyMakeBorder(mask, 0, pad_h, 0, pad_w, cv2.BORDER_REFLECT)
+            if canvas_mask is not None:
+                canvas_mask = cv2.copyMakeBorder(canvas_mask, 0, pad_h, 0, pad_w, cv2.BORDER_REFLECT)
 
         if mask.dtype != np.float32:
             mask = mask.astype(np.float32)
@@ -3628,6 +3750,20 @@ class SmartMergeImages:
             l2 = lp2[i]
             m = cv2.resize(mask, (l1.shape[1], l1.shape[0]))
             if i == 0:
+                if canvas_mask is not None and canvas_sides is not None:
+                    # 画布侧最粗格改用 raw mask 的面积平均: 只看点采样会在离边 1~2px
+                    # 处取到羽化/掉边后的低值, 面积平均才反映这一格里内容是否贴到边。
+                    m_raw = cv2.resize(canvas_mask, (l1.shape[1], l1.shape[0]),
+                                       interpolation=cv2.INTER_AREA)
+                    l_cut, t_cut, r_cut, b_cut = canvas_sides
+                    if l_cut:
+                        m[:, :1] = np.maximum(m[:, :1], m_raw[:, :1])
+                    if t_cut:
+                        m[:1, :] = np.maximum(m[:1, :], m_raw[:1, :])
+                    if r_cut:
+                        m[:, -1:] = np.maximum(m[:, -1:], m_raw[:, -1:])
+                    if b_cut:
+                        m[-1:, :] = np.maximum(m[-1:, :], m_raw[-1:, :])
                 if m.ndim == 2:
                     m = m[:, :, np.newaxis]
                 blended = l1 * m + l2 * (1.0 - m)
@@ -4046,10 +4182,13 @@ class SmartMergeImages:
                     else:
                         color_apply_mask = None
 
+                    # 裁块哪一侧正好是画布边: 只给 Laplacian 最粗层做边界条件, 不动 alpha。
+                    canvas_sides = (xmin <= 0, ymin <= 0, xmax >= w_bg, ymax >= h_bg)
                     crop_fg, color_done = self._apply_color_match(
                         crop_fg, crop_bg, crop_mask_float, color_match,
                         feather_kernel, color_edit_mask, color_apply_mask,
-                        grid_weight=weight_local is not None)
+                        grid_weight=weight_local is not None,
+                        canvas_sides=canvas_sides)
 
                     # ===== 融合: grid 覆盖式 / 原生羽化覆盖 =====
                     if tile_info is not None:

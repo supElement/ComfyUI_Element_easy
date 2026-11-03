@@ -359,6 +359,22 @@ mask 描边：内外描边宽度和模糊度单独控制，支持非描边区域
 
 ---
 
+⚠️ smart_merge 节点的模型文件已从本仓库的 Git 历史中永久移除（git pull / 重装插件均不会恢复），改为从 HuggingFace 下载。
+
+📦 [模型文件](https://huggingface.co/cglearned/Smart_merge_images/tree/main)
+
+✅ 首次运行 smart_merge 节点时，若检测到模型缺失会自动下载到：
+    ComfyUI/models/elementEasy/checkpoints/
+
+📥 手动下载（无法访问 HuggingFace 时）请将以下 3 个文件下载到上述目录：
+    - depth-save.pth
+    - disk_lightglue_v0-1_arxiv-pth
+    - loftr_outdoor.ckpt
+
+⚠️ 注意：disk_lightglue_v0-1_arxiv-pth 没有 .pth 后缀，这是 kornia 的命名约定，不是文件损坏，请勿手动改名。
+
+---
+
 ## 关于赞助
 
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/supElement)

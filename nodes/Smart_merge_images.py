@@ -182,6 +182,22 @@ class SmartMergeImages:
             return v[0]
         return v
 
+    @staticmethod
+    def _mask_to_hw(m):
+        """grid 里的分块 mask (1,H,W,1 / H,W,1 / 1,H,W) → (H,W) float32 numpy。"""
+        if m is None:
+            return None
+        if torch.is_tensor(m):
+            m = m.detach().cpu().numpy()
+        m = np.asarray(m)
+        if m.ndim == 4:
+            m = m[0, :, :, 0]
+        elif m.ndim == 3:
+            m = m[0] if m.shape[0] == 1 else m[:, :, 0]
+        if m.ndim != 2 or m.size == 0:
+            return None
+        return m.astype(np.float32, copy=False)
+
     @classmethod
     def _grid_fingerprint(cls, split_grid):
         if not isinstance(split_grid, dict):
@@ -359,10 +375,12 @@ class SmartMergeImages:
                 
                 "split_grid": (GRID_TYPE, {
                     "tooltip": "可选: ElementTileSplit 的 grid 信息。连接后使用 fade_top/bottom/left/right 平滑 S 形渐变 + 圆角 mask 高斯羽化，逐 tile 覆盖式合成。\n"
+                               "grid 里带锁边 edit_mask 时会一并剔除未重绘的锁定带（与 ElementTileMerge 行为一致）。\n"
                                "grid 坐标作为布局锚点与保底; 有桥接A或可靠特征匹配时仍走 TPS/光流, 找不到可靠对应时直接按 grid 坐标放置。\n"
                                "色彩匹配顺序与非 grid 模式一致。\n"
                                "--------------------------------------------------\n"
                                "Optional: grid from ElementTileSplit. Uses smoothstep fades, gaussian mask feathering and alpha-over compositing. "
+                               "If the grid carries an edge-lock edit_mask, the un-repainted locked band is excluded as well (same as ElementTileMerge). "
                                "Grid coordinates act as the layout anchor and fallback; TPS / optical flow still run when bridge-A or reliable features are available, otherwise the grid placement is used as-is. "
                                "Color-matching order is identical to non-grid mode."
                 }),
@@ -576,6 +594,7 @@ class SmartMergeImages:
                 "radius_bl":   float(ti.get("radius_bl", 0))   * _inv_scale,
                 "radius_br":   float(ti.get("radius_br", 0))   * _inv_scale,
                 "mask":        ti.get("mask"),          
+                "edit_mask":   self._mask_to_hw(ti.get("edit_mask")),  # 锁边带=0, 合成时剔除
                 "kind":        ti.get("kind", "layer"), 
                 "layer":       ti.get("layer", 0),      
             }

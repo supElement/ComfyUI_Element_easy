@@ -77,8 +77,43 @@ def _feather_tile_mask_like_etm(crop_mask_float, bbox, h_bg, w_bg,
 
     return m[:, :, np.newaxis]
 
+def _place_edit_mask(edit_mask, tile_info, bbox):
+    """把分块空间的锁边 edit_mask 贴到 bbox 画布上（与 fade 权重同一 grid 锚点）。
+
+    edit_mask 里 0 = 采样时未重绘的锁定带，合成时必须剔除。这里按 grid 矩形
+    重采样后硬切，不参与高斯羽化——羽化会把锁定带内容重新漏回来。
+    """
+    em = np.asarray(edit_mask, dtype=np.float32)
+    if em.ndim != 2 or em.size == 0:
+        return None
+    if float(em.min()) >= 0.999:
+        return None
+
+    xmin, ymin, xmax, ymax = bbox
+    bw, bh = xmax - xmin, ymax - ymin
+    if bw <= 0 or bh <= 0:
+        return None
+
+    tw = max(1, int(round(float(tile_info.get("width", em.shape[1])))))
+    th = max(1, int(round(float(tile_info.get("height", em.shape[0])))))
+    if em.shape[1] != tw or em.shape[0] != th:
+        em = cv2.resize(em, (tw, th), interpolation=cv2.INTER_LINEAR)
+
+    out = np.ones((bh, bw), dtype=np.float32)
+    gx = int(round(float(tile_info.get("x", 0)) - xmin))
+    gy = int(round(float(tile_info.get("y", 0)) - ymin))
+    sx0, sy0 = max(0, -gx), max(0, -gy)
+    dx0, dy0 = max(0, gx), max(0, gy)
+    dx1, dy1 = min(bw, gx + tw), min(bh, gy + th)
+    if dx1 <= dx0 or dy1 <= dy0:
+        return out[:, :, None]
+    dh, dw = dy1 - dy0, dx1 - dx0
+    out[dy0:dy1, dx0:dx1] = em[sy0:sy0 + dh, sx0:sx0 + dw]
+    return out[:, :, None]
+
+
 def _grid_tile_weight( tile_info, bbox, crop_mask, h_bg, w_bg, overlap, feather_px):
-    """grid 分块权重 = 贴边 fade 渐变 × 分块 mask 羽化。
+    """grid 分块权重 = 贴边 fade 渐变 × 分块 mask 羽化 × 锁边剔除。
 
     feather_px 是过渡带的**像素宽度**: 内部桥接到 ETM 的 feather 比例
     (feather = feather_px / overlap), 两种模式含义一致。
@@ -95,7 +130,11 @@ def _grid_tile_weight( tile_info, bbox, crop_mask, h_bg, w_bg, overlap, feather_
         crop_mask, bbox, h_bg, w_bg,
         ti.get("fade_top", 0), ti.get("fade_bottom", 0),
         ti.get("fade_left", 0), ti.get("fade_right", 0), overlap, frac)
-    return fade_w * mask_f
+    weight = fade_w * mask_f
+    edit_w = _place_edit_mask(ti.get("edit_mask"), ti, bbox)
+    if edit_w is not None:
+        weight = weight * edit_w
+    return weight
 
 def _alpha_blend_crop( fg, bg, mask_float, feather_kernel):
     """羽化 alpha 混合: 分块与背景按软 mask 过渡。"""

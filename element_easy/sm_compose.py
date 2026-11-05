@@ -5,60 +5,284 @@ import cv2
 import numpy as np
 
 
-def _tile_weight_local(tile_info, bbox, feather_frac):
-    """fade 使用 smoothstep 过渡，保持宽度与互补性并柔化两端。"""
+_BG_KINDS = {"gap", "fallback", "unified"}
+
+
+def _is_bg(tile_info):
+    """背景块：锁定带里是同一底图的低增强版本，不能当“未编辑”内容剔除。"""
+    return tile_info.get("kind") in _BG_KINDS
+
+
+def _lock_band(tile_info, edge):
+    bands = tile_info.get("edit_bands") or tile_info.get("lock_bands")
+    if not bands:
+        return 0.0
+    try:
+        return max(0.0, float(bands[edge]))
+    except (TypeError, IndexError, ValueError):
+        return 0.0
+
+
+def _blend_pads(tiles):
+    """同层相邻手绘块每边的 (near, far)，与 ElementTileMerge._blend_pads 一致。
+
+    near = 本块该边锁定带宽度，far = 对侧同层邻块朝本块的锁定带宽度。过渡带
+    因此只落在两块都真正重绘过的区间里；背景块不剔除，pads 恒为 0。
+    """
+    n = len(tiles)
+    if n == 0:
+        return []
+    own = [tuple(0.0 if _is_bg(t) else _lock_band(t, e) for e in range(4)) for t in tiles]
+    out = []
+    for i, t in enumerate(tiles):
+        xi, yi, wi, hi = t["x"], t["y"], t["width"], t["height"]
+        pads = [(own[i][e], 0.0) for e in range(4)]
+        best = [None] * 4
+        for j, o in enumerate(tiles):
+            if j == i or _is_bg(t) or _is_bg(o):
+                continue
+            if t.get("layer") != o.get("layer"):
+                continue
+            xj, yj, wj, hj = o["x"], o["y"], o["width"], o["height"]
+            y_over = min(yi + hi, yj + hj) - max(yi, yj)
+            x_over = min(xi + wi, xj + wj) - max(xi, xj)
+            if x_over <= 0 or y_over <= 0:
+                continue
+            cands = []
+            if xj > xi: cands.append((2, y_over, own[j][0]))
+            if xj < xi: cands.append((0, y_over, own[j][2]))
+            if yj > yi: cands.append((3, x_over, own[j][1]))
+            if yj < yi: cands.append((1, x_over, own[j][3]))
+            for edge, olap, far_b in cands:
+                if best[edge] is None or olap > best[edge][0] + 1e-6:
+                    best[edge] = (olap, far_b)
+        for edge in range(4):
+            if best[edge] is not None:
+                pads[edge] = (own[i][edge], best[edge][1])
+        out.append(tuple((float(a), float(b)) for a, b in pads))
+    return out
+
+
+def _ramp_side(dist, fade, pads, frac):
+    """单侧权重：50% 落在 fade/2（手绘框边），向外止于 near、向内止于 fade-far。"""
+    fade = float(fade)
+    if fade <= 0:
+        return np.ones_like(dist, dtype=np.float32)
+    near = max(0.0, float(pads[0]))
+    far = max(0.0, float(pads[1]))
+    if near + far > fade:
+        s = fade / (near + far) if fade > 0 else 0.0
+        near, far = near * s, far * s
+    mid = fade * 0.5
+    a_out = max(0.0, mid - near)
+    a_in = max(0.0, fade - far - mid)
+    x = dist - mid
+    if frac <= 1e-6:
+        return (x >= 0).astype(np.float32)
+    hw = np.where(x >= 0, a_in, a_out) * frac
+    t = np.clip(0.5 + x / (2.0 * np.maximum(hw, 1e-6)), 0.0, 1.0)
+    return (t * t * (3.0 - 2.0 * t)).astype(np.float32)
+
+
+def _axis_weight(pos, start, size, fade_start, fade_end, pads_start, pads_end, frac):
+    size = float(size)
+    fade_start = float(fade_start)
+    fade_end = float(fade_end)
+    if fade_start + fade_end > size:
+        s = size / (fade_start + fade_end)
+        fade_start *= s
+        fade_end *= s
+        pads_start = tuple(p * s for p in pads_start)
+        pads_end = tuple(p * s for p in pads_end)
+    d_start = (pos + 0.5) - start
+    d_end = (start + size) - (pos + 0.5)
+    return (_ramp_side(d_start, fade_start, pads_start, frac) *
+            _ramp_side(d_end, fade_end, pads_end, frac))
+
+
+def _tile_weight_etm(tile_info, bbox, frac):
+    """ElementTileMerge 的居中斜坡：两条轴向斜坡的乘积，50% 落在 fade/2。"""
     xmin, ymin, xmax, ymax = bbox
-    bh, bw = ymax - ymin, xmax - xmin
+    xs = np.arange(xmin, xmax, dtype=np.float32)[None, :]
+    ys = np.arange(ymin, ymax, dtype=np.float32)[:, None]
+    tx = float(tile_info.get("x", 0))
+    ty = float(tile_info.get("y", 0))
+    tw = float(tile_info.get("width", 1))
+    th = float(tile_info.get("height", 1))
+    pads = tile_info.get("blend_pads") or ((0.0, 0.0),) * 4
+    ramp_x = _axis_weight(xs, tx, tw, tile_info.get("fade_left", 0),
+                          tile_info.get("fade_right", 0), pads[0], pads[2], frac)
+    ramp_y = _axis_weight(ys, ty, th, tile_info.get("fade_top", 0),
+                          tile_info.get("fade_bottom", 0), pads[1], pads[3], frac)
+    return (ramp_y * ramp_x)[:, :, None]
 
-    tx = int(tile_info.get("x", 0))
-    ty = int(tile_info.get("y", 0))
-    tw = int(tile_info.get("width", 1))
-    th = int(tile_info.get("height", 1))
 
-    ffr = float(max(0.0, min(1.0, feather_frac)))
-    ft = float(tile_info.get("fade_top", 0))    * ffr
-    fb = float(tile_info.get("fade_bottom", 0)) * ffr
-    fl = float(tile_info.get("fade_left", 0))   * ffr
-    fr = float(tile_info.get("fade_right", 0))  * ffr
+def _restore_canvas_inset(tile_info, overlap):
+    """手绘框离画布边还有外扩留白时补回该边过渡：宽度 = 2 × 留白。"""
+    lr = tile_info.get("layer_region")
+    if not lr:
+        return
+    x = float(tile_info.get("x", 0))
+    y = float(tile_info.get("y", 0))
+    w = float(tile_info.get("width", 1))
+    h = float(tile_info.get("height", 1))
+    lx, ly, lw, lh = (float(v) for v in lr)
+    for key, inset in (("fade_left", lx - x), ("fade_top", ly - y),
+                       ("fade_right", (x + w) - (lx + lw)),
+                       ("fade_bottom", (y + h) - (ly + lh))):
+        if tile_info.get(key, 0) <= 0 and inset > 1:
+            tile_info[key] = min(float(overlap), 2.0 * inset)
 
-    weight = np.ones((bh, bw), dtype=np.float32)
-    ys = np.arange(ymin, ymax, dtype=np.float32)[:, None] + 0.5
-    xs = np.arange(xmin, xmax, dtype=np.float32)[None, :] + 0.5
 
-    def _softstep(t):
-        t = np.clip(t, 0.0, 1.0)
-        return t * t * (3.0 - 2.0 * t)
+def _corner_ramp_etm(weight, tile_info, bbox, overlap, frac):
+    """圆角权重：内部角按到圆弧的距离径向渐变（与直边同一套 a_in/a_out），
+    贴画布边的角用外扩软轮廓模糊后取最小。"""
+    lr = tile_info.get("layer_region")
+    radii = [int(tile_info.get(k, 0) or 0) for k in
+             ("radius_tl", "radius_tr", "radius_bl", "radius_br")]
+    if not lr or max(radii) <= 0:
+        return weight
+    if float(overlap) * 0.5 <= 0.0:
+        return weight
 
-    if ft > 0:
-        weight = np.minimum(weight, _softstep((ys - ty) / ft))
-    if fb > 0:
-        weight = np.minimum(weight, _softstep((ty + th - ys) / fb))
-    if fl > 0:
-        weight = np.minimum(weight, _softstep((xs - tx) / fl))
-    if fr > 0:
-        weight = np.minimum(weight, _softstep((tx + tw - xs) / fr))
+    xmin, ymin, xmax, ymax = bbox
+    lx, ly, lw, lh = (float(v) for v in lr)
+    bx2, by2 = lx + lw, ly + lh
+    f = max(0.0, min(1.0, float(frac)))
+    pads = tile_info.get("blend_pads") or ((0.0, 0.0),) * 4
+    fades = [float(tile_info.get(k, 0) or 0) for k in
+             ("fade_left", "fade_top", "fade_right", "fade_bottom")]
 
-    return weight[:, :, None]
+    def avail(edge):
+        # 与 _centered_axis_ramp 同宽：手绘边到剔除边界的距离
+        fade = fades[edge]
+        near, far = float(pads[edge][0]), float(pads[edge][1])
+        mid = fade * 0.5
+        return max(0.0, mid - near), max(0.0, fade - far - mid)
+
+    cf = float(tile_info.get("corner_feather", 0) or 0)
+    if cf > 1e-6:
+        sil_feather = max(1.0, cf)
+    else:
+        sil_feather = max(1.0, 0.5 * max(fades) * f, 0.5 * float(overlap) * f)
+    sil_sigma = sil_feather / 3.0
+    sil_pad = max(1, int(round(sil_sigma * 3.0)))
+
+    corners = (
+        (radii[0], lx + radii[0], ly + radii[0], 0, 1, "tl"),
+        (radii[1], bx2 - radii[1], ly + radii[1], 2, 1, "tr"),
+        (radii[2], lx + radii[2], by2 - radii[2], 0, 3, "bl"),
+        (radii[3], bx2 - radii[3], by2 - radii[3], 2, 3, "br"),
+    )
+    for r, cx, cy, e_h, e_v, where in corners:
+        if r <= 0:
+            continue
+
+        if fades[e_h] <= 0 and fades[e_v] <= 0:
+            # 贴画布边：手绘圆弧按 tile mask 的 sigma 模糊，边界补 0，50% 落在手绘弧上
+            wide = r + sil_feather + sil_pad + 2
+            if where in ("tl", "bl"):
+                x_lo, x_hi = cx - wide, cx + sil_pad + 2
+            else:
+                x_lo, x_hi = cx - sil_pad - 2, cx + wide
+            if where in ("tl", "tr"):
+                y_lo, y_hi = cy - wide, cy + sil_pad + 2
+            else:
+                y_lo, y_hi = cy - sil_pad - 2, cy + wide
+            wx0, wx1 = int(x_lo), int(x_hi) + 1
+            wy0, wy1 = int(y_lo), int(y_hi) + 1
+            x0, x1 = max(xmin, wx0), min(xmax, wx1)
+            y0, y1 = max(ymin, wy0), min(ymax, wy1)
+            if x0 >= x1 or y0 >= y1:
+                continue
+
+            yy = np.arange(wy0, wy1, dtype=np.float32)[:, None] + 0.5
+            xx = np.arange(wx0, wx1, dtype=np.float32)[None, :] + 0.5
+            dist = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
+            keep = (dist <= float(r)).astype(np.float32)
+            keep = cv2.copyMakeBorder(keep, sil_pad, sil_pad, sil_pad, sil_pad,
+                                      cv2.BORDER_CONSTANT, value=0.0)
+            if sil_sigma >= 0.5:
+                # ksize 与 ETM 的 radius = round(3σ) 对齐，保证两边像素等价
+                keep = cv2.GaussianBlur(keep, (2 * sil_pad + 1, 2 * sil_pad + 1), sil_sigma)
+            keep = keep[sil_pad + (y0 - wy0):sil_pad + (y1 - wy0),
+                        sil_pad + (x0 - wx0):sil_pad + (x1 - wx0)]
+
+            yy = np.arange(y0, y1, dtype=np.float32)[:, None] + 0.5
+            xx = np.arange(x0, x1, dtype=np.float32)[None, :] + 0.5
+
+            if where == "tl":
+                cond = (xx < cx) & (yy < cy)
+            elif where == "tr":
+                cond = (xx > cx) & (yy < cy)
+            elif where == "bl":
+                cond = (xx < cx) & (yy > cy)
+            else:
+                cond = (xx > cx) & (yy > cy)
+            a = np.where(cond, keep, 1.0).astype(np.float32)
+            weight[y0 - ymin:y1 - ymin, x0 - xmin:x1 - xmin, 0] = np.minimum(
+                weight[y0 - ymin:y1 - ymin, x0 - xmin:x1 - xmin, 0], a)
+            continue
+
+        ah, av = avail(e_h), avail(e_v)
+        if fades[e_h] <= 0:
+            ah = av
+        elif fades[e_v] <= 0:
+            av = ah
+        reach = r + max(ah[0], av[0])
+        x0 = max(xmin, int(cx - reach) - 2)
+        x1 = min(xmax, int(cx + reach) + 3)
+        y0 = max(ymin, int(cy - reach) - 2)
+        y1 = min(ymax, int(cy + reach) + 3)
+        if x0 >= x1 or y0 >= y1:
+            continue
+
+        yy = np.arange(y0, y1, dtype=np.float32)[:, None] + 0.5
+        xx = np.arange(x0, x1, dtype=np.float32)[None, :] + 0.5
+        dist = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
+        xin = r - dist
+        if f <= 1e-6:
+            alpha = (xin >= 0).astype(np.float32)
+        else:
+            # 两个切点各用自己的直边宽度，沿圆弧插值，切线处才接得上
+            u = np.abs(xx - cx)
+            v = np.abs(yy - cy)
+            s = v / np.maximum(u + v, 1e-6)
+            s = s * s * (3.0 - 2.0 * s)
+            w_in = ah[1] + (av[1] - ah[1]) * s
+            w_out = ah[0] + (av[0] - ah[0]) * s
+            hw = np.where(xin >= 0, w_in, w_out) * f
+            t = np.clip(0.5 + xin / (2.0 * np.maximum(hw, 1e-6)), 0.0, 1.0)
+            alpha = t * t * (3.0 - 2.0 * t)
+
+        if where == "tl":
+            cond = (xx < cx) & (yy < cy)
+        elif where == "tr":
+            cond = (xx > cx) & (yy < cy)
+        elif where == "bl":
+            cond = (xx < cx) & (yy > cy)
+        else:
+            cond = (xx > cx) & (yy > cy)
+
+        region = weight[y0 - ymin:y1 - ymin, x0 - xmin:x1 - xmin, 0]
+        weight[y0 - ymin:y1 - ymin, x0 - xmin:x1 - xmin, 0] = np.where(cond, alpha, region)
+    return weight
 
 def _feather_tile_mask_like_etm(crop_mask_float, bbox, h_bg, w_bg,
                                  fade_t, fade_b, fade_l, fade_r,
-                                 overlap, feather_frac):
-    """精确复刻 ElementTileMerge 的 tile_mask 羽化 (nodes_merge.py L321-350)：
-      1) 贴画布边侧 pad replicate (深度=overlap)
-      2) 高斯模糊 (sigma = feather_px / 3)
-      3) 切回 bbox 尺寸
-    feather_px = max_fade * feather_frac if max_fade>0 else overlap * feather_frac
-    返回 (h_crop, w_crop, 1) float32。"""
+                                 overlap, feather_frac, feather_px=None):
+    """复刻 ETM 的 tile_mask 羽化：贴画布边 replicate pad → 高斯模糊 → 切回 bbox。"""
     xmin, ymin, xmax, ymax = bbox
     h_crop, w_crop = ymax - ymin, xmax - xmin
 
-    max_fade = max(float(fade_t), float(fade_b), float(fade_l), float(fade_r))
-    if max_fade > 0:
-        feather_px = max(1.0, max_fade * feather_frac)
-    else:
-        feather_px = max(1.0, float(overlap) * feather_frac)
+    if feather_px is None:
+        max_fade = max(float(fade_t), float(fade_b), float(fade_l), float(fade_r))
+        if max_fade > 0:
+            feather_px = max(1.0, max_fade * feather_frac)
+        else:
+            feather_px = max(1.0, float(overlap) * feather_frac)
 
-    # 贴画布边 pad（同 nodes_merge.py L325-328: x<=0 / x+w>=work_w 等条件）
+    # 贴画布边 pad（与 ETM 一致：replicate overlap 深度）
     pad_l = int(overlap) if xmin <= 0    else 0
     pad_r = int(overlap) if xmax >= w_bg else 0
     pad_t = int(overlap) if ymin <= 0    else 0
@@ -112,28 +336,43 @@ def _place_edit_mask(edit_mask, tile_info, bbox):
     return out[:, :, None]
 
 
-def _grid_tile_weight( tile_info, bbox, crop_mask, h_bg, w_bg, overlap, feather_px):
-    """grid 分块权重 = 贴边 fade 渐变 × 分块 mask 羽化 × 锁边剔除。
+def _grid_tile_weight( tile_info, bbox, crop_mask, h_bg, w_bg, overlap, feather_kernel):
+    """grid 分块权重：直接沿用 ElementTileMerge 的 alpha / feather 几何。
 
-    feather_px 是过渡带的**像素宽度**: 内部桥接到 ETM 的 feather 比例
-    (feather = feather_px / overlap), 两种模式含义一致。
+    - fade 一律按 `overlap` 计，斜坡以 `overlap/2` 为中心（手动模式每块外扩
+      `overlap/2`，所以 50% 正好落在手绘框边）。
+    - 同层相邻手绘块按 `blend_pads` 把过渡限制在两块锁定带之间。
+    - 手绘框倒角走以手绘圆弧为 50% 的径向斜坡，不用外扩轮廓硬切。
+    - 背景块不剔除锁定带（带里是同一底图的另一增强版本），只参与加权归一。
+    feather_kernel 0~100 线性对应 ETM 的 feather 0~1.0，100 为最大值。
     """
     ti = dict(tile_info)
+    bg = _is_bg(ti)
     if overlap > 0:
         for k in ("fade_top", "fade_bottom", "fade_left", "fade_right"):
             if ti.get(k, 0) > 0:
                 ti[k] = overlap
+        if not bg:
+            _restore_canvas_inset(ti, overlap)
 
-    frac = max(0.0, min(1.0, float(feather_px) / float(max(overlap, 1))))
-    fade_w = _tile_weight_local(ti, bbox, frac)
+    frac = max(0.0, min(1.0, float(feather_kernel) / 100.0))
+    weight = _tile_weight_etm(ti, bbox, frac)
+    if not bg:
+        weight = _corner_ramp_etm(weight, ti, bbox, overlap, frac)
+
+    # 圆角轮廓的模糊宽度用 Split 导出的 corner_feather（与 ETM 一致）
+    cf = float(ti.get("corner_feather", 0) or 0)
     mask_f = _feather_tile_mask_like_etm(
         crop_mask, bbox, h_bg, w_bg,
         ti.get("fade_top", 0), ti.get("fade_bottom", 0),
-        ti.get("fade_left", 0), ti.get("fade_right", 0), overlap, frac)
-    weight = fade_w * mask_f
-    edit_w = _place_edit_mask(ti.get("edit_mask"), ti, bbox)
-    if edit_w is not None:
-        weight = weight * edit_w
+        ti.get("fade_left", 0), ti.get("fade_right", 0), overlap, frac,
+        feather_px=max(1.0, cf) if cf > 0 else None)
+    weight = weight * mask_f
+
+    if not bg:
+        edit_w = _place_edit_mask(ti.get("edit_mask"), ti, bbox)
+        if edit_w is not None:
+            weight = weight * edit_w
     return weight
 
 def _alpha_blend_crop( fg, bg, mask_float, feather_kernel):

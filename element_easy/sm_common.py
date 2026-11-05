@@ -206,19 +206,19 @@ _MISSING = object()
 
 
 class _GridCompositor:
-    """split_grid 分块融合: 同一画布内按覆盖式(alpha over)累加, 不做加权平均。
+    """split_grid 分块融合: 与 ElementTileMerge 相同的 alpha 处理。
 
-    各分块是**独立 AI 编辑**的结果, overlap 区里两块内容并不相同; 求和归一化
-    会在整条 overlap 带里把两个版本平均成雾状/重影, 且 feather 只影响两端 ramp,
-    中间平台越宽(overlap - 2*feather)重影越明显。覆盖式合成只保留一个来源,
-    过渡带宽度完全由权重(羽化)决定。
+    每块按权重累加颜色和覆盖度, 每个画布(背景 / 各手绘层)内部先除以权重和
+    再合成: alpha = clamp(权重和, 0, 1)。同层相邻块的权重互补, 重叠区权重和
+    恒为 1, 因此过渡带不会透出底图; 锁定带被剔除处权重和为 0, 背景画布再退回
+    原图(与 ETM 的 original_image 底图行为一致)。
     """
 
     def __init__(self, shape):
         self._shape = tuple(shape[:2])
         self._bg_rgb = None
         self._bg_alpha = None
-        self._layers = {}   # layer_idx -> (预乘颜色(H,W,3), 覆盖度(H,W,1))
+        self._layers = {}   # layer_idx -> (加权颜色和(H,W,3), 权重和(H,W,1))
 
     def _slot(self, layer):
         if layer is None:
@@ -232,32 +232,27 @@ class _GridCompositor:
         return self._layers[layer]
 
     def add(self, fg, weight, bbox, layer=None):
-        """预乘 alpha-over: 后加入的分块只在权重大处压过先加入的, 互补 ramp 覆盖度累加到 1。"""
         xmin, ymin, xmax, ymax = bbox
-        rgb, alpha = self._slot(layer)
+        rgb, wsum = self._slot(layer)
         w = weight if weight.ndim == 3 else weight[:, :, None]
         w = np.clip(w.astype(np.float32, copy=False), 0.0, 1.0)
-        region = rgb[ymin:ymax, xmin:xmax]
-        region *= (1.0 - w)
-        region += fg.astype(np.float32) * w
-        a = alpha[ymin:ymax, xmin:xmax]
-        a *= (1.0 - w)
-        a += w
+        rgb[ymin:ymax, xmin:xmax] += fg.astype(np.float32) * w
+        wsum[ymin:ymax, xmin:xmax] += w
 
     @staticmethod
-    def _composite_over(dst, src_rgb, src_alpha):
-        a = np.clip(src_alpha, 0.0, 1.0)
-        return src_rgb + dst * (1.0 - a)
+    def _normalized(rgb, wsum):
+        a = np.clip(wsum, 0.0, 1.0)
+        return rgb / np.maximum(wsum, 1e-8), a
 
     def finish(self, original_bg):
         """背景画布先与原图按覆盖度混合, 再按 layer 从大到小覆盖上去。"""
         bg = original_bg.astype(np.float32)
         if self._bg_rgb is not None:
-            a = np.clip(self._bg_alpha, 0.0, 1.0)
-            bg = self._bg_rgb + bg * (1.0 - a)
+            img, a = self._normalized(self._bg_rgb, self._bg_alpha)
+            bg = img * a + bg * (1.0 - a)
         for layer_idx in sorted(self._layers.keys(), reverse=True):
-            rgb, alpha = self._layers[layer_idx]
-            bg = self._composite_over(bg, rgb, alpha)
+            img, a = self._normalized(*self._layers[layer_idx])
+            bg = img * a + bg * (1.0 - a)
         return np.clip(bg, 0, 255).astype(np.uint8)
 
 

@@ -1655,11 +1655,13 @@ def _compute_edit_mask( warped_A, warped_B, d_lo=20.0, d_hi=60.0, valid_mask=Non
         d = _sm_fast_blur(d, 6.2)
         return ((hi - d) / max(hi - lo, 1e-6)).clamp(0.0, 1.0)
 
-    conf = torch.minimum(_confidence(d_ab, d_lo, d_hi), _confidence(d_l, 25.0, 60.0))
-    conf = torch.minimum(conf, _confidence(d_hue, 10.0, 35.0))
+    # 四个判据随 d_hi 等比缩放: d_hi=60 时与原来的阈值完全一致
+    k = max(float(d_hi), 1e-6) / 60.0
+    conf = torch.minimum(_confidence(d_ab, d_lo, d_hi), _confidence(d_l, 25.0 * k, 60.0 * k))
+    conf = torch.minimum(conf, _confidence(d_hue, 10.0 * k, 35.0 * k))
     # 归一化色度判据只补暗部: 亮部原来三个判据已经可靠, 放宽会误伤正常的亮度对齐。
     dark_w = ((70.0 - lum_mean) / 30.0).clamp(0.0, 1.0)
-    conf = torch.minimum(conf, 1.0 - dark_w * (1.0 - _confidence(d_norm, 12.0, 35.0)))
+    conf = torch.minimum(conf, 1.0 - dark_w * (1.0 - _confidence(d_norm, 12.0 * k, 35.0 * k)))
     if valid_np is not None and valid_np.shape == (hh, ww):
         valid = _sm_as_float(valid_np, dev).clamp(0.0, 1.0)
         conf = conf * valid + (1.0 - valid)

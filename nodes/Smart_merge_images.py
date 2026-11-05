@@ -31,6 +31,7 @@ from ..element_easy.sm_align import (
 from ..element_easy.sm_flow import global_flow_polish
 from ..element_easy.sm_compose import (
     _alpha_blend_crop,
+    _blend_pads,
     _grid_tile_weight,
     make_edge_safe_soft_mask,
 )
@@ -218,7 +219,7 @@ class SmartMergeImages:
 
     @classmethod
     def _make_align_key(cls, original_items, edited_items, cropA_items, warp_method,
-                        second_pass, merge_mode, use_gpu, use_tps=True, split_grid=None):
+                        second_pass, use_gpu, use_tps=True, split_grid=None):
         # use_gpu 只影响设备: 不改变放置几何, 放进键里会让"只切换设备"也整轮重算对齐。
         # second_pass 会改变放置几何, 必须参与键。
         return "|".join([
@@ -228,7 +229,6 @@ class SmartMergeImages:
             cls._grid_fingerprint(split_grid),
             str(bool(warp_method)),
             str(bool(second_pass)),
-            str(merge_mode),
             str(bool(use_tps)),
         ])
 
@@ -241,20 +241,20 @@ class SmartMergeImages:
         return {
             "required": {
                 "original_image": ("IMAGE", {
-                    "tooltip": "原始背景图(未编辑的完整图像)。All to One 模式下只有第一张会被使用。\n"
+                    "tooltip": "原始背景图(未编辑的完整图像)。只有第一张会被使用。\n"
                                "原生支持 List / Batch / 单张输入(节点已声明 INPUT_IS_LIST, 引擎不会逐项展开), 无需外接 Image List To Image Batch。\n"
                                "--------------------------------------------------\n"
-                               "Original background image(s) before editing. In 'All to One' mode only the first one is used.\n"
+                               "Original background image(s) before editing; only the first one is used.\n"
                                "Natively accepts list / batch / single image (INPUT_IS_LIST declared, no per-item expansion) — "
                                "no external 'Image List To Image Batch' node needed."
                 }),
                 "edited_crop_B": ("IMAGE", {
                     "tooltip": "AI 编辑后的局部裁块(B), 将被对齐、畸变校正并贴回背景。可批量; 各裁块尺寸可不同(保持各自原始分辨率)。\n"
-                               "原生支持 List / Batch / 单张输入, 多个裁块在单次执行中全部处理; All to One 输出一张合成图。\n"
+                               "原生支持 List / Batch / 单张输入, 多个裁块在单次执行中全部处理, 输出一张合成图。\n"
                                "--------------------------------------------------\n"
                                "AI-edited local crop (B). It will be aligned, de-warped and re-composited onto the background. "
                                "Crops may have different sizes (each keeps its native resolution).\n"
-                               "Natively accepts list / batch / single image — all crops are processed in ONE execution (All to One → a single merged image)."
+                               "Natively accepts list / batch / single image — all crops are processed in ONE execution, producing a single merged image."
                 }),
                 "Optical_Flow": ("BOOLEAN", {
                     "default": False,
@@ -327,7 +327,7 @@ class SmartMergeImages:
                     "tooltip": "是否保护分块内的 AI 改色(如把衣服改成红色):\n"
                                "· 关(默认): 色彩匹配不区分编辑/未编辑像素, 整块按背景色调统一 → 普通分块合并的校正最强\n"
                                "· 开: 只用未编辑像素估计色差, 且编辑区内校正减弱 → 保留 AI 改色, 但普通合并的校正会变弱\n"
-                               "仅影响色彩匹配; 对齐/TPS/光流/羽化不受影响。\n"
+                               "编辑色的判定阈值见下方 Color_p_threshold。仅影响色彩匹配; 对齐/TPS/光流/羽化不受影响。\n"
                                "--------------------------------------------------\n"
                                "Protect AI recolored areas inside the crop:\n"
                                "· OFF (default): color matching ignores edited/un-edited distinction → full-strength correction for normal tile merging\n"
@@ -335,21 +335,24 @@ class SmartMergeImages:
                                "Affects color matching only; alignment / TPS / optical flow / feathering are unchanged."
                 }),
 
-                "feather_kernel": ("INT", {
-                    "default": 20, "min": 0, "max": 256, "step": 1,
-                    "tooltip": "羽化半径(px): 贴图边缘柔化宽度。色相保护关闭时兼作 Patch 色彩同步的块尺寸基准(块尺寸≈2×羽化); 色相保护开启时块尺寸改为按裁块短边 12%(夹在 48~160), 不再跟随羽化。一般 15~40; 越大过渡越柔但可能侵入更多原始内容。连接 split_grid 时按 overlap 比例解释(羽化/overlap)。\n"
+                "Color_p_threshold": ("FLOAT", {
+                    "default": 20.0, "min": 3.0, "max": 120.0, "step": 1.0,
+                    "tooltip": "色差阈值(仅 color_protection 开时生效): crop B 与 A/原图的色差大于该值即判为编辑色, 由 color_protection 保护。\n"
+                               "阈值到 3 倍阈值之间平滑过渡; 越小保护范围越大, 越大只有明显改色才保护。默认 20 = 原行为。\n"
                                "--------------------------------------------------\n"
-                               "Feather radius (px): edge-softening width of the pasted crop. With color_protection OFF it also sets the Patch color-sync block size (~2×feather); with protection ON the block size becomes 12% of the crop short side (clamped 48~160) instead. "
-                               "Typical 15~40; larger = softer transition but may eat into more original content. With split_grid connected it is interpreted relative to overlap (feather/overlap)."
+                               "Color-difference threshold (only when color_protection is ON): pixels whose color difference between crop B and A/original "
+                               "exceeds this value count as edited and are protected (transition up to 3x the value). "
+                               "Smaller = wider protection; default 20 = previous behavior."
                 }),
 
-                "merge_mode": (["All to One", "One to One"], {
-                    "tooltip": "· All to One: 所有 B 裁块按顺序贴回第一张背景图(多元素拼贴, 输出 1 张)\n"
-                               "· One to One: 背景与裁块一一对应(输出与背景数量相同的 batch)。\n"
+                "feather_kernel": ("INT", {
+                    "default": 20, "min": 0, "max": 256, "step": 1,
+                    "tooltip": "羽化半径(px): 贴图边缘柔化宽度。色相保护关闭时兼作 Patch 色彩同步的块尺寸基准(块尺寸≈2×羽化); 色相保护开启时块尺寸改为按裁块短边 12%(夹在 48~160), 不再跟随羽化。一般 15~40; 越大过渡越柔但可能侵入更多原始内容。连接 split_grid 时改为 0~100 对应 Element Tile Merge 节点的 feather 0~1.0, 100 即最大值(超过按 1.0)。\n"
                                "--------------------------------------------------\n"
-                               "· All to One: paste all B crops sequentially onto the first background (multi-element collage, 1 output)\n"
-                               "· One to One: background-crop pairs matched one by one (outputs a batch with the same count as backgrounds)"
+                               "Feather radius (px): edge-softening width of the pasted crop. With color_protection OFF it also sets the Patch color-sync block size (~2×feather); with protection ON the block size becomes 12% of the crop short side (clamped 48~160) instead. "
+                               "Typical 15~40; larger = softer transition but may eat into more original content. With split_grid connected, 0~100 maps linearly to Element Tile Merge's feather 0~1.0 (100 = maximum, values above are clamped)."
                 }),
+
                 "use_gpu": ("BOOLEAN", {
                     "default": True,
                     "tooltip": "GPU 加速特征匹配(DISK/LoFTR)与色彩匹配。光流、TPS/warp、无缝克隆等 OpenCV 步骤仍在 CPU 运行。无显卡或显存不足时关闭。\n"
@@ -473,7 +476,7 @@ class SmartMergeImages:
 
 
     def smart_merge(self, original_image, edited_crop_B, Optical_Flow, color_match, second_pass, feather_kernel,
-                    color_protection=False, use_tps=True, warp_smooth=1.0, merge_mode="All to One",
+                    color_protection=False, Color_p_threshold=20.0, use_tps=True, warp_smooth=1.0,
                     use_gpu=False, force_recompute=False,
                     original_crop_A=None, split_grid=None, unique_id=None, prompt=None, extra_pnginfo=None):
 
@@ -481,11 +484,11 @@ class SmartMergeImages:
         warp_method = self._unwrap_scalar(Optical_Flow, False)
         color_match = self._unwrap_scalar(color_match, "Alpha Soft Blend")
         color_protection = self._unwrap_scalar(color_protection, False)
+        Color_p_threshold = self._unwrap_scalar(Color_p_threshold, 20.0)
         second_pass = self._unwrap_scalar(second_pass, False)
         use_tps = self._unwrap_scalar(use_tps, True)
         warp_smooth = self._unwrap_scalar(warp_smooth, 1.0)
         feather_kernel = self._unwrap_scalar(feather_kernel, 20)
-        merge_mode = self._unwrap_scalar(merge_mode, "All to One")
         use_gpu = self._unwrap_scalar(use_gpu, False)
         force_recompute = self._unwrap_scalar(force_recompute, False)
         unique_id = self._unwrap_scalar(unique_id)
@@ -517,12 +520,8 @@ class SmartMergeImages:
                     return (items_orig[0].unsqueeze(0),)
             return (torch.zeros((0, 8, 8, 3), dtype=torch.float32),)
 
-        if merge_mode == "All to One":
-            B_orig_loop = 1
-            crops_per_bg = B_crop
-        else:
-            B_orig_loop = B_orig
-            crops_per_bg = max(1, B_crop // B_orig)
+        B_orig_loop = 1
+        crops_per_bg = B_crop
 
         polish_step = 1 if warp_method else 0
         total_steps = B_orig_loop * (crops_per_bg + polish_step)
@@ -537,7 +536,7 @@ class SmartMergeImages:
 
         align_key = self._make_align_key(
             items_orig, items_B, items_A, warp_method, second_pass,
-            merge_mode, use_gpu, use_tps, split_grid=split_grid
+            use_gpu, use_tps, split_grid=split_grid
         )
 
         cached_aligns = None if force_recompute else self._align_cache.get(align_key)
@@ -576,10 +575,19 @@ class SmartMergeImages:
             _inv_scale = 1.0 / GRID_U_UP
             _sm_log(f"[SmartMerge] 回退到原行为: tile 坐标反变换 (1/unified_upscale={_inv_scale:.3f}), 原图尺寸保持不变")
 
+        def _scaled_bands(value):
+            if not value:
+                return value
+            try:
+                return tuple(float(v) * _inv_scale for v in value)
+            except (TypeError, ValueError):
+                return value
+
         def _tile_info_to_src(ti):
             """把 grid tile 的坐标从输出空间缩放到源空间（SmartMerge 的 original_bg 尺寸）。"""
             if ti is None:
                 return None
+            lr = ti.get("layer_region")
             return {
                 "x":           float(ti.get("x", 0))           * _inv_scale,
                 "y":           float(ti.get("y", 0))           * _inv_scale,
@@ -593,6 +601,10 @@ class SmartMergeImages:
                 "radius_tr":   float(ti.get("radius_tr", 0))   * _inv_scale,
                 "radius_bl":   float(ti.get("radius_bl", 0))   * _inv_scale,
                 "radius_br":   float(ti.get("radius_br", 0))   * _inv_scale,
+                "layer_region": ([float(v) * _inv_scale for v in lr] if lr else None),
+                "edit_bands":  _scaled_bands(ti.get("edit_bands")),
+                "lock_bands":  _scaled_bands(ti.get("lock_bands")),
+                "corner_feather": float(ti.get("corner_feather", 0) or 0) * _inv_scale,
                 "mask":        ti.get("mask"),          
                 "edit_mask":   self._mask_to_hw(ti.get("edit_mask")),  # 锁边带=0, 合成时剔除
                 "kind":        ti.get("kind", "layer"), 
@@ -611,6 +623,10 @@ class SmartMergeImages:
             if not grid_tiles:
                 print("[Smart Merge] split_grid 已连接但没有 tiles, 回退到默认 alpha | split_grid has no tiles, falling back")
                 use_grid_alpha = False
+            else:
+                pads = _blend_pads(grid_tiles)
+                for ti, pad in zip(grid_tiles, pads):
+                    ti["blend_pads"] = pad
 
         pbar = _MergeProgress(total_steps)
         set_active_progress(pbar)
@@ -642,6 +658,7 @@ class SmartMergeImages:
 
                 img_result = img_bg.copy()
                 prepared_crops = {}
+                color_prot_masks = {}
 
                 # 第一遍：倒序对齐所有分块，全局统计完成前不做局部校色或合成。
                 for crop_idx in range(end_idx - 1, start_idx - 1, -1):
@@ -801,11 +818,23 @@ class SmartMergeImages:
                         }
 
                     prepared_crops[crop_idx] = (warped_fg, warped_mask, align_state.last_edit_mask)
+                    if color_protection:
+                        thr = max(1.0, float(Color_p_threshold))
+                        if abs(thr - 20.0) < 1e-6:
+                            color_prot_masks[crop_idx] = align_state.last_edit_mask
+                        else:
+                            color_prot_masks[crop_idx] = _compute_edit_mask(
+                                original_bg, warped_fg, d_lo=thr, d_hi=thr * 3.0,
+                                valid_mask=warped_mask, device=device)
 
                 global_lab_shift = None
                 if color_match != "Alpha Soft Blend":
+                    shift_crops = prepared_crops
+                    if color_prot_masks:
+                        shift_crops = {k: (v[0], v[1], color_prot_masks.get(k))
+                                       for k, v in prepared_crops.items()}
                     global_lab_shift = _estimate_global_lab_shift(
-                        original_bg, prepared_crops, protect_edits=color_protection)
+                        original_bg, shift_crops, protect_edits=color_protection)
                     if global_lab_shift is not None:
                         _sm_log(f"[Smart Merge] 轻度整图 LAB 前置校正: {global_lab_shift.round(2).tolist()} | "
                               f"global coarse LAB shift")
@@ -835,9 +864,9 @@ class SmartMergeImages:
                     crop_fg = warped_fg[ymin:ymax, xmin:xmax].copy()
                     crop_mask_float = bounds_mask_float[ymin:ymax, xmin:xmax]
                     crop_mask_8u = bounds_mask_8u[ymin:ymax, xmin:xmax]
-                    crop_edit_mask = crop_edit_mask_full[ymin:ymax, xmin:xmax]
-                    # Color Protection 关: 色彩匹配不区分编辑/未编辑像素(普通分块合并全强度校正)
-                    color_edit_mask = crop_edit_mask if color_protection else None
+                    prot_full = color_prot_masks.get(crop_idx)
+                    color_edit_mask = (prot_full[ymin:ymax, xmin:xmax]
+                                       if prot_full is not None else None)
                     if global_lab_shift is not None:
                         crop_fg = _apply_global_lab_shift(
                             crop_fg, global_lab_shift, edit_mask=color_edit_mask,

@@ -1,7 +1,7 @@
 # Smart Merge Images 使用说明
 
 把 AI 改过的局部图片，按正确位置、正确大小放回原图，并把接缝和色差处理干净。
-输入可以是单张，也可以是多块（每块尺寸可以不一样），一次执行输出一张或多张合并图（取决于 merge_mode）。
+输入可以是单张，也可以是多块（每块尺寸可以不一样），一次执行把多块合成一张图。
 
 **类别**：`Element_easy/image`，输出：`Merged_Image`（IMAGE）
 
@@ -15,7 +15,7 @@
     ElementTileSplit 的 grid(可选) ► split_grid  ← 用 TileSplit 拆分时就接上
 
 - **接 `original_crop_A`**：节点知道每块原本在画面的哪里，对位最准，还能做桥接式非刚性校正（TPS 桥接：LoFTR 在 B↔A 找对应点，再经 A→BG 单应性换算到背景坐标）。
-- **接 `split_grid`**：按 tile 的 fade(smoothstep) 渐变 + 圆角 mask 高斯羽化做覆盖式合成，与 ComfyUI-Element_TileEdit 扩展中 TileSplit 的 grid 对应。若 grid 携带 work_w/work_h，原图会先 resize 到该工作画布尺寸再合成。
+- **接 `split_grid`**：alpha / 羽化直接沿用 ComfyUI-Element_TileEdit 中 Element Tile Merge 的分块几何（手绘框位置与 50% 落点、同层锁定带剔除、圆角径向斜坡、贴画布边处理），与 Merge 节点像素级一致；此时 `feather_kernel` 按该节点的 feather 解释（0~100 → 0~1.0，100 为最大值）。若 grid 携带 work_w/work_h，原图会先 resize 到该工作画布尺寸再合成。
 - 都不接也能用：节点会在背景上自动找位置，但复杂画面偶尔会贴歪，此时对位失败的分块会被**跳过**（保留原图，不会硬贴到画面中间）。
 
 **推荐的初始参数**
@@ -27,8 +27,9 @@
 | 二阶段精校 `second_pass` | 关（对齐后仍有轻微局部错位再开|
 | 平滑 `warp_smooth` | 默认 1.0，若局部产生波浪状扭曲，适当提高 |
 | 色彩匹配 `color_match` | `Patch_based_color` |
-| 色相保护 `color_protection` | 关（默认）。开启后编辑区色彩不再被拉向背景，若没有编辑色相，建议关。) |
-| 羽化 `feather_kernel` | 20~40（拼接缝明显时加到 40~60；接 split_grid 时含义见 2.7） |
+| 色相保护 `color_protection` | 关（默认）。开启后编辑区色彩不再被拉向背景；编辑色判定阈值由 `Color_p_threshold`（默认 20）控制 |
+| 色差阈值 `Color_p_threshold` | 20（与旧版一致）；改色越明显越可调大 |
+| 羽化 `feather_kernel` | 20~40（拼接缝明显时加到 40~60）；接 split_grid 时是 0~100 刻度，见 2.8 |
 | `use_gpu` | 开（默认） |
 
 ---
@@ -68,7 +69,7 @@
 
 | 模式 | 作用 | 适合 | 注意 |
 |---|---|---|---|
-| `Patch_based_color` | 先做边界带色差同步，再做分块网格色差同步，逐区域对齐背景色调 | 色差大、不均匀；多块拼接 | 最慢；块尺寸受 `feather_kernel` / `color_protection` 影响（见 2.7） |
+| `Patch_based_color` | 先做边界带色差同步，再做分块网格色差同步，逐区域对齐背景色调 | 色差大、不均匀；多块拼接 | 最慢；块尺寸受 `feather_kernel` / `color_protection` 影响（见 2.8） |
 | `LAB_Mean` | 整块按 LAB 均值 + 稳健标准差（10~90 分位）对齐到背景，再补一层低频 LAB 差场（L/a/b 限幅 24/10/10）修正空间不均匀的色偏 | 色差单一或不均匀、想快速出图 | 内容大改的区域可能被整体冲淡 |
 | `Laplacian Pyramid Blend` | 分块层面平移 L 通道中位亮度 + 低频 L 差场，再多频段融合解决接缝 | 颜色接近，只需亮度匹配和接缝处理 | 分块层面不做 a/b 校正（整图粗校正仍会微调）；层数随羽化 3~5 档 |
 | `SeamlessClone (PS Auto Blend)` | 分块层面先做亮度匹配（中位 + 低频 L 差场），再泊松融合 | 内容基本没变，只想去接缝 | 内容大改区域会褪色/发灰，慎用 |
@@ -78,26 +79,29 @@
 **只影响色彩匹配链**（整图 LAB 粗校正 + 分块精校正），不影响对齐/TPS/光流/羽化。
 - **关（默认）**：色彩匹配不区分编辑/未编辑像素，整块按背景色调统一，编辑区也被拉向背景色，校正最强。
 - **开**：只用未编辑像素估计色差；编辑区保留约 25% 的整图粗校正，逐块局部校色对编辑区完全不施加（0%），未编辑区保持全强度并平滑过渡。AI 改色被完整保留，但编辑区与背景的色差也一并保留。
+- 哪些像素算"编辑色"由下方 `Color_p_threshold` 决定。
 
-### 7. 羽化 `feather_kernel`（默认 20，0~256）
+### 7. 色差阈值 `Color_p_threshold`（默认 20，3~120）
+只在 `color_protection` 开时生效，用来判定哪些像素算"编辑色"：
+- 裁块 B 与编辑前裁块 A / 原图的色差 **小于阈值**：视为未编辑像素，照常参与色差估计与校色；
+- **大于阈值**：判为编辑色，由 `color_protection` 保护；阈值到 3 倍阈值之间平滑过渡。
+- 只影响色彩匹配（整图 LAB 粗校正 + 分块精校正）；对齐/TPS/光流以及合成用的锁边判定仍用默认阈值。
+- 默认 20 与旧版行为完全一致；调小保护范围更大（轻微改色也保留），调大只有明显改色才保护。
+
+### 8. 羽化 `feather_kernel`（默认 20，0~256）
 贴图边缘的柔和过渡宽度，同时会影响色彩校正的尺度：
-- **色相保护关**：`Patch_based_color` 的块尺寸 ≈ `max(32, 2×羽化)`，边界带宽度也取羽化值 → 羽化越大，色彩校正越"粗"、越慢。
-- **色相保护开**：块尺寸改为按裁块短边的 12%（夹在 48~160），不再跟随羽化。
-- **接了 `split_grid`**：羽化按 overlap 比例解释（fade 宽度比例 = 羽化 / overlap，上限 1.0），所以此时有效羽化不会超过 overlap。
-- 调大（30~60）：接缝更柔，是掩盖"生硬断层/错位"最直接的方法。
+- **未接 `split_grid`**：羽化就是像素宽度。`color_protection` 关时 `Patch_based_color` 的块尺寸 ≈ `max(32, 2×羽化)`，边界带宽度也取羽化值；`color_protection` 开时块尺寸改为按裁块短边的 12%（夹在 48~160），不再跟随羽化。
+- **接了 `split_grid`**：alpha / 羽化改用 Element Tile Merge 的 feather 语义，**0~100 对应 0~1.0，100 为最大值**（超过 100 按 1.0）。直边斜坡宽度、圆角径向斜坡、分块 mask 羽化宽度都按该比例展开；色彩匹配的块尺寸仍把该数值当像素用。
+- 调大（未接 grid 时 30~60）：接缝更柔，是掩盖"生硬断层/错位"最直接的方法。
 - 调小：边缘更利落，但会暴露像素级错位切边。
-
-### 8. 合并方式 `merge_mode`（默认 All to One）
-- **All to One**：所有编辑块按顺序贴回**第一张**背景，输出 1 张。
-- **One to One**：背景与编辑块按数量配对（每张背景处理 `裁块数/背景数` 块，整数除法，至少 1 块），输出数量与背景相同；裁块数不能整除背景数时，尾部多余的裁块不会参与合成。
 
 ### 9. `use_gpu` 与 `force_recompute`
 - **`use_gpu`**（默认开）：加速特征匹配（DISK/LoFTR）与色彩匹配的逐像素 LAB 运算（torch；全局色偏估计走 CPU numpy/OpenCV）。OpenCV 步骤（光流、TPS/warp、无缝克隆）仍在 CPU 运行。
-- **`force_recompute`**（默认关）：强制清空对齐缓存从头对齐。对齐缓存容量 4 组（LRU），键包含输入图像指纹、grid 指纹、`Optical_Flow`、`second_pass`、`use_tps`、`merge_mode`；改色彩模式/羽化/`use_gpu` 不会重新对齐。
+- **`force_recompute`**（默认关）：强制清空对齐缓存从头对齐。对齐缓存容量 4 组（LRU），键包含输入图像指纹、grid 指纹、`Optical_Flow`、`second_pass`、`use_tps`；改色彩模式/羽化/`use_gpu` 不会重新对齐。
 
 ### 10. 可选输入 `original_crop_A` / `split_grid`
 - **`original_crop_A`**：与 B 同视角、同内容的编辑前裁块。按索引与 B 配对；数量少于 B 时，多出来的 B 退回自动匹配。提供后对位更稳，并启用桥接式 TPS。
-- **`split_grid`**：ElementTileSplit 输出的 grid。连接后用它的 tile 位置、fade、圆角与 overlap 做覆盖式合成；grid 坐标作为布局锚点与保底，有桥接 A 或可靠特征匹配时仍走 TPS/光流，找不到可靠对应时直接按 grid 坐标放置。色彩匹配顺序与非 grid 模式一致。
+- **`split_grid`**：ElementTileSplit 输出的 grid。连接后用它的 tile 位置、锁定带、圆角与 overlap 做覆盖式合成，alpha/羽化与 Element Tile Merge 像素级一致（`feather_kernel` 随之改为 0~100 刻度）；grid 坐标作为布局锚点与保底，有桥接 A 或可靠特征匹配时仍走 TPS/光流，找不到可靠对应时直接按 grid 坐标放置。色彩匹配顺序与非 grid 模式一致。
 
 ---
 
@@ -105,7 +109,7 @@
 
 | 现象 | 处理方案 |
 |---|---|
-| **边缘有生硬的"硬切边/断层"** | 1. 调大 `feather_kernel` 到 40+ <br>2. 关闭 `color_protection`（开启时编辑区色彩不被校正，色差保留） <br>3. 确认 `Optical_Flow` 已开启，让光流介入。 |
+| **边缘有生硬的"硬切边/断层"** | 1. 调大 `feather_kernel`（未接 split_grid 时 40+；接了则在 0~100 刻度上调高，如 50~80） <br>2. 关闭 `color_protection`（开启时编辑区色彩不被校正，色差保留） <br>3. 确认 `Optical_Flow` 已开启，让光流介入。 |
 | **局部远端（如画面边缘的人脸）未对齐** | TPS 有距离衰减和限幅保护机制，防止画面扯烂。若远端错位严重：<br>1. 必须接上 `original_crop_A` 使用桥接路线。<br>2. 适当降低 `warp_smooth` 允许光流微调。 |
 | **局部变形没修好** | 确保 `use_tps` 开（`Optical_Flow` 与 TPS 无关，关掉它只影响光流）。 |
 | **颜色被冲淡/发灰** | 换 `Patch_based_color`；不要用 `SeamlessClone`。 |
@@ -117,5 +121,5 @@
 - 三个图像端口都支持**单张 / 批量 / 列表**，不需要额外的 "Image List To Image Batch" 节点。
 - 每块编辑图可以尺寸不同，节点按各自原始分辨率处理。
 - `original_crop_A` 数量/尺寸与 B 不必严格一致，按顺序配对。
-- 输出：`All to One` 为 1 张；`One to One` 为与背景数量相同的 batch（尺寸不同时按最大尺寸补零对齐）。
+- 背景只用第一张 `original_image`；所有编辑块按顺序贴回这张背景，一次执行输出 1 张合成图。
 - 无法可靠定位的分块会被跳过，对应区域保留原图内容。

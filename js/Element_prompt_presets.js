@@ -296,6 +296,16 @@ function pickFile(accept) {
     });
 }
 
+async function fileToBase64(file) {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let binary = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+}
+
 function setup(node) {
     const presetWidget = node.widgets?.find((w) => w.name === "presets");
     const promptWidget = node.widgets?.find((w) => w.name === "entry");
@@ -427,15 +437,19 @@ function setup(node) {
     }
 
     async function loadPresetFile() {
-        const file = await pickFile(".json,application/json");
+        const file = await pickFile(".json,.xlsx,.csv");
         if (!file) return;
-        let payload;
-        try {
-            payload = JSON.parse(await file.text());
-        } catch {
-            throw new Error(`不是有效的 JSON 文件：${file.name}`);
+        const body = { name: file.name };
+        if (file.name.toLowerCase().endsWith(".json")) {
+            try {
+                body.data = JSON.parse(await file.text());
+            } catch {
+                throw new Error(`不是有效的 JSON 文件：${file.name}`);
+            }
+        } else {
+            body.file = await fileToBase64(file);
         }
-        const data = await ppPost("/load_preset", { name: file.name, data: payload });
+        const data = await ppPost("/load_preset", body);
         const renamed = Object.entries(data.renamed || {})
             .map(([from, to]) => `${from} → ${to}`)
             .join("\n");

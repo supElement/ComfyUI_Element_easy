@@ -99,36 +99,107 @@ class _MergeProgress:
 HF_MODEL_REPO = "https://huggingface.co/cglearned/Smart_merge_images/resolve/main"
 
 MODEL_FILES = {
-    "depth-save.pth":                "depth-save.pth",                # DISK 关键点权重
-    "disk_lightglue_v0-1_arxiv-pth": "disk_lightglue_v0-1_arxiv-pth", # LightGlue-DISK 权重
-    "loftr_outdoor.ckpt":            "loftr_outdoor.ckpt",            # LoFTR 半稠密匹配
+    # cache_name: (hf_name, sha256)
+    "depth-save.pth":                ("depth-save.pth", "9c2ee4ded238892dfa51569941372601e35e4a74aa6f84ea80053d2ab1c07abe"),                # DISK 关键点权重
+    "disk_lightglue_v0-1_arxiv-pth": ("disk_lightglue_v0-1_arxiv-pth", "b5b21d47ea24f2c5e501aec9c91b9716e4c8c3429a4dc1e615c133c4c9378335"), # LightGlue-DISK 权重
+    "loftr_outdoor.ckpt":            ("loftr_outdoor.ckpt", "21f5bec5968178e8bc8b7633441836fe5de4f47d861dd2cd7dc38e271b0479ec"),            # LoFTR 半稠密匹配
 }
 
-_failed_once = set()  
+_failed_once = set()
+_verified_files = {}
+_hub_dir_ready = False
+
+
+def ensure_hub_dir():
+    """首次执行节点时重定向 torch.hub 目录; 进程级设置, 不在导入时生效。"""
+    global _hub_dir_ready
+    if _hub_dir_ready:
+        return
+    try:
+        import folder_paths
+        hub_dir = os.path.join(folder_paths.models_dir, "elementEasy")
+    except Exception:
+        hub_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "models")
+    try:
+        os.makedirs(hub_dir, exist_ok=True)
+        torch.hub.set_dir(hub_dir)
+        _hub_dir_ready = True
+        print(f"[Smart Merge] 模型下载和缓存目录: {hub_dir} | model/cache dir: {hub_dir}")
+    except Exception as e:
+        print(f"[Smart Merge] 设置模型目录失败: {e} | failed to set model/cache dir")
+
+
+def _sha256_of(path):
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _file_matches(path, expected_sha256):
+    try:
+        st = os.stat(path)
+    except OSError:
+        return False
+    key = (st.st_size, st.st_mtime_ns)
+    if _verified_files.get(path) == key:
+        return True
+    try:
+        ok = _sha256_of(path) == expected_sha256
+    except Exception:
+        return False
+    if ok:
+        _verified_files[path] = key
+    return ok
+
 
 def ensure_model_files():
-    """文件已存在 → 跳过(本地命中, 零请求); 缺失 → 从 HF 下载到 kornia 的缓存名。"""
+    """文件已存在 → SHA256 校验通过则跳过; 缺失或校验失败 → 从 HF 下载并校验。"""
+    import shutil
     import urllib.request
+    ensure_hub_dir()
     ckpt_dir = os.path.join(torch.hub.get_dir(), "checkpoints")
     os.makedirs(ckpt_dir, exist_ok=True)
-    for cache_name, hf_name in MODEL_FILES.items():
+    for cache_name, (hf_name, sha256) in MODEL_FILES.items():
         dst = os.path.join(ckpt_dir, cache_name)
-        if os.path.exists(dst) and os.path.getsize(dst) > 1_000_000:  # >1MB 防半截文件
+        if _file_matches(dst, sha256):
             continue
+        if os.path.exists(dst):
+            bad = dst + ".bad"
+            try:
+                os.replace(dst, bad)
+                print(f"[Smart Merge] ⚠ {cache_name} SHA256 校验失败, 已移至 {os.path.basename(bad)} | checksum mismatch, quarantined")
+            except Exception:
+                try:
+                    os.remove(dst)
+                except Exception:
+                    pass
         if cache_name in _failed_once:
-            continue  
+            continue
         url = f"{HF_MODEL_REPO}/{hf_name}"
         tmp = dst + ".download"
         try:
             print(f"[Smart Merge] ⬇ 下载 {hf_name} ← HuggingFace | downloading model")
-            urllib.request.urlretrieve(url, tmp)
+            with urllib.request.urlopen(url, timeout=60) as resp, open(tmp, "wb") as out:
+                shutil.copyfileobj(resp, out, 1 << 20)
+            got = _sha256_of(tmp)
+            if got != sha256:
+                raise ValueError(f"SHA256 mismatch: {got} != {sha256}")
             os.replace(tmp, dst)
+            try:
+                st = os.stat(dst)
+                _verified_files[dst] = (st.st_size, st.st_mtime_ns)
+            except OSError:
+                pass
             print(f"[Smart Merge] ✅ {cache_name} 已就位 | model ready")
         except Exception as e:
             _failed_once.add(cache_name)
             print(f"[Smart Merge] ❌ {hf_name} 下载失败: {e}\n"
                   f"    请手动下载: {url}\n"
                   f"    放置到:     {dst}\n"
+                  f"    期望 SHA256: {sha256}\n"
                   f"    (本会话不再重试)")
         finally:
             if os.path.exists(tmp):

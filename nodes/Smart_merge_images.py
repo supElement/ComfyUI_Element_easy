@@ -14,6 +14,7 @@ from ..element_easy.sm_common import (
     _LRUCache,
     _GridCompositor,
     _sm_pick_device,
+    ensure_hub_dir,
     set_active_progress, set_log_hook,
 )
 from ..element_easy.sm_color_sync import (
@@ -42,18 +43,6 @@ try:
 except ImportError:
     PromptServer = None
     HAS_PROMPT_SERVER = False
-
-try:
-    import folder_paths
-    models_dir = folder_paths.models_dir
-    element_easy_dir = os.path.join(models_dir, "elementEasy")
-    os.makedirs(element_easy_dir, exist_ok=True)
-    torch.hub.set_dir(element_easy_dir)
-    print(f"[Smart Merge] 成功将模型下载和缓存目录重定向至: {element_easy_dir} | Redirected model/cache dir to: {element_easy_dir}")
-except Exception:
-    element_easy_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "models")
-    os.makedirs(element_easy_dir, exist_ok=True)
-    torch.hub.set_dir(element_easy_dir)
 
 GRID_TYPE = "ELEMENT_TILE_GRID"
 
@@ -479,6 +468,8 @@ class SmartMergeImages:
                     color_protection=False, Color_p_threshold=20.0, use_tps=True, warp_smooth=1.0,
                     use_gpu=False, force_recompute=False,
                     original_crop_A=None, split_grid=None, unique_id=None, prompt=None, extra_pnginfo=None):
+
+        ensure_hub_dir()
 
         # INPUT_IS_LIST 模式下, 所有输入(含控件/隐藏参数)都可能以 list 形式到达 → 解包为标量
         warp_method = self._unwrap_scalar(Optical_Flow, False)

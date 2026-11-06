@@ -1,6 +1,9 @@
 # Element_prompt_presets.py
 # 自包含的提示词库节点：presets = 分类，prompt = 词条。
 # 数据文件：ComfyUI/user/element_easy/promptPresets/prompts.json
+import base64
+import csv
+import io
 import json
 import locale
 import os
@@ -9,6 +12,8 @@ import sys
 import threading
 import time
 import warnings
+import xml.etree.ElementTree as ET
+import zipfile
 
 from aiohttp import web
 import folder_paths
@@ -147,6 +152,166 @@ def _parse_preset(data, fallback_name):
         raise ValueError("预设中没有有效词条")
 
     raise ValueError("预设结构无法识别（不能混合分类和文本）")
+
+
+def _local_tag(tag):
+    return tag.rsplit("}", 1)[-1]
+
+
+def _xml_text(node):
+    return "".join(t.text or "" for t in node.iter() if _local_tag(t.tag) == "t")
+
+
+def _col_index(ref):
+    match = re.match(r"([A-Z]+)", str(ref or "").upper())
+    if not match:
+        return None
+    index = 0
+    for ch in match.group(1):
+        index = index * 26 + (ord(ch) - 64)
+    return index - 1
+
+
+def _xlsx_shared_strings(zf):
+    try:
+        root = ET.fromstring(zf.read("xl/sharedStrings.xml"))
+    except KeyError:
+        return []
+    return [_xml_text(si) for si in root if _local_tag(si.tag) == "si"]
+
+
+def _xlsx_sheet_paths(zf):
+    paths = [n for n in zf.namelist() if re.match(r"xl/worksheets/sheet\d+\.xml$", n)]
+    paths.sort(key=lambda n: int(re.search(r"sheet(\d+)\.xml$", n).group(1)))
+    return paths
+
+
+def _xlsx_sheet_rows(zf, path, shared):
+    rows = []
+    for row in ET.fromstring(zf.read(path)).iter():
+        if _local_tag(row.tag) != "row":
+            continue
+        cells = {}
+        for cell in row:
+            if _local_tag(cell.tag) != "c":
+                continue
+            index = _col_index(cell.get("r"))
+            if index is None:
+                index = len(cells)
+            kind = cell.get("t")
+            if kind == "inlineStr":
+                value = _xml_text(cell)
+            else:
+                node = next((c for c in cell if _local_tag(c.tag) == "v"), None)
+                value = "" if node is None or node.text is None else node.text
+                if kind == "s":
+                    try:
+                        value = shared[int(value)]
+                    except (ValueError, IndexError):
+                        value = ""
+            cells[index] = value
+        if cells:
+            rows.append([cells.get(i, "") for i in range(max(cells) + 1)])
+    return rows
+
+
+def _read_xlsx(raw):
+    with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+        shared = _xlsx_shared_strings(zf)
+        return [_xlsx_sheet_rows(zf, path, shared) for path in _xlsx_sheet_paths(zf)]
+
+
+def _read_csv(raw):
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        text = raw.decode("utf-16", errors="replace")
+    else:
+        for encoding in ("utf-8-sig", "gb18030"):
+            try:
+                text = raw.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            text = raw.decode("utf-8", errors="replace")
+    try:
+        dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t")
+        return [row for row in csv.reader(io.StringIO(text), dialect)]
+    except csv.Error:
+        return [row for row in csv.reader(io.StringIO(text))]
+
+
+def _first_filled(cells):
+    return next((i for i, c in enumerate(cells) if c), -1)
+
+
+def _table_rows_to_db(rows, fallback, db):
+    table = []
+    for row in rows:
+        cells = [str(c if c is not None else "").strip() for c in row]
+        while cells and not cells[-1]:
+            cells.pop()
+        if sum(1 for c in cells if c) < 2:
+            continue
+        table.append(cells)
+    if not table:
+        return
+
+    # 以内容最多的一行定位表格起始列，整列空白的列在此去掉
+    anchor = max(table, key=lambda cells: (sum(1 for c in cells if c), _first_filled(cells)))
+    start = _first_filled(anchor)
+    aligned = [cells for cells in table if _first_filled(cells) >= start] or table
+    width = max(len(cells) for cells in aligned)
+    used = [i for i in range(start, width) if any(i < len(cells) and cells[i] for cells in aligned)]
+    if not used:
+        return
+
+    two_col = len(used) <= 2
+    preset = ""
+    for cells in table:
+        if _first_filled(cells) < start:
+            cells = cells[_first_filled(cells):]
+        else:
+            cells = [cells[i] if i < len(cells) else "" for i in used]
+        cells = cells + ["", "", ""]
+        if two_col:
+            name, text, category = cells[0], "\n".join(c for c in cells[1:] if c), fallback
+        else:
+            name = cells[1]
+            text = "\n".join(c for c in cells[2:] if c)
+            if not name:
+                continue
+            if cells[0]:
+                preset = cells[0]
+            category = preset or fallback
+        if not name:
+            continue
+        prompts = db.setdefault(category, {})
+        final = name
+        index = 2
+        while final in prompts:
+            final = f"{name} ({index})"
+            index += 1
+        prompts[final] = text
+
+
+def _parse_table(raw, filename, fallback):
+    ext = os.path.splitext(filename)[1].lower()
+    if ext in (".xlsx", ".xlsm"):
+        try:
+            sheets = _read_xlsx(raw)
+        except (zipfile.BadZipFile, ET.ParseError):
+            raise ValueError("无法读取该表格：旧版 .xls 请先另存为 .xlsx，或文件已损坏")
+    elif ext == ".csv":
+        sheets = [_read_csv(raw)]
+    else:
+        raise ValueError("表格文件只支持 .xlsx / .csv")
+    db = {}
+    for rows in sheets:
+        _table_rows_to_db(rows, fallback, db)
+    db = {preset: prompts for preset, prompts in db.items() if prompts}
+    if not db:
+        raise ValueError("表格中没有有效词条（需要「分类 / 词条 / 文本」三列）")
+    return db
 
 
 def _single_line(text, seed):
@@ -377,11 +542,18 @@ async def eepp_delete_prompt(request):
 async def eepp_load_preset(request):
     req = await request.json()
     try:
-        if "data" not in req:
-            raise ValueError("预设内容为空")
         filename = os.path.basename(str(req.get("name") or ""))
         fallback = _safe_filename(os.path.splitext(filename)[0], fallback="preset")
-        incoming = _parse_preset(req["data"], fallback)
+        if "data" in req:
+            incoming = _parse_preset(req["data"], fallback)
+        elif req.get("file"):
+            try:
+                raw = base64.b64decode(str(req["file"]))
+            except Exception:
+                raise ValueError("文件内容无法解码")
+            incoming = _parse_table(raw, filename, fallback)
+        else:
+            raise ValueError("预设内容为空")
     except Exception as e:
         return _error(str(e))
 

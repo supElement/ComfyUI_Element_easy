@@ -20,7 +20,7 @@ Presets are stored in `ComfyUI/user/element_easy/promptPresets/prompts.json`.
 
 | Icon | Name | Action |
 |---|---|---|
-| Open folder | Load file | Import any `.json` from any location; duplicate category names become `name (2)` |
+| Open folder | Load file | Import `.json` / `.xlsx` / `.csv`; duplicate category names become `name (2)` |
 | + | New entry | Create an entry under the given category and store the current text |
 | Floppy | Save entry | Save the current text into the selected category / entry |
 | Trash | Delete entry | Delete the current entry (if it is the last one, the category is removed too) |
@@ -42,7 +42,9 @@ With `single_line` on, one line is picked from the text box:
 | decrement | Seed −1 after each run, walking up the lines |
 | random | A new random seed before each run, uniformly random line |
 
-## 4. JSON format for import
+## 4. Importing files
+
+### 4.1 JSON
 
 ```json
 {
@@ -60,3 +62,23 @@ Also supported:
 
 - Single-category file: `{"entry name": "text", ...}` — imported under the file name;
 - Wrapped form: `{"presets": { ... }}` or `{"categories": { ... }}`.
+
+### 4.2 Tables (.xlsx / .csv)
+
+Read as three columns: **category | entry | text**. Example:
+
+| category | entry | text |
+|---|---|---|
+| human scene | mountain top | First prompt text ... |
+|  | plateau | Another prompt text ... |
+|  | bedroom | ... |
+| scene 2 | mountain top | ... |
+
+- No header detection: a header row is imported like any other row (delete it afterwards if unwanted);
+- Empty columns on the left and columns that are blank everywhere are ignored; rows with only one filled cell (e.g. a title) are skipped;
+- When the category cell is merged or only filled on the first row, rows below reuse the category above;
+- Fully empty rows are skipped; duplicate entry names inside one category become `name (2)`;
+- With only two columns (entry | text), everything goes into a category named after the file;
+- The text column may contain multiple lines; all worksheets in the workbook are read;
+- Save from WPS / Excel as `.xlsx`; for Google Sheets use "File → Download → Microsoft Excel / CSV";
+- Old `.xls` files must be saved as `.xlsx` first.

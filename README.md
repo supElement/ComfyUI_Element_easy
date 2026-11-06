@@ -177,7 +177,7 @@
 <a id="smart-merge-images"></a>
 ## Smart merge images
 
-<sub>v1.4.3 新增 · v1.4.8 优化 · v1.7.2 优化</sub>
+<sub>v1.4.3 新增 · v1.8.2 修复：首次运行时设置 torch.hub 目录 </sub>
 
 详细说明：[中文](subMd/SmartMergeImages_zh.md) | [English](subMd/SmartMergeImages_en.md)</sub>
 

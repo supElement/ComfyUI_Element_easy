@@ -325,7 +325,7 @@ mask 描边：内外描边宽度和模糊度单独控制，支持非描边区域
 
 详细说明：[中文](subMd/Element_prompt_presets_zh.md) | [English](subMd/Element_prompt_presets_en.md)</sub>
 
-- 提示词管理节点：按「分类 → 词条」点选提示词，直接在节点上编辑、新建、删除，并可导出 JSON 备份，支持导入 .json / .xlsx / .csv 格式文件。
+- 提示词管理节点：按「分类 → 词条」点选提示词，直接在节点上编辑、新建、删除，并可导出 JSON 备份，支持导入 json、xlsx、csv 格式文件。
 - 整段/单行两种输出；开启 single_line 后按 seed 从整段文本中抽取一行，配合固定/增量/减量/随机四种 seed 模式，可随队列自动轮换不同句子。
 - 预设存储位置 ComfyUI\user\element_easy\promptPresets\prompts.json。
 

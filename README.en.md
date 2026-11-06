@@ -12,36 +12,36 @@ A ComfyUI extension primarily focused on **visual interface and convenient inter
 ## What You Can Get
 
 **🎬 Video Editing (Element Load and Edit Video)**
-Edit videos directly on the node without leaving ComfyUI: automatically detects scene cut points, or manually cut, shorten, reorder, preview while editing, and output both video and audio directly after editing.
+Edit videos directly on the node without leaving ComfyUI: automatically detects scene cut points, can also be manually cut, trimmed, and reordered, previewing as you edit, and outputs both visuals and audio directly after editing.
 
 **🗂 Multi Reference Material Panel (Element Multi REF)**
-Material panel for video models (MiniMax-H3, LTXV, Wan, etc.) that require "reference images + start/end frames + reference video + audio" input. Each material can be cropped, annotated with brushes, and trimmed by time segment, and can be saved as presets—combined with the queue, it can run multiple sets of materials and prompts at once without switching images back and forth.
+Material panel for video models (MiniMax-H3, LTXV, Wan, etc.) that require "reference images + start/end frames + reference video + audio" input. Each material can be cropped, annotated with brushes, and trimmed by time segments, and can be saved as presets—paired with a queue, it can run multiple sets of materials and prompts at once without switching images back and forth.
 
-**🎛 Curves Color Adjustment (HueSat / HueBright / HueHue / ImageCurve)**
-Adjust colors like in photo editing software with curves, draw the curve directly on the image, drag it, and see the effect immediately, the same real-time preview for videos.
+**🎛 Curve Color Adjustment (HueSat / HueBright / HueHue / ImageCurve)**
+Adjust colors like in photo editing software with curves, drawing the curve directly on the image, seeing the effect immediately by dragging, and the same real-time preview for videos.
 
-**📐 Custom Sampling Curves (Element_SigmaGraph)**
+**📐 Custom Sampling Curve (Element_SigmaGraph)**
 Draw the sigma curve of the sampler by hand, especially convenient when you want fewer steps in the beginning and more details in the end.
 
-**🧩 There are also more than 20 practical small nodes**
+**🧩 There are over 20 practical small nodes**
 Image smart merge, mask stroke, image edge blur, frame count calculation, etc.
 
 ## Disadvantages to Note
 
-- **It takes some time to get started**: The panel-style nodes have many functions, and the first time you open them, you might have the moment "What does this button do?", it is recommended to use it together with the detailed documentation of each node;
-- **Some functions depend on external programs**: Video export with audio requires the system to have ffmpeg installed, automatic scene detection suggests installing scenedetect, you can still use it without installation, but the corresponding functions will be limited;
+- **Requires some time to get started**: The panel-style nodes have many functions, and the first time you open them, you might wonder "what does this button do?", it is recommended to use the detailed documentation of each node;
+- **Some functions depend on external programs**: Video export with audio requires the system to have ffmpeg installed, automatic scene detection suggests installing scenedetect, and without them, the corresponding functions are just limited;
 - **Compatibility depends on a newer version of ComfyUI** (Multi REF uses a new node API), older versions of ComfyUI may not be installable;
-- **The nodes are many but independent**: If you only need one or two functions, this package might be too large for you.
+- **Nodes are numerous but independent**: If you only need one or two functions, this package might be too large for you.
 
 ## 📦 Node Navigation
 
 **🎬 Video and Material Management**
 
-- [Element Multi REF](#element-multi-ref) (including auxiliary node Element ref convert)
-- [Element Load and Edit Video](#element-load-and-edit-video) (including auxiliary nodes Element Video Clip / Element Video Info)
-- [Minimax_H3-LatentUpscaler](#minimax_h3-latentupscaler) (including Adv version)
+- [Element Multi REF](#element-multi-ref) (includes auxiliary node Element ref convert)
+- [Element Load and Edit Video](#element-load-and-edit-video) (includes auxiliary nodes Element Video Clip / Element Video Info)
+- [Minimax_H3-LatentUpscaler](#minimax_h3-latentupscaler) (includes Advanced version)
 
-**🎛 Curves Color Adjustment**
+**🎛 Curve Color Adjustment**
 
 - [Element ImageCurve](#element-imagecurve) · [Element HueSat](#element-huesat) · [Element HueBright](#element-huebright) · [Element HueHue](#element-huehue)
 
@@ -53,14 +53,14 @@ Image smart merge, mask stroke, image edge blur, frame count calculation, etc.
 
 - [Element_SigmaGraph](#element_sigmagraph) · [chessboard](#chessboard) · [empty_image_rgb](#empty_image_rgb)
 
-**🔧 Numerical and Text Tools**
+**🔧 Numerical and Textual Tools**
 
 - [Element_ListGraph](#Element_ListGraph) · [Frame Calculator](#frame-calculator) · [ImageSize Div](#imagesize-div) · [Element_Prompt_Presets](#Element_Prompt_Presets) · [random_chars](#random_chars) · [text_line_break](#text_line_break)
 
 ---
 ## Bug Fixes and Optimizations
 
-- Now the mouse pointer can be normally dragged and scaled on the visual interaction nodes when hovering over them, except for the thumbnail preview interface of the loadimage_preview node and the timeline window of the Element Load and Edit Video node when selected.
+- Now, when the mouse pointer is over a visual interaction node, the ComfyUI canvas can be normally dragged and scaled, except for the thumbnail preview interface of the loadimage_preview node and the timeline window of the Element Load and Edit Video node when selected.
 
 ---
 <a id="element-multi-ref"></a>
@@ -74,10 +74,10 @@ A material and prompt management solution designed for video/image models like M
 
 - 21 typed slots: reference images ×9, reference videos ×3, as well as start/end frames, various audio, and Prompt cards;
 - Each card has an independent simple image editor (crop, brush annotation) and audio/video timeline editor (quantized alignment according to rules like 17n+5, 8n+1, etc.);
-- The bottom bar on the left side of the panel has 4 area switch icons (reference images, start/end frames, audio/video, Prompt), which can be freely combined to meet different needs, and can even be used as a prompt preset node;
-- Supports the storage, call, load, export, and categorization of multiple presets, as well as collecting all references and prompts;
-- `run_preset_NUM` parameter corresponds to the index in the preset list, receives input that changes with the prompt queue when paired with sampling inference nodes to achieve continuous generation or editing of multiple images/videos;
-⚠️ Note: If a preset is loaded, `run_preset_NUM` parameter will automatically become the preset's index, and if you modify the reference area's content without saving/renaming the preset, the output result will be the one before the modification, which is normal behavior; if you don't want to save the preset and want to output the modified content on the current interface, you can now click once `reset` button (set `run_preset_NUM` parameter to 0).
+- The bottom bar on the left side of the panel has 4 area switch icons (reference images, start/end frames, audio/video, Prompt), which can freely combine the panel to meet different needs, and can even be used as a prompt preset node;
+- Supports the storage, call, load, and export of multiple presets, as well as the categorization of all references and prompts;
+- `run_preset_NUM` parameter corresponds to the index in the preset list, receives input that changes with the prompt queue, and paired with sampling inference nodes, it can achieve continuous generation or editing of multiple images/videos;
+⚠️ Note: If a preset is loaded, `run_preset_NUM` parameter will automatically become the preset's index, and if you modify the reference area's content without saving/renaming the preset, the output result will be the one before the modification, which is normal behavior; if you don't want to save the preset and want to output the modified content of the current interface, you can now click once `reset` button (set `run_preset_NUM` parameter to 0).
 - If reference materials used in presets are deleted, you can now use the relink button to specify a directory to reconnect (the directory must contain files with the same names).
 - The auxiliary node **Element ref convert** is used for the format conversion of reference data.
 
@@ -87,10 +87,10 @@ A material and prompt management solution designed for video/image models like M
 
 A script may have dozens or even hundreds of shots. Each shot's prompt, reference image, reference video, start/end frames, are all saved as presets.
 
-Combined with sampling nodes, run all segments with one click. Want to change? Change it, satisfied? Save the preset—no need to load workflows back and forth, or manually switch materials and prompts in individual nodes.
+Paired with sampling nodes, run all segments with one click. Want to change? Change it, satisfied? Save the preset—no need to load workflows back and forth, or manually switch materials and prompts in individual nodes.
 
-- Before: Change a shot → Switch image → Change prompt → Run → Change the next one → Repeat dozens of times. If reference images or audio/video need micro-adjustments, you have to open PS or editing software.
-- Now: All presets are arranged → Run with one click → Not satisfied? Change the preset → Run again. Micro-adjustments of reference images or audio/video are completed directly on the node, no need to switch software.
+- Before: Change a shot → Switch image → Change prompt → Run → Change the next → Repeat dozens of times. If reference images or audio/video need micro-adjustments, you have to open PS or editing software.
+- Now: All presets arranged → Run with one click → Not satisfied? Change the preset → Run again. Micro-adjustments of reference images or audio/video are completed directly on the node, without switching software.
 
 ---
 
@@ -183,11 +183,11 @@ Detailed Description: [Chinese](subMd/SmartMergeImages_zh.md) | [English](subMd/
 🎬 Core Scenario: Eliminate distortion and color differences caused by block-upscaling images through AI image generation models
 
 When splitting an image into multiple blocks, or when a part of the image is given to an AI image generation model for resampling/editing/upscaling and then reassembled, there are often color differences and distortions at the seams, and the direct merge effect may be poor.
-This node uses common features of two images for intelligent alignment, smoothly reassembling the block-upscaled results back into the original image.
+This node uses common features of two images for intelligent alignment, smoothly reassembling the results of block-upscaling back into the original image.
 
 Download [model files](https://huggingface.co/cglearned/Smart_merge_images/tree/main), default to automatic download.
 
-Manual download: depth-save.pth / disk_lightglue_v0-1_arxiv-pth / loftr_outdoor.ckpt
+Manual Download: depth-save.pth / disk_lightglue_v0-1_arxiv-pth / loftr_outdoor.ckpt
 To \ComfyUI\models\elementEasy\checkpoints
 
 <img width="1949" height="1171" alt="68700067" src="https://github.com/user-attachments/assets/3682af85-9d8a-4936-9653-429e760907de" />
@@ -199,7 +199,7 @@ To \ComfyUI\models\elementEasy\checkpoints
 
 <sub>v1.1.3 New Addition</sub>
 
-Black and white partition style conversion node, used to suppress pixel offset issues after style conversion in qwenEdit style conversion: first convert the style of the mask area, then convert the invert mask area; try to make the black and white area sizes average to reduce the problem of inconsistent tones.
+Black and White partition style conversion node, used to suppress pixel offset issues after style conversion in qwenEdit style conversion: first convert the style of the mask area, then convert the invert mask area; try to make the black and white area sizes average to reduce the problem of inconsistent tones.
 
 The mask at the input port will perform an ADD operation with the mask generated by the node.
 
@@ -240,11 +240,11 @@ When enlarging images with image editing models (klein, QwenImage2.1, Qwen-Edit,
 This node turns enlargement into direct operations on the canvas: drag, scale, align, what you see is what you get, while also outputting the corresponding mask.
 
 - No need to guess parameters for enlargement: directly drag the original image position on the canvas, scale proportionally, and use the 3x3 grid buttons for one-click alignment (center, corners, edges)
-- Edges look natural: the edges of the original image can be individually specified for feathering, allowing the original image and the extended area to transition smoothly
-- Added content is controllable: the background can be customized with color, pad mode supports constant / reflect / edge / stretch
-- Dimensions are automatically valid: retains target_width / target_height, adds div parameter to assist alignment to valid resolutions
-- Directly outputs mask: automatically generates a mask after enlargement, marking which part is the original and which part is added, making it convenient for subsequent editing model local redrawing
-
+- No edge artifacts: the edges of the original image can be individually specified for feathering, allowing the original and extended areas to transition smoothly
+- Control over the content added: the background can be customized with color, pad mode supports constant / reflect / edge / stretch
+- Automatic size legality: retains target_width / target_height, adds div parameter to assist alignment to legal resolutions
+- Direct mask output: automatically generates a mask after enlargement, marking which part is the original and which part is added, convenient for subsequent editing model local redraw
+  
 Detailed explanation: [Chinese](subMd/image_pad_blur_zh.md) | [English](subMd/image_pad_blur_en.md)</sub>
 
 <img width="1510" height="855" alt="image" src="https://github.com/user-attachments/assets/e436ca37-d37e-4947-8b13-7a00c9721e7a" />
@@ -258,7 +258,7 @@ Detailed explanation: [Chinese](subMd/image_pad_blur_zh.md) | [English](subMd/im
 
 Directly draw custom sigma curves on the node: click to add points, right-click to delete points.
 
-**P button**: Rearranges the x coordinates of control points — when the number of points is less than steps+1, the first n-1 points' x values are rearranged to 0, 1/steps, ..., (n-2)/steps, y values remain unchanged, and the last point is kept as is; when the number of points is at least steps+1, take the first steps+1 points evenly distributed. Simply put: **without changing the step size of the front part, add sampling steps to the latter part (increase details)**.
+**P button**: Rearrange the x coordinates of control points — when the number of points is less than steps+1, the first n-1 points' x values are rearranged to 0, 1/steps, ..., (n-2)/steps, y remains unchanged, and the last point is kept as is; when the number of points is at least steps+1, take the first steps+1 points evenly distributed. Simply put: **without changing the step count and step size in advance, add sampling steps to the latter part (increase details)**.
 
 <img width="1176" height="794" alt="Element_SigmaGraph" src="https://github.com/user-attachments/assets/a8741609-cbe7-4ec8-a88d-5cae79b031a8" />
 
@@ -280,7 +280,7 @@ Create a black and white checkerboard image.
 
 <sub>v0.0.6 added · v1.6.1 optimized</sub>
 
-Create a monochrome image, color selected from the color wheel, brightness slider controls brightness; the eyedropper can pick color from any position on the screen, if the browser is not Chrome / Edge 96+, the eyedropper may be unusable, can switch to the color palette button next to it.
+Create a monochrome image, color selected from the color wheel, brightness slider controls brightness; the eyedropper can pick color from any position on the screen, but if the browser is not Chrome / Edge 96+, the eyedropper may be unusable, and the eyedropper button in the adjacent color palette can be used instead.
 
 <img width="1329" height="904" alt="image" src="https://github.com/user-attachments/assets/9dd2957b-e261-40ce-8041-87a83df33880" />
 
@@ -300,7 +300,7 @@ Similar to Element_SigmaGraph, the y values of points on the curve are no longer
 
 <sub>v1.2.2 added, v1.5.9 optimized </sub>
 
-Frame count calculation node, provides minimax H3, ltx2, wan valid presets, can be customized with div_by and offset.
+Frame count calculation node, provides minimax H3, ltx2, wan legal presets, can be customized with div_by and offset.
 
 <img width="1154" height="655" alt="image" src="https://github.com/user-attachments/assets/9a99acc7-96b3-43e8-a3c7-1b4fd2ab93f4" />
 
@@ -320,13 +320,13 @@ Size alignment calculation.
 <a id="Element_Prompt_Presets"></a>
 ## Element_Prompt_Presets
 
-<sub>Added in v1.7.9</sub>
+<sub>v1.7.9 New Addition · v1.8.0 Enhanced </sub>
 
-Detailed description: [Chinese](subMd/Element_prompt_presets_zh.md) | [English](subMd/Element_prompt_presets_en.md)</sub>
+Detailed Description: [Chinese](subMd/Element_prompt_presets_zh.md) | [English](subMd/Element_prompt_presets_en.md)</sub>
 
-- Prompt management node: Select prompts by "Category → Term", edit, create, or delete directly on the node, and can import/export JSON backups.
-- Two output modes: full paragraph / single line; when single_line is enabled, it extracts one line from the full text based on the seed, combined with four seed modes (fixed / incremental / decremental / random), can automatically rotate different sentences with the queue.
-- Preset storage location: ComfyUI\user\element_easy\promptPresets\prompts.json.
+- Prompt Management Node: Select prompts by "Category → Term", edit, create, or delete directly on the node, and can export JSON backup, supporting import of json, xlsx, csv format files.
+- Two output modes: Whole paragraph / Single line; when single_line is enabled, it extracts one line from the entire text based on the seed, combined with fixed / incremental / decremental / random four seed modes, can automatically rotate different sentences with the queue.
+- Preset storage location ComfyUI\user\element_easy\promptPresets\prompts.json.
 
 <img width="1535" height="514" alt="image" src="https://github.com/user-attachments/assets/89d9aa52-131e-48f5-beea-0ab27e76e858" />
 
@@ -334,18 +334,18 @@ Detailed description: [Chinese](subMd/Element_prompt_presets_zh.md) | [English](
 <a id="random_chars"></a>
 ## random_chars
 
-<sub>v0.0.6 (Random Chars Append)</sub>
+<sub>v0.0.6（Random Chars Append）</sub>
 
-Appends invalid special characters to the input text (characters and count can be customized).
+Append invalid special characters to the input text (characters and numbers can be customized).
 
 ---
 
 <a id="text_line_break"></a>
 ## text_line_break
 
-<sub>v0.0.6, v1.5.9 optimized</sub>
+<sub>v0.0.6, v1.5.9 Optimized</sub>
 
-Wraps the input text by character count, supports punctuation avoidance at the beginning and end, punctuation squashing and hanging. The final effect depends on the output carrier.
+Wrap the input text by character count, supporting punctuation avoidance at the beginning and end, punctuation squashing and hanging. The final effect depends on the output carrier.
 
 <img width="1693" height="981" alt="image" src="https://github.com/user-attachments/assets/62b3f66a-6cec-4d10-904a-5a33a102ba92" />
 
@@ -359,14 +359,14 @@ Search for **ComfyUI_Element_easy** in ComfyUI Manager and then Install.
 
 ### Manual Installation
 
-Enter the `./ComfyUI/custom_nodes` directory and run:
+Enter `./ComfyUI/custom_nodes` directory and run:
 
     git clone https://github.com/supElement/ComfyUI_Element_easy.git
     cd ComfyUI_Element_easy
     pip install -r requirements.txt
-### Optional dependency: ffmpeg
+### Optional Dependency: ffmpeg
 
-The **video export (with audio)** feature of the node requires the system to have ffmpeg installed. Windows users download from [ffmpeg](https://www.gyan.dev/ffmpeg/builds/), extract it, and add the bin directory to PATH.
+The **Video Export (with Audio)** feature of the node requires the system to install ffmpeg. Windows users download from [ffmpeg](https://www.gyan.dev/ffmpeg/builds/), extract it, and add the bin directory to PATH.
 
 All other features work normally when ffmpeg is not installed, only video export is silent video.
 
@@ -374,7 +374,7 @@ All other features work normally when ffmpeg is not installed, only video export
 
 ⚠️ The model files for the smart_merge node have been permanently removed from the Git history of this repository (git pull / reinstalling the plugin will not restore them), and are now downloaded from HuggingFace.
 
-📦 [Model files](https://huggingface.co/cglearned/Smart_merge_images/tree/main)
+📦 [Model Files](https://huggingface.co/cglearned/Smart_merge_images/tree/main)
 
 ✅ When running the smart_merge node for the first time, if the model is detected as missing, it will be automatically downloaded to:
     ComfyUI/models/elementEasy/checkpoints/
@@ -384,7 +384,7 @@ All other features work normally when ffmpeg is not installed, only video export
     - disk_lightglue_v0-1_arxiv-pth
     - loftr_outdoor.ckpt
 
-⚠️ Note: disk_lightglue_v0-1_arxiv-pth does not have the .pth suffix, this is the naming convention for kornia, not file corruption, do not rename manually.
+⚠️ Note: disk_lightglue_v0-1_arxiv-pth does not have the .pth suffix, this is the naming convention for kornia, not file corruption, please do not rename manually.
 
 ---
 

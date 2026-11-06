@@ -189,7 +189,7 @@ class LoadImageWithPreview:
                             try:
                                 json_data = json.loads(v)
                                 content = json.dumps(json_data, indent=2, ensure_ascii=False)
-                            except:
+                            except Exception:
                                 pass
                         processed_parts.append(f"[{k.upper()}]\n{content}")
                     final_text = "\n\n".join(processed_parts)
@@ -228,7 +228,7 @@ class LoadImageWithPreview:
                 if mask_img.size != base_img.size:
                     mask_img = mask_img.resize(base_img.size, Image.LANCZOS)
                 mask_tensor = torch.from_numpy(np.array(mask_img).astype(np.float32) / 255.0)
-            except:
+            except Exception:
                 mask_tensor = torch.zeros((base_img.height, base_img.width), dtype=torch.float32)
         else:
             mask_tensor = torch.zeros((base_img.height, base_img.width), dtype=torch.float32)
@@ -240,12 +240,17 @@ class LoadImageWithPreview:
             try:
                 arr = json.loads(crop_data)
                 if isinstance(arr, (list, tuple)) and len(arr) == 4:
-                    H = int(output_image.shape[1]); W = int(output_image.shape[2])
+                    H = int(output_image.shape[1])
+                    W = int(output_image.shape[2])
                     x, y, cw, ch = [int(round(float(v))) for v in arr]
-                    x = max(0, min(x, W - 1)); y = max(0, min(y, H - 1))
-                    cw = max(1, min(cw, W)); ch = max(1, min(ch, H))
-                    if x + cw > W: x = max(0, W - cw)
-                    if y + ch > H: y = max(0, H - ch)
+                    x = max(0, min(x, W - 1))
+                    y = max(0, min(y, H - 1))
+                    cw = max(1, min(cw, W))
+                    ch = max(1, min(ch, H))
+                    if x + cw > W:
+                        x = max(0, W - cw)
+                    if y + ch > H:
+                        y = max(0, H - ch)
                     output_image = output_image[:, y:y + ch, x:x + cw, :].contiguous()
                     if mask_tensor.dim() == 3:
                         mask_tensor = mask_tensor[:, y:y + ch, x:x + cw].contiguous()

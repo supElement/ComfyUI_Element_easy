@@ -79,9 +79,12 @@ MAX_FRAMES_CACHE_BYTES = 600_000_000
 
 # ================= 媒体探测 =================
 def _kind_of(ext: str):
-    if ext in IMG_EXTS: return "image"
-    if ext in VID_EXTS: return "video"
-    if ext in AUD_EXTS: return "audio"
+    if ext in IMG_EXTS:
+        return "image"
+    if ext in VID_EXTS:
+        return "video"
+    if ext in AUD_EXTS:
+        return "audio"
     return None
 
 def _decode_audio_wave(path: str, max_seconds: float = 0.0):
@@ -105,7 +108,8 @@ def _decode_audio_wave(path: str, max_seconds: float = 0.0):
                 if skip >= mono.shape[0]:
                     cursor = start + mono.shape[0] / sr
                     continue
-                mono = mono[skip:]; start = 0.0
+                mono = mono[skip:]
+                start = 0.0
             chunks.append((start, mono))
             cursor = start + mono.shape[0] / sr
             if max_seconds and max_seconds > 0 and cursor >= max_seconds:
@@ -118,7 +122,8 @@ def _decode_audio_wave(path: str, max_seconds: float = 0.0):
         return [], sr, dur
     pcm = np.zeros(total, dtype=np.float32)
     for start, mono in chunks:
-        i0 = int(round(start * sr)); i1 = min(total, i0 + mono.shape[0])
+        i0 = int(round(start * sr))
+        i1 = min(total, i0 + mono.shape[0])
         if i1 > i0:
             pcm[i0:i1] = mono[: i1 - i0]
     if max_seconds and max_seconds > 0 and total > int(max_seconds * sr):
@@ -153,10 +158,12 @@ def _decode_audio_wave_ffmpeg(path: str, max_seconds: float = 600.0):
 def _probe_media(path: str) -> dict:
     ext = os.path.splitext(path)[1].lower()
     kind = _kind_of(ext)
-    if kind is None: raise ValueError(f"unsupported: {ext}")
+    if kind is None:
+        raise ValueError(f"unsupported: {ext}")
     if kind == "image":
         img = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_COLOR)
-        if img is None: raise IOError("cannot read image")
+        if img is None:
+            raise IOError("cannot read image")
         h, w = img.shape[:2]
         return {"kind": "image", "media": {"w": int(w), "h": int(h)}}
     if kind == "video":
@@ -164,7 +171,8 @@ def _probe_media(path: str) -> dict:
             vs = next((s for s in c.streams.video), None)
             if vs is None:
                 raise ValueError("no video stream")
-            w = int(getattr(vs, "width", 0) or 0); h = int(getattr(vs, "height", 0) or 0)
+            w = int(getattr(vs, "width", 0) or 0)
+            h = int(getattr(vs, "height", 0) or 0)
             fps = float(vs.average_rate) if vs.average_rate else 24.0
             dur = float(vs.duration * vs.time_base) if vs.duration else 0.0
             total = int(vs.frames) if vs.frames else int(round(dur * fps))
@@ -208,16 +216,20 @@ def _probe_media(path: str) -> dict:
 
 
 def _probe_media_cached(path: str) -> dict:
-    try: mt = os.path.getmtime(path)
-    except Exception: mt = 0
+    try:
+        mt = os.path.getmtime(path)
+    except Exception:
+        mt = 0
     with _probe_lock:
         hit = _probe_cache.get(path)
         if hit and hit[0] == mt:
-            _probe_cache.move_to_end(path); return hit[1]
+            _probe_cache.move_to_end(path)
+            return hit[1]
     payload = _probe_media(path)
     with _probe_lock:
         _probe_cache[path] = (mt, payload)
-        while len(_probe_cache) > MAX_PROBE_CACHE: _probe_cache.popitem(last=False)
+        while len(_probe_cache) > MAX_PROBE_CACHE:
+            _probe_cache.popitem(last=False)
     return payload
 
 # ================= 帧预览（视频帧 / 整图） =================
@@ -227,19 +239,22 @@ def _build_preview(path: str, frame_idx: int, size: int,
     crop=(x,y,w,h) 先合成 overlay 再裁剪；overlay 约定为整图坐标系。"""
     if alpha:
         img = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
-        if img is None: raise IOError("cannot read overlay")
+        if img is None:
+            raise IOError("cannot read overlay")
         h, w = img.shape[:2]
         scale = size / max(h, w)
         if scale < 1.0:
             img = cv2.resize(img, (max(1, int(round(w * scale))), max(1, int(round(h * scale)))),
                              interpolation=cv2.INTER_AREA)
         ok, buf = cv2.imencode(".png", img, [int(cv2.IMWRITE_PNG_COMPRESSION), 1])
-        if not ok: raise RuntimeError("PNG encode failed")
+        if not ok:
+            raise RuntimeError("PNG encode failed")
         return buf.tobytes()
     ext = os.path.splitext(path)[1].lower()
     if _kind_of(ext) == "image" or frame_idx < 0:
         img = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_COLOR)
-        if img is None: raise IOError("cannot read image")
+        if img is None:
+            raise IOError("cannot read image")
     else:
         total = 0
         try:
@@ -248,10 +263,14 @@ def _build_preview(path: str, frame_idx: int, size: int,
                 fps = float(vs.average_rate) if vs.average_rate else 24.0
                 dur = float(vs.duration * vs.time_base) if vs.duration else 0
                 total = int(vs.frames) if vs.frames else int(round(dur * fps))
-        except Exception: pass
-        if total > 0: frame_idx = max(0, min(frame_idx, total - 1))
-        try: img = _decode_frame_bgr(path, frame_idx)
-        except Exception: img = _decode_frame_bgr_fallback(path, frame_idx)
+        except Exception:
+            pass
+        if total > 0:
+            frame_idx = max(0, min(frame_idx, total - 1))
+        try:
+            img = _decode_frame_bgr(path, frame_idx)
+        except Exception:
+            img = _decode_frame_bgr_fallback(path, frame_idx)
     if overlay and os.path.exists(overlay):
         ov = cv2.imdecode(np.fromfile(overlay, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
         if ov is not None:
@@ -265,8 +284,10 @@ def _build_preview(path: str, frame_idx: int, size: int,
     if crop:
         x, y, w, h = [int(round(float(v))) for v in crop[:4]]
         H, W = img.shape[:2]
-        x = max(0, min(x, W - 1)); y = max(0, min(y, H - 1))
-        w = max(1, min(w, W - x)); h = max(1, min(h, H - y))
+        x = max(0, min(x, W - 1))
+        y = max(0, min(y, H - 1))
+        w = max(1, min(w, W - x))
+        h = max(1, min(h, H - y))
         img = img[y:y + h, x:x + w]
     h, w = img.shape[:2]
     scale = size / max(h, w)
@@ -274,7 +295,8 @@ def _build_preview(path: str, frame_idx: int, size: int,
         img = cv2.resize(img, (max(1, int(round(w * scale))), max(1, int(round(h * scale)))),
                          interpolation=cv2.INTER_AREA)
     ok, buf = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
-    if not ok: raise RuntimeError("JPEG encode failed")
+    if not ok:
+        raise RuntimeError("JPEG encode failed")
     return buf.tobytes()
 
 
@@ -334,7 +356,8 @@ def _extract_audio_media(video_path: str):
                     if skip >= mono.shape[0]:
                         cursor = start + mono.shape[0] / rate
                         continue
-                    mono = mono[skip:]; start = 0.0
+                    mono = mono[skip:]
+                    start = 0.0
                 chunks.append((start, mono))
                 cursor = start + mono.shape[0] / rate
             if not chunks:
@@ -345,13 +368,16 @@ def _extract_audio_media(video_path: str):
                 return None
             pcm = np.zeros(total, dtype=np.float32)   
             for start, mono in chunks:
-                i0 = int(round(start * rate)); i1 = min(total, i0 + mono.shape[0])
+                i0 = int(round(start * rate))
+                i1 = min(total, i0 + mono.shape[0])
                 if i1 > i0:
                     pcm[i0:i1] = mono[: i1 - i0]
             pcm = _resample_linear(pcm, rate, _PREVIEW_SR)
             buf = _io.BytesIO()
             with _wave.open(buf, "wb") as wf:
-                wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(_PREVIEW_SR)
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(_PREVIEW_SR)
                 wf.writeframes((np.clip(pcm, -1.0, 1.0) * 32767.0).astype("<i2").tobytes())
             return ("audio/wav", buf.getvalue())
     except Exception as e:
@@ -424,7 +450,8 @@ def _read_audio_range(video_path: str, start_frame: int, end_frame: int, fps: fl
                     s0 = int(round((t0 - t_start) * sr))
                 if t_end > t1:
                     s1 = int(round((t1 - t_start) * sr))
-                s0 = max(0, min(s0, mono.shape[0])); s1 = max(s0, min(s1, mono.shape[0]))
+                s0 = max(0, min(s0, mono.shape[0]))
+                s1 = max(s0, min(s1, mono.shape[0]))
                 if s1 <= s0:
                     continue
                 i0 = int(round((t_start - t0) * sr)) + s0
@@ -448,19 +475,25 @@ def _decode_range(path: str, s: int, e: int) -> dict:
         st = c.streams.video[0]
         fps = float(st.average_rate) if st.average_rate else 24.0
         tb = st.time_base
-        try: st.thread_type = "AUTO"
-        except Exception: pass
+        try:
+            st.thread_type = "AUTO"
+        except Exception:
+            pass
         container_seek = max(0.0, s / fps - 0.1)
         c.seek(int(container_seek / tb), stream=st, any_frame=False, backward=True)
         need = set(range(s, e))
         for fr in c.decode(st):
-            if fr.pts is None: continue
+            if fr.pts is None:
+                continue
             cur = round(float(fr.pts * tb) * fps)
-            if cur < s: continue
-            if cur > e - 1: break
+            if cur < s:
+                continue
+            if cur > e - 1:
+                break
             if cur in need and cur not in got:
                 got[cur] = fr.to_ndarray(format="rgb24")
-            if len(got) == len(need): break
+            if len(got) == len(need):
+                break
     return got
 
 def _decode_range_cached(path: str, s: int, e: int) -> dict:
@@ -468,12 +501,14 @@ def _decode_range_cached(path: str, s: int, e: int) -> dict:
     global _frames_bytes
     with _frames_lock:
         if key in _frames_cache:
-            _frames_cache.move_to_end(key); return _frames_cache[key]
+            _frames_cache.move_to_end(key)
+            return _frames_cache[key]
     got = _decode_range(path, s, e)
     size = sum(a.nbytes for a in got.values())
     if got and size <= 60_000_000:  
         with _frames_lock:
-            _frames_cache[key] = got; _frames_cache.move_to_end(key)
+            _frames_cache[key] = got
+            _frames_cache.move_to_end(key)
             _frames_bytes += size
             while _frames_bytes > MAX_FRAMES_CACHE_BYTES and len(_frames_cache) > 1:
                 _, old = _frames_cache.popitem(last=False)
@@ -498,7 +533,8 @@ def _load_image_slot(mat: dict, edit: dict) -> torch.Tensor:
     paint = edit.get("paint_file")
     if paint and os.path.exists(paint):                 
         img = cv2.imdecode(np.fromfile(paint, dtype=np.uint8), cv2.IMREAD_COLOR)
-        if img is None: raise IOError(f"cannot read image: {paint}")
+        if img is None:
+            raise IOError(f"cannot read image: {paint}")
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         ow, oh = int(edit.get("out_w") or 0), int(edit.get("out_h") or 0)
         if ow > 0 and oh > 0 and (ow, oh) != (img.shape[1], img.shape[0]):
@@ -506,7 +542,8 @@ def _load_image_slot(mat: dict, edit: dict) -> torch.Tensor:
                 interpolation=cv2.INTER_AREA if ow < img.shape[1] else cv2.INTER_CUBIC)
         return torch.from_numpy(img).float().div_(255.0).unsqueeze(0)
     img = cv2.imdecode(np.fromfile(mat["path"], dtype=np.uint8), cv2.IMREAD_COLOR)
-    if img is None: raise IOError(f"cannot read image: {mat['path']}")
+    if img is None:
+        raise IOError(f"cannot read image: {mat['path']}")
     h, w = img.shape[:2]
     div = max(1, int(edit.get("div_by") or 32))
     strokes_p = edit.get("strokes_file")
@@ -523,9 +560,12 @@ def _load_image_slot(mat: dict, edit: dict) -> torch.Tensor:
     crop = edit.get("crop")
     if crop:
         x, y, cw, chh = [int(round(float(v))) for v in crop[:4]]
-        cw -= cw % div; chh -= chh % div
-        cw = max(div, min(cw, w)); chh = max(div, min(chh, h))
-        x = max(0, min(x, w - cw)); y = max(0, min(y, h - chh))
+        cw -= cw % div
+        chh -= chh % div
+        cw = max(div, min(cw, w))
+        chh = max(div, min(chh, h))
+        x = max(0, min(x, w - cw))
+        y = max(0, min(y, h - chh))
         img = img[y:y + chh, x:x + cw]
     ow, oh = int(edit.get("out_w") or 0), int(edit.get("out_h") or 0)
     if ow > 0 and oh > 0 and (ow, oh) != (img.shape[1], img.shape[0]):
@@ -537,7 +577,8 @@ def _load_image_slot(mat: dict, edit: dict) -> torch.Tensor:
 def _load_video_slot(mat: dict, edit: dict):
     """★ 帧按最近 pts 落槽；音频复用 _read_audio_range（与波形/试听同一实现）。"""
     import av, torch
-    path = mat["path"]; media = mat.get("media") or {}
+    path = mat["path"]
+    media = mat.get("media") or {}
     src_fps = float(media.get("fps") or 24.0)
     total_f = int(media.get("total_frames") or 0)
     trim = edit.get("trim") or [0, max(1, total_f)]
@@ -553,7 +594,9 @@ def _load_video_slot(mat: dict, edit: dict):
         grid_n = max(1, int(math.ceil((end_sec - start_sec) * out_fps - 1e-6)))  
         slots = [None] * grid_n
         with av.open(path) as c:
-            vs = c.streams.video[0]; vs.thread_type = "AUTO"; vtb = vs.time_base
+            vs = c.streams.video[0]
+            vs.thread_type = "AUTO"
+            vtb = vs.time_base
             v_st = int(vs.start_time) if getattr(vs, "start_time", None) is not None else 0
             if do_seek:
                 try:
@@ -601,16 +644,22 @@ def _load_audio_slot(mat: dict, edit: dict) -> dict:
     tr = edit.get("trim") or [0.0, dur]
     s = float(tr[0] or 0.0)
     e = float(tr[1]) if (len(tr) > 1 and tr[1]) else dur
-    if dur > 0: e = max(s + 1e-3, min(e, dur))
-    else: e = max(e, s + 1e-3)
+    if dur > 0:
+        e = max(s + 1e-3, min(e, dur))
+    else:
+        e = max(e, s + 1e-3)
     ref_fps = float(edit.get("ref_fps") or 24.0) or 24.0
-    div = int(edit.get("div_by") or 0); a = int(edit.get("a") or 0)
+    div = int(edit.get("div_by") or 0)
+    a = int(edit.get("a") or 0)
     sf, ef = s * ref_fps, e * ref_fps
     if edit.get("quant") and div > 0:
-        n = math.floor((ef - sf - a) / div + 1e-6); n = max(0, n)
+        n = math.floor((ef - sf - a) / div + 1e-6)
+        n = max(0, n)
         ef = sf + a + n * div
     t, sr = _read_audio_range(mat["path"], int(round(sf)), int(round(ef)), ref_fps)
-    if t is None: t = torch.zeros((1, 1, 44100)); sr = 44100
+    if t is None:
+        t = torch.zeros((1, 1, 44100))
+        sr = 44100
     return {"waveform": t, "sample_rate": sr}
 
 def _video_paired_audio(mat: dict, slot: dict) -> dict:
@@ -618,9 +667,12 @@ def _video_paired_audio(mat: dict, slot: dict) -> dict:
     src_fps = float(media.get("fps") or 24.0)
     total = int(media.get("total_frames") or 0)
     tr = (slot.get("edit") or {}).get("trim") or [0, total]
-    s = int(tr[0] or 0); e = int(tr[1] or total)
+    s = int(tr[0] or 0)
+    e = int(tr[1] or total)
     t, sr = _read_audio_range(mat["path"], s, e, src_fps)
-    if t is None: t = torch.zeros((1, 1, 44100)); sr = 44100
+    if t is None:
+        t = torch.zeros((1, 1, 44100))
+        sr = 44100
     return {"waveform": t, "sample_rate": sr}
 
 # ================= 节点：ElementMultiRef =================
@@ -830,7 +882,8 @@ async def emr_upload_handler(request):
     try:
         data = await request.post()
         file = data.get("file")
-        if not file: return web.json_response({"error": "No file"}, status=400)
+        if not file:
+            return web.json_response({"error": "No file"}, status=400)
         base = _safe_media_name(file.filename)
         ext = os.path.splitext(base)[1].lower()
         kind = _kind_of(ext)
@@ -843,31 +896,42 @@ async def emr_upload_handler(request):
             with open(part, "wb") as out:
                 while True:
                     block = file.file.read(1 << 20)
-                    if not block: break
-                    out.write(block); h.update(block)
+                    if not block:
+                        break
+                    out.write(block)
+                    h.update(block)
             digest = h.hexdigest()
             idx_path = os.path.join(d, "_index.json")
             index = {}
             try:
-                with open(idx_path, "r", encoding="utf-8") as f: index = json.load(f)
-            except Exception: index = {}
+                with open(idx_path, "r", encoding="utf-8") as f:
+                    index = json.load(f)
+            except Exception:
+                index = {}
             prev = index.get(digest)
             if prev and os.path.exists(os.path.join(d, prev)):
                 target = os.path.join(d, prev)
-                try: os.remove(part)
-                except Exception: pass
+                try:
+                    os.remove(part)
+                except Exception:
+                    pass
             else:
                 target = os.path.join(d, base)
                 if os.path.exists(target):
-                    stem, e2 = os.path.splitext(base); i = 1
-                    while os.path.exists(os.path.join(d, f"{stem}_{i}{e2}")): i += 1
+                    stem, e2 = os.path.splitext(base)
+                    i = 1
+                    while os.path.exists(os.path.join(d, f"{stem}_{i}{e2}")):
+                        i += 1
                     target = os.path.join(d, f"{stem}_{i}{e2}")
                 os.replace(part, target)
                 index[digest] = os.path.basename(target)
-                with open(idx_path, "w", encoding="utf-8") as f: json.dump(index, f)
+                with open(idx_path, "w", encoding="utf-8") as f:
+                    json.dump(index, f)
         except Exception:
-            try: os.remove(part)
-            except Exception: pass
+            try:
+                os.remove(part)
+            except Exception:
+                pass
             raise
         payload = _probe_media_cached(target)
         payload["path"] = target
@@ -882,7 +946,8 @@ async def emr_media_info_handler(request):
         p = request.rel_url.query.get("p", "")
         if not p or not os.path.exists(p):
             return web.json_response({"error": "not found"}, status=404)
-        payload = _probe_media_cached(p); payload["path"] = p
+        payload = _probe_media_cached(p)
+        payload["path"] = p
         return web.json_response(payload)
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
@@ -892,7 +957,8 @@ async def emr_save_paint_handler(request):
     try:
         data = await request.post()
         file = data.get("paint_file")
-        if not file: return web.json_response({"error": "No file"}, status=400)
+        if not file:
+            return web.json_response({"error": "No file"}, status=400)
         d = os.path.join(folder_paths.get_output_directory(), "element_multi_ref", "paint")
         os.makedirs(d, exist_ok=True)
         name = f"paint_{int(time.time() * 1000)}_{os.getpid() % 10000}.png"
@@ -900,7 +966,8 @@ async def emr_save_paint_handler(request):
         with open(target, "wb") as out:
             while True:
                 block = file.file.read(1 << 20)
-                if not block: break
+                if not block:
+                    break
                 out.write(block)
         return web.json_response({"path": target})
     except Exception as e:
@@ -915,7 +982,8 @@ def _detect_cuts(path: str, threshold: float = 40.0, sample_per_sec: float = 4.0
         sm.detect_scenes(video, show_progress=False)
         cuts = [int(round(s[0].get_frames())) for s in sm.get_scene_list()]
         cuts = sorted({c for c in cuts if c > 0})
-        if cuts: return cuts
+        if cuts:
+            return cuts
     except Exception as e:
         print(f"[EMR] scenedetect unavailable, fallback: {e}")
     try:                                                # ② 回退：自写 HSV 差分
@@ -924,10 +992,13 @@ def _detect_cuts(path: str, threshold: float = 40.0, sample_per_sec: float = 4.0
             fps = float(vs.average_rate) if vs.average_rate else 24.0
             tb = vs.time_base
             step = max(1, int(round(fps / max(0.5, sample_per_sec))))
-            prev = None; cuts = []; idx = 0
+            prev = None
+            cuts = []
+            idx = 0
             c.seek(0, stream=vs, any_frame=False, backward=True)
             for fr in c.decode(vs):
-                if fr.pts is None: continue
+                if fr.pts is None:
+                    continue
                 cur = round(float(fr.pts * tb) * fps)
                 if idx % step == 0:
                     small = cv2.resize(fr.to_ndarray(format="bgr24"), (64, 36))
@@ -936,7 +1007,8 @@ def _detect_cuts(path: str, threshold: float = 40.0, sample_per_sec: float = 4.0
                     cv2.normalize(hist, hist)
                     if prev is not None:
                         d = float(cv2.compareHist(prev, hist, cv2.HISTCMP_CORREL))
-                        if d < 1.0 - threshold / 100.0 and cur > 0: cuts.append(cur)
+                        if d < 1.0 - threshold / 100.0 and cur > 0:
+                            cuts.append(cur)
                     prev = hist
                 idx += 1
         return sorted(set(cuts))
@@ -968,8 +1040,10 @@ async def emr_preview_handler(request):
                 text=f"bad params: f={q.get('f')!r} s={q.get('s')!r}")
         crop = None
         if q.get("crop"):
-            try: crop = [float(v) for v in q.get("crop").split(",")]
-            except ValueError: crop = None
+            try:
+                crop = [float(v) for v in q.get("crop").split(",")]
+            except ValueError:
+                crop = None
         overlay = q.get("strokes") or None
         alpha = q.get("alpha") == "1"
         if not p or not os.path.exists(p):
@@ -977,7 +1051,8 @@ async def emr_preview_handler(request):
         key = (p, f, s, tuple(crop) if crop else None, overlay, alpha)
         with _preview_lock:
             body = _preview_cache.get(key)
-            if body is not None: _preview_cache.move_to_end(key)
+            if body is not None:
+                _preview_cache.move_to_end(key)
         if body is None:
             loop = asyncio.get_running_loop()
             body = await loop.run_in_executor(_preview_executor,
@@ -987,7 +1062,8 @@ async def emr_preview_handler(request):
         return web.Response(body=body, content_type=ctype,
                             headers={"Cache-Control": "private, max-age=300"})
     except Exception as e:
-        import traceback; traceback.print_exc()                  
+        import traceback
+        traceback.print_exc()
         return web.Response(status=500, text=str(e))
 
 
@@ -995,18 +1071,23 @@ async def emr_preview_handler(request):
 async def emr_audio_handler(request):
     try:
         p = request.rel_url.query.get("p", "")
-        if not p or not os.path.exists(p): return web.Response(status=404, text="not found")
+        if not p or not os.path.exists(p):
+            return web.Response(status=404, text="not found")
         hit, cached = None, False
         with _audio_media_lock:
             if p in _audio_media_cache:
-                hit = _audio_media_cache[p]; _audio_media_cache.move_to_end(p); cached = True
+                hit = _audio_media_cache[p]
+                _audio_media_cache.move_to_end(p)
+                cached = True
         if not cached:
             hit = await asyncio.get_running_loop().run_in_executor(_audio_executor, _extract_audio_media, p)
             with _audio_media_lock:
-                _audio_media_cache[p] = hit; _audio_media_cache.move_to_end(p)
+                _audio_media_cache[p] = hit
+                _audio_media_cache.move_to_end(p)
                 while len(_audio_media_cache) > MAX_AUDIO_MEDIA_CACHE:
                     _audio_media_cache.popitem(last=False)
-        if hit is None: return web.Response(status=404, text="no audio stream")
+        if hit is None:
+            return web.Response(status=404, text="no audio stream")
         ctype, body = hit
         headers = {"Accept-Ranges": "bytes", "Cache-Control": "private, max-age=3600"}
         rng = request.headers.get("Range", "")
@@ -1015,7 +1096,8 @@ async def emr_audio_handler(request):
             try:
                 spec = rng[6:].split(",")[0].strip()
                 a_s, _, b_s = spec.partition("-")
-                if not a_s and b_s: a, b = max(0, total - int(b_s)), total - 1
+                if not a_s and b_s:
+                    a, b = max(0, total - int(b_s)), total - 1
                 else:
                     a = int(a_s) if a_s else 0
                     b = int(b_s) if b_s else total - 1
@@ -1024,7 +1106,8 @@ async def emr_audio_handler(request):
                     return web.Response(status=416, headers={"Content-Range": f"bytes */{total}"})
                 headers["Content-Range"] = f"bytes {a}-{b}/{total}"
                 return web.Response(status=206, body=body[a:b + 1], content_type=ctype, headers=headers)
-            except ValueError: pass
+            except ValueError:
+                pass
         return web.Response(body=body, content_type=ctype, headers=headers)
     except Exception as e:
         return web.Response(status=500, text=str(e))
@@ -1105,8 +1188,11 @@ async def emr_presets_put(request):
             mats = {}
             for mid, m in (snap.get("materials") or {}).items():
                 if isinstance(m, dict):
-                    c = dict(m); c.pop("_wave", None); mats[mid] = c
-            snap = dict(snap); snap["materials"] = mats
+                    c = dict(m)
+                    c.pop("_wave", None)
+                    mats[mid] = c
+            snap = dict(snap)
+            snap["materials"] = mats
             thumb = p.get("thumb")
             if thumb and str(thumb).startswith("data:"):
                 thumb = None

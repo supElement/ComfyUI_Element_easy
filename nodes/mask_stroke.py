@@ -41,7 +41,8 @@ class MaskStrokeElement:
 
         if blur_out > 0:
             k_size = int(6 * blur_out)
-            if k_size % 2 == 0: k_size += 1
+            if k_size % 2 == 0:
+                k_size += 1
             dilated = TF.gaussian_blur(dilated, kernel_size=k_size, sigma=blur_out)
 
         # --- 处理内边缘 ---
@@ -53,7 +54,8 @@ class MaskStrokeElement:
 
         if blur_in > 0:
             k_size = int(6 * blur_in)
-            if k_size % 2 == 0: k_size += 1
+            if k_size % 2 == 0:
+                k_size += 1
             eroded = TF.gaussian_blur(eroded, kernel_size=k_size, sigma=blur_in)
 
         # --- 组合 ---

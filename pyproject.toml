@@ -15,5 +15,5 @@ PublisherId = "sup-element"
 DisplayName = "ComfyUI_Element_easy"
 Icon = ""
 includes = [] 
-# "requires-comfyui >= 0.41.0" 
+# "requires-comfyui" = ">=0.41.0"
 

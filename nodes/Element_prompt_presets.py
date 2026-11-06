@@ -1,0 +1,425 @@
+# Element_prompt_presets.py
+# 自包含的提示词库节点：presets = 分类，prompt = 词条。
+# 数据文件：ComfyUI/user/element_easy/promptPresets/prompts.json
+import json
+import locale
+import os
+import re
+import sys
+import threading
+import time
+import warnings
+
+from aiohttp import web
+import folder_paths
+from server import PromptServer
+
+DB_FILENAME = "prompts.json"
+FALLBACK_PRESET = "default"
+FALLBACK_PROMPT = "new prompt"
+
+_STORE_LOCK = threading.RLock()
+
+
+def _store_dir():
+    d = os.path.join(folder_paths.get_user_directory(), "element_easy", "promptPresets")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _store_path():
+    return os.path.join(_store_dir(), DB_FILENAME)
+
+
+def _unwrap_payload(data):
+    """兼容 {"presets": {...}} / {"categories": {...}} 包装，但不误伤同名分类。"""
+    if not isinstance(data, dict):
+        return data
+    for key in ("presets", "categories"):
+        inner = data.get(key)
+        if isinstance(inner, dict) and inner and all(isinstance(v, dict) for v in inner.values()):
+            return inner
+    return data
+
+
+def _clean_db(data):
+    """兼容 Prompt Database 的 {分类: {词条: 文本}} 结构。"""
+    data = _unwrap_payload(data)
+    if not isinstance(data, dict):
+        return {}
+    out = {}
+    for preset, prompts in data.items():
+        preset = str(preset).strip()
+        if not preset or not isinstance(prompts, dict):
+            continue
+        clean_prompts = {}
+        for name, text in prompts.items():
+            name = str(name).strip()
+            if not name:
+                continue
+            clean_prompts[name] = text if isinstance(text, str) else str(text)
+        out[preset] = clean_prompts
+    return out
+
+
+def _read_db():
+    path = _store_path()
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return _clean_db(json.load(f))
+    except Exception as e:
+        print(f"[Element_prompt_presets] 读取 {path} 失败: {e}")
+        return {}
+
+
+def _write_db(db):
+    path = _store_path()
+    text = json.dumps(db, ensure_ascii=False, indent=2)
+    tmp = path + f".tmp.{os.getpid()}.{time.time_ns()}"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
+def _state(db):
+    return {
+        "success": True,
+        "presets": _sorted_names(db.keys()),
+        "prompts": {preset: _sorted_names(prompts.keys()) for preset, prompts in db.items()},
+        "dir": _store_dir(),
+    }
+
+
+def _ordered_prompt_names(db, first_prompts):
+    ordered = list(first_prompts)
+    seen = set(ordered)
+    for prompts in db.values():
+        for name in prompts:
+            if name not in seen:
+                seen.add(name)
+                ordered.append(name)
+    return ordered
+
+
+def _safe_filename(name, fallback="preset"):
+    stem = os.path.basename(str(name or "").strip())
+    stem = os.path.splitext(stem)[0]
+    stem = re.sub(r'[\\/:*?"<>|\x00-\x1f\r\n\t]', "_", stem).strip().strip(".")
+    if not stem:
+        stem = f"{fallback}_{time.strftime('%Y%m%d_%H%M%S')}"
+    if stem.lower() == os.path.splitext(DB_FILENAME)[0].lower():
+        stem += "_preset"
+    return stem[:120]
+
+
+def _parse_preset(data, fallback_name):
+    data = _unwrap_payload(data)
+    if not isinstance(data, dict) or not data:
+        raise ValueError("预设内容为空")
+
+    values = list(data.values())
+    if all(isinstance(v, dict) for v in values):
+        out = {}
+        for preset, prompts in data.items():
+            preset = str(preset).strip()
+            if not preset:
+                continue
+            clean = {}
+            for name, text in prompts.items():
+                name = str(name).strip()
+                if name:
+                    clean[name] = text if isinstance(text, str) else str(text)
+            out[preset] = clean
+        if out:
+            return out
+        raise ValueError("预设中没有有效词条")
+
+    if all(isinstance(v, str) for v in values):
+        prompts = {}
+        for name, text in data.items():
+            name = str(name).strip()
+            if name:
+                prompts[name] = text
+        if prompts:
+            return {fallback_name: prompts}
+        raise ValueError("预设中没有有效词条")
+
+    raise ValueError("预设结构无法识别（不能混合分类和文本）")
+
+
+def _single_line(text, seed):
+    lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
+    if not lines:
+        return ""
+    return lines[int(seed) % len(lines)]
+
+
+_COLLATOR = None
+
+# Windows 系统语言 LCID → 排序 locale
+_WIN_LCID = {
+    0x0404: "zh_TW", 0x0C04: "zh_HK", 0x0804: "zh_CN", 0x1004: "zh_SG",
+    0x0411: "ja_JP", 0x0412: "ko_KR", 0x0419: "ru_RU", 0x0422: "uk_UA",
+    0x0409: "en_US", 0x0407: "de_DE", 0x040C: "fr_FR", 0x0C0A: "es_ES",
+    0x0410: "it_IT", 0x0416: "pt_BR", 0x0816: "pt_PT", 0x0415: "pl_PL",
+    0x041F: "tr_TR", 0x0405: "cs_CZ", 0x0408: "el_GR", 0x042A: "vi_VN",
+    0x041E: "th_TH", 0x0413: "nl_NL", 0x041D: "sv_SE", 0x040B: "fi_FI",
+    0x0406: "da_DK", 0x0414: "nb_NO", 0x040E: "hu_HU", 0x0418: "ro_RO",
+    0x0401: "ar_SA", 0x040D: "he_IL", 0x0421: "id_ID", 0x0439: "hi_IN",
+}
+
+
+def _collator_locales():
+    """按系统语言给出候选排序 locale，依次尝试。"""
+    for var in ("LC_ALL", "LC_COLLATE", "LANG"):
+        value = os.environ.get(var, "").strip()
+        if value and value.upper() not in ("C", "POSIX", "C.UTF-8", "C.UTF8"):
+            yield value
+            yield re.split(r"[.@]", value)[0].replace("-", "_")
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            name = _WIN_LCID.get(ctypes.windll.kernel32.GetUserDefaultUILanguage())
+            if name:
+                yield name
+        except Exception:
+            pass
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            default = locale.getdefaultlocale()[0]
+        if default:
+            yield default
+    except Exception:
+        pass
+
+
+def _collator_ready():
+    global _COLLATOR
+    if _COLLATOR is None:
+        _COLLATOR = False
+        for name in _collator_locales():
+            try:
+                locale.setlocale(locale.LC_COLLATE, name)
+                _COLLATOR = True
+                break
+            except locale.Error:
+                continue
+    return _COLLATOR
+
+
+def _sorted_names(names):
+    """按系统语言排序（中文拼音、日文假名、韩文、俄文等本地规则）；无可用 locale 时退回 Unicode 码位。"""
+    if _collator_ready():
+        return sorted(names, key=locale.strxfrm)
+    return sorted(names, key=str.casefold)
+
+
+def _error(message, status=400):
+    return web.json_response({"success": False, "message": message}, status=status)
+
+
+class ElementPromptPresets:
+    @classmethod
+    def INPUT_TYPES(cls):
+        db = _read_db()
+        presets = list(db.keys())
+        first_prompts = list(db.get(presets[0], {}).keys()) if presets else []
+        if not presets:
+            presets = [FALLBACK_PRESET]
+        prompt_names = _ordered_prompt_names(db, first_prompts)
+        if not prompt_names:
+            prompt_names = [FALLBACK_PROMPT]
+        presets = _sorted_names(presets)
+        prompt_names = _sorted_names(set(prompt_names))
+        default_prompt = first_prompts[0] if first_prompts else prompt_names[0]
+        return {
+            "required": {
+                "presets": (presets, {"default": presets[0]}),
+                "entry": (prompt_names, {"default": default_prompt}),
+                "single_line": ("BOOLEAN", {"default": False}),
+                "seed": ("INT", {
+                    "default": 0,
+                    "min": 0,
+                    "max": 0xFFFFFFFFFFFFFFFF,
+                    "control_after_generate": True,
+                }),
+                "prompt_text": ("STRING", {"multiline": True, "default": ""}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("prompt_text",)
+    FUNCTION = "get_prompt"
+    CATEGORY = "Element_easy/Text"
+
+    def get_prompt(self, presets="", entry="", single_line=False, seed=0, prompt_text=""):
+        if single_line:
+            return (_single_line(prompt_text, seed),)
+        return (prompt_text,)
+
+
+NODE_CLASS_MAPPINGS = {"Element_prompt_presets": ElementPromptPresets}
+NODE_DISPLAY_NAME_MAPPINGS = {"Element_prompt_presets": "Element Prompt Presets"}
+
+
+# ================= API =================
+
+@PromptServer.instance.routes.get("/element_prompt_presets/state")
+async def eepp_state(request):
+    return web.json_response(_state(_read_db()))
+
+
+@PromptServer.instance.routes.get("/element_prompt_presets/prompts")
+async def eepp_prompts(request):
+    preset = request.rel_url.query.get("presets", "")
+    db = _read_db()
+    return web.json_response({
+        "success": True,
+        "prompts": _sorted_names(db.get(preset, {}).keys()),
+    })
+
+
+@PromptServer.instance.routes.get("/element_prompt_presets/text")
+async def eepp_text(request):
+    preset = request.rel_url.query.get("presets", "")
+    prompt = request.rel_url.query.get("prompt", "")
+    db = _read_db()
+    return web.json_response({
+        "success": True,
+        "prompt_text": db.get(preset, {}).get(prompt, ""),
+    })
+
+
+@PromptServer.instance.routes.post("/element_prompt_presets/save")
+async def eepp_save(request):
+    data = await request.json()
+    preset = str(data.get("presets") or "").strip()
+    prompt = str(data.get("prompt") or "").strip()
+    if not preset or not prompt:
+        return _error("presets 和 prompt 不能为空")
+    text = data.get("prompt_text")
+    text = "" if text is None else str(text)
+    with _STORE_LOCK:
+        db = _read_db()
+        db.setdefault(preset, {})[prompt] = text
+        _write_db(db)
+    out = _state(db)
+    out["message"] = f"已保存：{preset} / {prompt}"
+    return web.json_response(out)
+
+
+@PromptServer.instance.routes.post("/element_prompt_presets/create")
+async def eepp_create(request):
+    data = await request.json()
+    preset = str(data.get("presets") or "").strip()
+    prompt = str(data.get("prompt") or "").strip()
+    if not preset or not prompt:
+        return _error("presets 和 prompt 不能为空")
+    text = data.get("prompt_text")
+    text = "" if text is None else str(text)
+    with _STORE_LOCK:
+        db = _read_db()
+        if prompt in db.get(preset, {}):
+            return _error(f"词条已存在：{preset} / {prompt}", status=409)
+        db.setdefault(preset, {})[prompt] = text
+        _write_db(db)
+    out = _state(db)
+    out["message"] = f"已新建：{preset} / {prompt}"
+    return web.json_response(out)
+
+
+@PromptServer.instance.routes.post("/element_prompt_presets/delete_preset")
+async def eepp_delete_preset(request):
+    data = await request.json()
+    preset = str(data.get("presets") or "").strip()
+    if not preset:
+        return _error("presets 不能为空")
+    with _STORE_LOCK:
+        db = _read_db()
+        if preset not in db:
+            return _error(f"预设不存在：{preset}", status=404)
+        del db[preset]
+        _write_db(db)
+    out = _state(db)
+    out["message"] = f"已删除预设：{preset}"
+    return web.json_response(out)
+
+
+@PromptServer.instance.routes.post("/element_prompt_presets/delete_prompt")
+async def eepp_delete_prompt(request):
+    data = await request.json()
+    preset = str(data.get("presets") or "").strip()
+    prompt = str(data.get("prompt") or "").strip()
+    if not preset or not prompt:
+        return _error("presets 和 prompt 不能为空")
+    with _STORE_LOCK:
+        db = _read_db()
+        prompts = db.get(preset)
+        if prompts is None or prompt not in prompts:
+            return _error(f"词条不存在：{preset} / {prompt}", status=404)
+        del prompts[prompt]
+        removed_preset = not prompts
+        if removed_preset:
+            del db[preset]
+        _write_db(db)
+    out = _state(db)
+    out["removed_preset"] = removed_preset
+    out["message"] = f"已删除词条：{prompt}"
+    if removed_preset:
+        out["message"] += f"（预设 {preset} 已无词条，一并删除）"
+    return web.json_response(out)
+
+
+@PromptServer.instance.routes.post("/element_prompt_presets/load_preset")
+async def eepp_load_preset(request):
+    req = await request.json()
+    try:
+        if "data" not in req:
+            raise ValueError("预设内容为空")
+        filename = os.path.basename(str(req.get("name") or ""))
+        fallback = _safe_filename(os.path.splitext(filename)[0], fallback="preset")
+        incoming = _parse_preset(req["data"], fallback)
+    except Exception as e:
+        return _error(str(e))
+
+    with _STORE_LOCK:
+        db = _read_db()
+        used = set(db.keys())
+        loaded, renamed = [], {}
+        for preset, prompts in incoming.items():
+            final = preset
+            if final in used:
+                index = 2
+                while f"{preset} ({index})" in used:
+                    index += 1
+                final = f"{preset} ({index})"
+                renamed[preset] = final
+            db[final] = prompts
+            used.add(final)
+            loaded.append(final)
+        _write_db(db)
+
+    out = _state(db)
+    out["loaded"] = loaded
+    out["renamed"] = renamed
+    out["message"] = f"已加载 {len(loaded)} 个预设"
+    return web.json_response(out)
+
+
+@PromptServer.instance.routes.get("/element_prompt_presets/export")
+async def eepp_export(request):
+    db = _read_db()
+    return web.json_response({"success": True, "presets": db})
+
+
+@PromptServer.instance.routes.post("/element_prompt_presets/clear_all")
+async def eepp_clear_all(request):
+    with _STORE_LOCK:
+        count = len(_read_db())
+        _write_db({})
+    out = _state({})
+    out["message"] = f"已清空 {count} 个预设"
+    return web.json_response(out)

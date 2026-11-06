@@ -176,7 +176,7 @@ Browse image files under the specified path, enter the editing panel after selec
 <a id="smart-merge-images"></a>
 ## Smart merge images
 
-<sub>v1.4.3 New Addition · v1.4.8 Optimization · v1.7.2 Optimization</sub>
+<sub>v1.4.3 New Addition · v1.8.2 Fix: Set the `torch.hub` directory upon first run </sub>
 
 Detailed Description: [Chinese](subMd/SmartMergeImages_zh.md) | [English](subMd/SmartMergeImages_en.md)</sub>
 

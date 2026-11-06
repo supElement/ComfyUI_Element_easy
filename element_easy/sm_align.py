@@ -255,8 +255,10 @@ def _homography_deviation(H1, H2, w_q, h_q, n=8):
     ys = np.linspace(0, h_q, n)
     gx, gy = np.meshgrid(xs, ys)
     pts = np.stack([gx.ravel(), gy.ravel(), np.ones(gx.size)], axis=1).T
-    p1 = (H1 @ pts).T; p1 = p1[:, :2] / (p1[:, 2:3] + 1e-9)
-    p2 = (H2 @ pts).T; p2 = p2[:, :2] / (p2[:, 2:3] + 1e-9)
+    p1 = (H1 @ pts).T
+    p1 = p1[:, :2] / (p1[:, 2:3] + 1e-9)
+    p2 = (H2 @ pts).T
+    p2 = p2[:, :2] / (p2[:, 2:3] + 1e-9)
     return float(np.linalg.norm(p1 - p2, axis=1).max())
 
 def _anchor_refit_homography(state, H_auto, H_grid, w_q, h_q, h_t, w_t, tol_px,
@@ -269,8 +271,10 @@ def _anchor_refit_homography(state, H_auto, H_grid, w_q, h_q, h_t, w_t, tol_px,
     if pts_q is None or pts_t is None or len(pts_q) < 8:
         return None
     ones = np.hstack([pts_q, np.ones((len(pts_q), 1))])
-    p_grid = (H_grid @ ones.T).T; p_grid = p_grid[:, :2] / (p_grid[:, 2:3] + 1e-9)
-    p_auto = (H_auto @ ones.T).T; p_auto = p_auto[:, :2] / (p_auto[:, 2:3] + 1e-9)
+    p_grid = (H_grid @ ones.T).T
+    p_grid = p_grid[:, :2] / (p_grid[:, 2:3] + 1e-9)
+    p_auto = (H_auto @ ones.T).T
+    p_auto = p_auto[:, :2] / (p_auto[:, 2:3] + 1e-9)
     keep = np.linalg.norm(p_auto - p_grid, axis=1) <= tol_px
     if int(keep.sum()) < 8:
         return None
@@ -605,8 +609,10 @@ def _layout_fit_candidates(state, crop_index, crop_total, w_q, h_q, w_t, h_t):
         if abs(p[2]) < 1e-9:
             continue
         r_i, c_i = divmod(int(idx), cols)
-        cx.append(p[0] / p[2]); cy.append(p[1] / p[2])
-        cs.append(c_i); rs.append(r_i)
+        cx.append(p[0] / p[2])
+        cy.append(p[1] / p[2])
+        cs.append(c_i)
+        rs.append(r_i)
     if len(set(cs)) < 2 or len(set(rs)) < 2:
         return []
     try:
@@ -1070,8 +1076,10 @@ def warp_tps( warped_fg_src, warped_mask_src, train_img, pts_src, pts_dst,
     disp = dst - src
     mag = np.linalg.norm(disp, axis=1)
     med_mag = float(np.median(mag))
-    x0, y0 = src.min(axis=0); x1, y1 = src.max(axis=0)
-    cw = max((x1 - x0) / 16.0, 1.0); ch = max((y1 - y0) / 16.0, 1.0)
+    x0, y0 = src.min(axis=0)
+    x1, y1 = src.max(axis=0)
+    cw = max((x1 - x0) / 16.0, 1.0)
+    ch = max((y1 - y0) / 16.0, 1.0)
     cells = set(zip(((src[:, 0] - x0) // cw).astype(int),
                     ((src[:, 1] - y0) // ch).astype(int)))
     cov = len(cells)
@@ -1205,9 +1213,9 @@ def estimate_homography(state, query_img, train_img, device="cpu",
     def _clahe_rgb(img):
         """LAB 的 L 通道做 CLAHE，保持色度不变。返回 uint8 RGB。"""
         lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
-        l, a, b = cv2.split(lab)
-        l = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(l)
-        return cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2RGB)
+        l_ch, a, b = cv2.split(lab)
+        l_ch = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(l_ch)
+        return cv2.cvtColor(cv2.merge([l_ch, a, b]), cv2.COLOR_LAB2RGB)
 
     query_p = _clahe_rgb(query_m)
     train_p = _clahe_rgb(train_m)
@@ -1395,9 +1403,11 @@ def perform_kornia_alignment(state, query_img, train_img, warp_method=False, sec
                 _sm_log(f"[Smart Merge] TPS: B↔A匹配不足({n_pts}点), 跳过 | too few matches")
             else:
                 ones_b = np.hstack([pts_b, np.ones((n_pts, 1))])
-                q = (H @ ones_b.T).T; q = q[:, :2] / q[:, 2:]
+                q = (H @ ones_b.T).T
+                q = q[:, :2] / q[:, 2:]
                 ones_a = np.hstack([pts_a, np.ones((n_pts, 1))])
-                t = (state.bridge_H_A2BG @ ones_a.T).T; t = t[:, :2] / t[:, 2:]
+                t = (state.bridge_H_A2BG @ ones_a.T).T
+                t = t[:, :2] / t[:, 2:]
                 
                 base_mask_inner = base_mask if base_mask is not None else np.ones(query_img.shape[:2], dtype=np.float32)
                 warped_fg0 = cv2.warpPerspective(query_img, H, (w_t, h_t), flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT101)

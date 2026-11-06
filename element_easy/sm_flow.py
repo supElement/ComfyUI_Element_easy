@@ -267,8 +267,10 @@ def _match_histogram(src, ref):
     """把 src 的直方图映射到 ref 的分布。用于消除偏色/改色对光流的结构破坏。"""
     src_vals, src_idx, src_cnt = np.unique(src.ravel(), return_inverse=True, return_counts=True)
     ref_vals, ref_cnt = np.unique(ref.ravel(), return_counts=True)
-    src_q = np.cumsum(src_cnt).astype(np.float64); src_q /= src_q[-1]
-    ref_q = np.cumsum(ref_cnt).astype(np.float64); ref_q /= ref_q[-1]
+    src_q = np.cumsum(src_cnt).astype(np.float64)
+    src_q /= src_q[-1]
+    ref_q = np.cumsum(ref_cnt).astype(np.float64)
+    ref_q /= ref_q[-1]
     interp = np.interp(src_q, ref_q, ref_vals)
     return interp[src_idx].reshape(src.shape).astype(np.uint8)
 
@@ -279,8 +281,10 @@ def _match_histogram_masked(src, ref, mask):
         return _match_histogram(src, ref)
     src_vals, src_cnt = np.unique(src[m], return_counts=True)
     ref_vals, ref_cnt = np.unique(ref[m], return_counts=True)
-    src_q = np.cumsum(src_cnt).astype(np.float64); src_q /= src_q[-1]
-    ref_q = np.cumsum(ref_cnt).astype(np.float64); ref_q /= ref_q[-1]
+    src_q = np.cumsum(src_cnt).astype(np.float64)
+    src_q /= src_q[-1]
+    ref_q = np.cumsum(ref_cnt).astype(np.float64)
+    ref_q /= ref_q[-1]
     interp = np.interp(src_q, ref_q, ref_vals)
     lut = np.arange(256, dtype=np.uint8)
     lut[src_vals.astype(np.int64)] = np.clip(np.round(interp), 0, 255).astype(np.uint8)
@@ -311,8 +315,10 @@ def _match_histogram_rgb(src, ref):
     for c in range(3):
         hs = np.bincount(np.ascontiguousarray(src[..., c]).ravel(), minlength=256).astype(np.float64)
         hr = np.bincount(np.ascontiguousarray(ref[..., c]).ravel(), minlength=256).astype(np.float64)
-        qs = np.cumsum(hs); qs /= max(qs[-1], 1.0)
-        qr = np.cumsum(hr); qr /= max(qr[-1], 1.0)
+        qs = np.cumsum(hs)
+        qs /= max(qs[-1], 1.0)
+        qr = np.cumsum(hr)
+        qr /= max(qr[-1], 1.0)
         lut = np.clip(np.round(np.interp(qs, qr, vals)), 0, 255).astype(np.uint8)
         out[..., c] = lut[src[..., c]]
     return out

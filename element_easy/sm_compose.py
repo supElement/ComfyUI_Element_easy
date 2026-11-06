@@ -49,10 +49,14 @@ def _blend_pads(tiles):
             if x_over <= 0 or y_over <= 0:
                 continue
             cands = []
-            if xj > xi: cands.append((2, y_over, own[j][0]))
-            if xj < xi: cands.append((0, y_over, own[j][2]))
-            if yj > yi: cands.append((3, x_over, own[j][1]))
-            if yj < yi: cands.append((1, x_over, own[j][3]))
+            if xj > xi:
+                cands.append((2, y_over, own[j][0]))
+            if xj < xi:
+                cands.append((0, y_over, own[j][2]))
+            if yj > yi:
+                cands.append((3, x_over, own[j][1]))
+            if yj < yi:
+                cands.append((1, x_over, own[j][3]))
             for edge, olap, far_b in cands:
                 if best[edge] is None or olap > best[edge][0] + 1e-6:
                     best[edge] = (olap, far_b)

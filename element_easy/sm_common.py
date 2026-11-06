@@ -132,8 +132,10 @@ def ensure_model_files():
                   f"    (本会话不再重试)")
         finally:
             if os.path.exists(tmp):
-                try: os.remove(tmp)
-                except Exception: pass
+                try:
+                    os.remove(tmp)
+                except Exception:
+                    pass
 
 def _parse_lightglue_output(match_res):
     if match_res is None:

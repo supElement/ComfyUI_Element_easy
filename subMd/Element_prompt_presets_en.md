@@ -72,7 +72,7 @@ Read as three columns: **category | entry | text**. Example:
 | human scene | mountain top | First prompt text ... |
 |  | plateau | Another prompt text ... |
 |  | bedroom | ... |
-| scene 2 | mountain top | ... |
+| Dreamlike Scenes | Fantasy Forests | …… |
 
 - No header detection: a header row is imported like any other row (delete it afterwards if unwanted);
 - Empty columns on the left and columns that are blank everywhere are ignored; rows with only one filled cell (e.g. a title) are skipped;

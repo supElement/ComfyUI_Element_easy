@@ -554,14 +554,23 @@ class SmartMergeImages:
         try:
             WORK_W = int((split_grid or {}).get("work_w", 0) or 0)
             WORK_H = int((split_grid or {}).get("work_h", 0) or 0)
+            EXACT_W = int((split_grid or {}).get("exact_w", 0) or 0)
+            EXACT_H = int((split_grid or {}).get("exact_h", 0) or 0)
         except Exception:
-            WORK_W = WORK_H = 0
+            WORK_W = WORK_H = EXACT_W = EXACT_H = 0
         
         USE_WORK_CANVAS = (split_grid is not None) and WORK_W > 0 and WORK_H > 0
         
         if USE_WORK_CANVAS:
             _inv_scale = 1.0
-            _sm_log(f"[SmartMerge] 使用 split_grid work 画布: {WORK_W}x{WORK_H} (tile 坐标保持 out 空间) | using work canvas")
+            if EXACT_W > 0 and EXACT_H > 0:
+                # 用真实输出尺寸作画布：分块已向内平移，整幅单块补边超出的部分
+                # 由该画布裁掉，输出不会多出 div 对齐产生的边缘条带。
+                _sm_log(f"[SmartMerge] 使用真实输出画布: {EXACT_W}x{EXACT_H} "
+                        f"(split work 画布 {WORK_W}x{WORK_H})")
+                WORK_W, WORK_H = EXACT_W, EXACT_H
+            else:
+                _sm_log(f"[SmartMerge] 使用 split_grid work 画布: {WORK_W}x{WORK_H} (tile 坐标保持 out 空间) | using work canvas")
         else:
             _inv_scale = 1.0 / GRID_U_UP
             _sm_log(f"[SmartMerge] 回退到原行为: tile 坐标反变换 (1/unified_upscale={_inv_scale:.3f}), 原图尺寸保持不变")

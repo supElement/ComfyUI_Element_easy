@@ -15,7 +15,7 @@ Input can be a single image or multiple blocks (each block may have a different 
     ElementTileSplit grid (optional) ► split_grid     ← connect when using TileSplit
 
 - **Connect `original_crop_A`**: the node knows where each block originally sat in the frame — most accurate placement, and it enables bridge-style non-rigid correction (TPS bridge: LoFTR matches B↔A, then the A→BG homography maps those points into background space).
-- **Connect `split_grid`**: alpha / feathering follows Element Tile Merge's tile geometry in ComfyUI-Element_TileEdit pixel-for-pixel — hand-drawn box position and 50% point, same-layer lock-band exclusion, radial rounded-corner ramp, and canvas-edge handling. `feather_kernel` is then interpreted as that node's feather (0~100 → 0~1.0, 100 = maximum). If the grid carries `work_w`/`work_h`, the original image is first resized to that working canvas size before compositing.
+- **Connect `split_grid`**: alpha / feathering follows Element Tile Merge's tile geometry in ComfyUI-Element_TileEdit pixel-for-pixel — hand-drawn box position and 50% point, same-layer lock-band exclusion, radial rounded-corner ramp, and canvas-edge handling. `feather_kernel` is then interpreted as that node's feather (0~100 → 0~1.0, 100 = maximum). If the grid carries `exact_w`/`exact_h` (the real output size from the newer Split), the canvas uses that size directly; grids without these fields fall back to the `work_w`/`work_h` working canvas.
 - Neither is required: the node will auto-locate positions on the background. On complex scenes it may occasionally paste off-target; blocks that fail placement are **skipped** (the original content is kept — it never forces a paste into the middle of the frame).
 
 **Recommended starting parameters**
@@ -24,7 +24,7 @@ Input can be a single image or multiple blocks (each block may have a different 
 |---|---|
 | Optical-flow refinement `Optical_Flow` | ON |
 | TPS `use_tps` | ON |
-| Second-pass refinement `second_pass` | OFF (turn on when slight local misalignment remains) |
+| Second-pass refinement `second_pass` | OFF (turn on when slight local misalignment remains after the first flow pass) |
 | Smoothing `warp_smooth` | Default 1.0; raise slightly if wavy local distortion appears |
 | Color matching `color_match` | `Patch_based_color` |
 | Color protection `color_protection` | OFF (default). When ON, edited regions are no longer pulled toward the background color; the edited-color threshold is `Color_p_threshold` (default 20). |
@@ -38,12 +38,12 @@ Input can be a single image or multiple blocks (each block may have a different 
 
 ### 1. Optical-flow refinement `Optical_Flow` (default OFF)
 It does **not** control TPS; it only decides whether optical flow runs after geometric alignment. The widget is named `Optical_Flow`; the switch shows `on` / `off`.
-- **OFF**: placement only (bridge homography / auto homography). If `use_tps` is ON, TPS non-rigid correction still runs; no optical flow at all.
+- **OFF**: placement only (bridge homography / auto homography). If `use_tps` is ON, TPS non-rigid correction still runs; regular optical flow is skipped (`second_pass` ON still runs one separate 4 px small per-crop flow pass).
 - **ON**: adds two optical-flow layers on top of placement/TPS:
   1. Per-crop flow: each crop is locally aligned to the background, capped at 10 px on the bridge path with `original_crop_A` / 15 px on the auto path without it; the auto path skips this step when the post-placement residual is already below 1.2 px;
   2. Global polish: the whole merged image is corrected once against the original, capped at 12 px, smoothed by `warp_smooth`.
 - Flow backend is automatic: DIS first, Farneback fallback when unavailable — there is no separate switch.
-- With `original_crop_A` connected, flow is estimated at the content's native resolution (scaled by the A/B width ratio, long side limited to 2048), so accuracy follows the content rather than the canvas.
+- With `original_crop_A` connected, flow is estimated at the content's native resolution (scaled by the A/B width ratio, long side capped at 1536), so accuracy follows the content rather than the canvas.
 
 > **Note**: optical flow (both per-crop and global) is physically only suited for **fine adjustment** (about 10–15 px per crop, 12 px global cap). Large misalignment cannot be rescued by optical flow — use TPS or connect `original_crop_A`.
 
@@ -52,11 +52,12 @@ It does **not** control TPS; it only decides whether optical flow runs after geo
 - **OFF**: homography only (translation/scale/rotation/perspective); if `Optical_Flow` is ON, optical-flow refinement still applies.
 
 ### 3. Second-pass refinement `second_pass` (default OFF)
-Only effective with bridge alignment and `use_tps` ON.
-- **ON**: after TPS, each crop runs one more LoFTR match for residual displacement and applies a small-displacement (16 px cap) TPS tweak. The result is **applied directly** — there is no score-based check.
-- **OFF (default)**: skips the step, saving one LoFTR match (about 4~8 s per crop).
-- Use it when slight local misalignment remains after alignment/TPS (edges, thin lines, text).
-- Caveat: it reshapes the whole displacement field of that crop, so in some cases a straight edge near the tile border can bend slightly. If edges get worse with it ON, turn it off.
+Independent of TPS: it runs one more small-amplitude per-crop flow pass after the first per-crop flow.
+- **ON**: each crop runs the per-crop flow once more on the current result with a 4 px displacement cap (first pass: 10 px on the bridge route, 15 px on the auto route) and the result is **applied directly** — there is no score-based check.
+- **OFF (default)**: skips this step.
+- It does not require `use_tps`; it also runs on its own when `Optical_Flow` is OFF.
+- Use it when slight local misalignment remains after the first flow pass (edges, thin lines, text).
+- Caveat: it only applies small geometric corrections. If edges get worse with it ON, turn it off.
 
 ### 4. Polish smoothing `warp_smooth` (default 1.0, range 0~4)
 Only affects the final "global polish" step (which runs only when `Optical_Flow` is ON), controlling how smooth the correction displacement is.
@@ -95,9 +96,10 @@ The soft transition width at the paste edge; it also affects the scale of color 
 - **Larger (30~60 without grid)**: softer seams; the most direct and safest way to hide hard cuts/offsets.
 - **Smaller**: sharper edges, but pixel-level misalignment cuts become visible.
 
-### 9. `use_gpu` and `force_recompute`
+### 9. `use_gpu`, caching and debug log
 - **`use_gpu`** (default ON): accelerates feature matching (DISK/LoFTR) and the per-pixel LAB math in color matching (torch; the global color-shift estimate runs on CPU with numpy/OpenCV). OpenCV steps (optical flow, TPS/warp, seamless clone) still run on CPU.
-- **`force_recompute`** (default OFF): clears the alignment cache and re-aligns from scratch. The cache holds 4 entries (LRU); its key covers input image fingerprints, the grid fingerprint, `Optical_Flow`, `second_pass` and `use_tps` — changing color mode, feathering or `use_gpu` does not re-run alignment.
+- **`force_recompute`** (default OFF): clears the cache and re-aligns from scratch. Alignment results are cached per stage (placement H → TPS → per-crop flow → second pass); each key chains "input images + grid + the switch it depends on", so flipping one switch only re-runs that stage and the ones after it. The cache holds 5 entries (LRU). Changing color mode, feathering, `warp_smooth` or `use_gpu` does not re-run alignment; global polish has its own 2-entry cache keyed on those compose parameters.
+- **Stage timings**: with `SmartMergeImages.DEBUG` enabled, one extra `stage timings` line is printed at the end (placement / TPS / flow / second pass / compose / polish, with bridge / photometric / warp / mask sub-timings under placement). With it disabled, only cache-hit messages and the progress bar are shown.
 
 ### 10. Optional inputs `original_crop_A` / `split_grid`
 - **`original_crop_A`**: pre-edit crops with the same viewpoint/content as B. Paired with B by index; if there are fewer A than B, the extra B blocks fall back to auto matching. Improves placement reliability and enables bridge-style TPS.

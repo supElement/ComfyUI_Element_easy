@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 
 import torch
 import torch.nn.functional as F
@@ -26,8 +27,12 @@ from ..element_easy.sm_align import (
     AlignState,
     _bridge_photometric_ok,
     _compute_edit_mask,
-    perform_kornia_alignment,
+    apply_flow_stage,
+    apply_second_pass_stage,
+    apply_tps_stage,
+    perform_placement,
     perform_sift_alignment,
+    profile_snapshot,
 )
 from ..element_easy.sm_flow import global_flow_polish
 from ..element_easy.sm_compose import (
@@ -57,26 +62,13 @@ class SmartMergeImages:
             return
         _sm_debug_write(*args, **kwargs)
 
-    _align_cache = _LRUCache(4)
+    _align_cache = _LRUCache(5)
+    _polish_cache = _LRUCache(2)
     
     DESCRIPTION = (
         "智能局部重绘回贴节点: 将 AI 编辑后的局部裁块(B)自动对齐、畸变校正(TPS)、色彩统一后融合回原图。\n"
-        "· 接入 original_crop_A(编辑前裁块)→ 桥接对齐 B→A→BG + LoFTR/TPS 非刚性畸变校正 + 可选二阶段精校(second_pass); Optical_Flow 开时再做逐块光流 + 整图光流精修;\n"
-        "· Optical_Flow 开: 在 TPS 之上叠加光流精修(优先 DIS, 环境不支持时自动降级 Farneback);\n"
-        "· second_pass 开: 桥接对齐后每块都用 LoFTR 求一次残余位移并直接做 TPS 微调(默认关);\n"
-        "· color_protection 开: 保护分块内的 AI 改色(仅用未编辑像素估计色差); 关(默认): 全强度色彩校正;\n"
-        "· 三个图像端口原生支持 List / Batch / 单张输入(节点已声明 INPUT_IS_LIST), 无需外接 'Image List To Image Batch' 节点; 各裁块尺寸可不同。\n"
-        "推荐: Optical_Flow 开, use_tps 开, use_gpu=True。\n"
         "--------------------------------------------------\n"
         "Smart local-inpaint re-composite node: aligns the AI-edited crop (B), corrects its deformation via TPS,\n"
-        "harmonizes color, then blends it back into the original image.\n"
-        "· With original_crop_A connected → bridge alignment B→A→BG with LoFTR/TPS non-rigid correction and optional second-pass refinement (second_pass);\n"
-        "  when Optical_Flow is ON, per-crop optical flow plus global flow polish are added;\n"
-        "· Optical_Flow ON: adds optical-flow refinement on top of TPS (DIS first, auto-fallback to Farneback);\n"
-        "· second_pass ON: after bridge alignment, every crop gets a LoFTR residual match and a direct TPS tweak (default OFF);\n"
-        "· color_protection ON: keeps AI recolors (color shift estimated from un-edited pixels only); OFF (default): full-strength color matching;\n"
-        "· All three image ports natively accept list / batch / single images (INPUT_IS_LIST declared).\n"
-        "Recommended: Optical_Flow ON, use_tps ON, use_gpu=True."
     )
 
     OUTPUT_TOOLTIPS = ("融合后的完整图像(batch) | Merged image(s) as a standard batch",)
@@ -207,84 +199,116 @@ class SmartMergeImages:
         return hashlib.md5("|".join(parts).encode("utf-8")).hexdigest()[:24]
 
     @classmethod
-    def _make_align_key(cls, original_items, edited_items, cropA_items, warp_method,
-                        second_pass, use_gpu, use_tps=True, split_grid=None):
-        # use_gpu 只影响设备: 不改变放置几何, 放进键里会让"只切换设备"也整轮重算对齐。
-        # second_pass 会改变放置几何, 必须参与键。
-        return "|".join([
+    def _make_stage_keys(cls, original_items, edited_items, cropA_items, split_grid,
+                         use_tps, warp_method, second_pass):
+        """链式阶段键: 后一阶段只依赖前一阶段, 任一开关变化只让自身及之后的阶段失效。
+
+        use_gpu 只影响设备: 不改变放置几何, 放进键里会让"只切换设备"也整轮重算对齐。
+        """
+        base = "|".join([
             cls._items_fingerprint(original_items),
             cls._items_fingerprint(edited_items),
             cls._items_fingerprint(cropA_items),
             cls._grid_fingerprint(split_grid),
-            str(bool(warp_method)),
-            str(bool(second_pass)),
-            str(bool(use_tps)),
         ])
+        place_key = base + "|P"
+        tps_key = place_key + f"|T{int(bool(use_tps))}"
+        flow_key = tps_key + f"|F{int(bool(warp_method))}"
+        pass2_key = flow_key + f"|S{int(bool(second_pass))}"
+        return place_key, tps_key, flow_key, pass2_key
+
+    @classmethod
+    def _make_polish_key(cls, stage_key, color_match, color_protection,
+                         Color_p_threshold, feather_kernel, warp_smooth):
+        """整图光流精修的键: 合成参数 + 最终对齐阶段。"""
+        return "|".join([
+            stage_key,
+            str(color_match),
+            str(bool(color_protection)),
+            f"{float(Color_p_threshold):.3f}",
+            str(int(feather_kernel)),
+            f"{float(warp_smooth):.3f}",
+            "POLISH",
+        ])
+
+    @classmethod
+    def _resolve_cache_hit(cls, keys, *, force_recompute, warp_method, second_pass):
+        """按链路从最深阶段向上找命中点; 返回 (stage_start, pass2, flow, tps, place)。"""
+        place_key, tps_key, flow_key, pass2_key = keys
+        if force_recompute:
+            return "place", None, None, None, None
+        pass2_cached = cls._align_cache.get(pass2_key) if second_pass else None
+        if pass2_cached is not None:
+            return "done", pass2_cached, None, None, None
+        flow_cached = cls._align_cache.get(flow_key) if warp_method else None
+        if flow_cached is not None:
+            return "after_flow", None, flow_cached, None, None
+        tps_cached = cls._align_cache.get(tps_key)
+        if tps_cached is not None:
+            return "after_tps", None, None, tps_cached, None
+        place_cached = cls._align_cache.get(place_key)
+        if place_cached is not None:
+            return "after_place", None, None, None, place_cached
+        return "place", None, None, None, None
+
+    @classmethod
+    def _cache_stage(cls, key, entries, label):
+        if entries is None or not any(e is not None for e in entries):
+            return
+        cls._align_cache[key] = entries
+        n_ok = sum(1 for e in entries if e is not None)
+        _sm_note(f"[Smart Merge] 💾 已缓存 {n_ok}/{len(entries)} 个{label}结果 | cached {label}")
 
     @classmethod
     def _clear_cache(cls):
         cls._align_cache.clear()
+        cls._polish_cache.clear()
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
                 "original_image": ("IMAGE", {
-                    "tooltip": "原始背景图(未编辑的完整图像)。只有第一张会被使用。\n"
-                               "原生支持 List / Batch / 单张输入(节点已声明 INPUT_IS_LIST, 引擎不会逐项展开), 无需外接 Image List To Image Batch。\n"
-                               "--------------------------------------------------\n"
-                               "Original background image(s) before editing; only the first one is used.\n"
-                               "Natively accepts list / batch / single image (INPUT_IS_LIST declared, no per-item expansion) — "
-                               "no external 'Image List To Image Batch' node needed."
+                    "tooltip": "原始背景图(未编辑), 只用第一张。支持 List / Batch / 单张。\n"
+                               "Original background image; only the first is used. Accepts list / batch / single."
                 }),
                 "edited_crop_B": ("IMAGE", {
-                    "tooltip": "AI 编辑后的局部裁块(B), 将被对齐、畸变校正并贴回背景。可批量; 各裁块尺寸可不同(保持各自原始分辨率)。\n"
-                               "原生支持 List / Batch / 单张输入, 多个裁块在单次执行中全部处理, 输出一张合成图。\n"
-                               "--------------------------------------------------\n"
-                               "AI-edited local crop (B). It will be aligned, de-warped and re-composited onto the background. "
-                               "Crops may have different sizes (each keeps its native resolution).\n"
-                               "Natively accepts list / batch / single image — all crops are processed in ONE execution, producing a single merged image."
+                    "tooltip": "AI 编辑后的局部裁块, 将对齐并贴回背景。支持 List / Batch / 单张, 尺寸可不同。\n"
+                               "AI-edited crop(s) to align and composite back. Accepts list / batch / single; sizes may differ."
+                }),
+                "use_tps": ("BOOLEAN", {
+                    "default": True,
+                    "label_on": "TPS", "label_off": "Homography Only",
+                    "tooltip": "TPS 非刚性畸变校正: 开 = LoFTR/TPS 校正(推荐); 关 = 仅单应性定位, 最快。\n"
+                               "TPS non-rigid correction: ON = LoFTR/TPS (recommended); OFF = homography-only placement, fastest."
                 }),
                 "Optical_Flow": ("BOOLEAN", {
                     "default": False,
                     "label_on": "on",
                     "label_off": "off",
-                    "tooltip": "光流精修开关(TPS 由 use_tps 单独控制, 与这里无关):\n"
-                               "· 关: 不跑光流; 保持定位 + TPS(use_tps 开时)\n"
-                               "· 开: 在定位/TPS 之上再叠加逐块光流 + 整图光流精修\n"
-                               "--------------------------------------------------\n"
-                               "Optical-flow refinement switch (TPS is controlled separately by use_tps):\n"
-                               "· OFF: no optical flow; placement + TPS (if use_tps ON)\n"
-                               "· ON: adds per-crop optical flow and the global flow polish on top"
+                    "tooltip": "逐块光流精修: 开 = 在定位/TPS 上叠加逐块光流。整图精修由 Full_Optical_Flow 单独控制。\n"
+                               "Per-crop optical-flow refinement: ON = per-crop flow on top of placement/TPS. Full-image polish is controlled by Full_Optical_Flow."
                 }),
 
                 "second_pass": ("BOOLEAN", {
                     "default": False,
                     "label_on": "on",
                     "label_off": "off",
-                    "tooltip": "二阶段精校(桥接对齐且 use_tps 开时生效):\n"
-                               "· 开: 每块都执行并直接应用(TPS 后再匹配一次残余位移, 用小位移 TPS 微调), 不做评分判定\n"
-                               "· 关(默认): 不执行, 省一次 LoFTR 匹配\n"
-                               "适合对齐/TPS 后仍有轻微局部错位(边缘、细线、文字)时开启; 每块约多 4~8s\n"
-                               "--------------------------------------------------\n"
-                               "Second-pass refinement (bridge alignment, requires use_tps ON):\n"
-                               "· ON: always executed and applied per crop (no residual pre-check, no score-based rejection): after TPS, matches residual displacement once more and applies a small-displacement TPS tweak\n"
-                               "· OFF (default): not executed, saves one LoFTR match\n"
-                               "Use when slight local misalignment remains after alignment/TPS (edges, thin lines, text); about +4~8s per crop"
+                    "tooltip": "二阶段精校: 逐块光流之后再跑一次小幅逐块光流(位移上限 4px), 不依赖 TPS。\n"
+                               "Second-pass refinement: one extra small-amplitude per-crop flow pass (4px cap) after the first flow; independent of TPS."
                 }),
 
-                "use_tps": ("BOOLEAN", {
-                    "default": True,
-                    "label_on": "TPS", "label_off": "Homography Only",
-                    "tooltip": "TPS 非刚性畸变校正(推荐开启):\n· 开: 桥接定位 + LoFTR/TPS 畸变校正\n· 关: 仅桥接H定位(必要时+光流精修), 最快\n"
-                               "--------------------------------------------------\n"
-                               "TPS non-rigid deformation correction (recommended ON). OFF: bridge-H placement only, fastest."
+                "Full_Optical_Flow": ("BOOLEAN", {
+                    "default": False,
+                    "label_on": "on",
+                    "label_off": "off",
+                    "tooltip": "整图光流精修: 开 = 合成后对整张成品再做一次低幅光流修正(位移上限 12px), 与逐块光流相互独立。\n"
+                               "Full-image flow polish: ON = one extra low-amplitude flow pass on the whole merged image (12px cap); independent of per-crop flow."
                 }),
                 "warp_smooth": ("FLOAT", {
                     "default": 1.0, "min": 0.0, "max": 4.0, "step": 0.05,
-                    "tooltip": "整图精修光流场的平滑强度(仅 Optical_Flow 开时生效)\n"
-                               "--------------------------------------------------\n"
-                               "Smoothing strength of the global-flow polish field (only when Optical_Flow is ON)"
+                    "tooltip": "整图光流场的平滑强度(仅 Full_Optical_Flow 开时生效)。\n"
+                               "Smoothing strength of the full-image flow field (Full_Optical_Flow ON only)."
                 }),
 
                 "color_match": ([
@@ -294,87 +318,50 @@ class SmartMergeImages:
                     "SeamlessClone (PS Auto Blend)",
                     "Alpha Soft Blend"
                 ], {
-                    "tooltip": "色彩迁移/融合策略(消除局部编辑与背景的色差)。除 Alpha Soft Blend 外，统一先做轻度整图 LAB 粗校正，再执行所选分块匹配:\n"
-                               "· Patch_based_color 分块LAB色差同步(推荐, 色差大/不均匀时效果好)\n"
-                               "· LAB_Mean 整块均值/方差匹配(轻量快速)\n"
-                               "· Laplacian Pyramid 金字塔融合(先匹配整体亮度, 再多频带消接缝)\n"
-                               "· SeamlessClone 泊松融合(先匹配亮度; 内容大改区域慎用, 易褪色)\n"
-                               "· Alpha Soft Blend 仅羽化混合, 不做任何色彩/亮度校正\n"
-                               "--------------------------------------------------\n"
-                               "Color transfer / blending strategy. Except Alpha Soft Blend, all modes use gentle global LAB correction before per-tile matching:\n"
-                               "· Patch_based_color: patch-wise LAB color sync (recommended for casts)\n"
-                               "· LAB_Mean: per-block mean/std matching in LAB (lightweight)\n"
-                               "· Laplacian Pyramid: luminance matching followed by multi-band blending\n"
-                               "· SeamlessClone: luminance matching followed by Poisson blending\n"
-                               "· Alpha Soft Blend: feathering only, with no color/luminance correction"
+                    "tooltip": "色彩/融合策略。\n"
+                               "Color / blend strategy."
                 }),
 
                 "color_protection": ("BOOLEAN", {
                     "default": False,
                     "label_on": "true",
                     "label_off": "false",
-                    "tooltip": "是否保护分块内的 AI 改色(如把衣服改成红色):\n"
-                               "· 关(默认): 色彩匹配不区分编辑/未编辑像素, 整块按背景色调统一 → 普通分块合并的校正最强\n"
-                               "· 开: 只用未编辑像素估计色差, 且编辑区内校正减弱 → 保留 AI 改色, 但普通合并的校正会变弱\n"
-                               "编辑色的判定阈值见下方 Color_p_threshold。仅影响色彩匹配; 对齐/TPS/光流/羽化不受影响。\n"
-                               "--------------------------------------------------\n"
-                               "Protect AI recolored areas inside the crop:\n"
-                               "· OFF (default): color matching ignores edited/un-edited distinction → full-strength correction for normal tile merging\n"
-                               "· ON: estimate color shift from un-edited pixels only, and attenuate correction inside edited areas → keeps intentional recolors\n"
-                               "Affects color matching only; alignment / TPS / optical flow / feathering are unchanged."
+                    "tooltip": "保护分块内的 AI 改色。阈值见 Color_p_threshold。\n"
+                               "Protect AI recolors. See Color_p_threshold."
                 }),
 
                 "Color_p_threshold": ("FLOAT", {
                     "default": 20.0, "min": 3.0, "max": 120.0, "step": 1.0,
-                    "tooltip": "色差阈值(仅 color_protection 开时生效): crop B 与 A/原图的色差大于该值即判为编辑色, 由 color_protection 保护。\n"
-                               "阈值到 3 倍阈值之间平滑过渡; 越小保护范围越大, 越大只有明显改色才保护。默认 20 = 原行为。\n"
-                               "--------------------------------------------------\n"
-                               "Color-difference threshold (only when color_protection is ON): pixels whose color difference between crop B and A/original "
-                               "exceeds this value count as edited and are protected (transition up to 3x the value). "
-                               "Smaller = wider protection; default 20 = previous behavior."
+                    "tooltip": "改色判定阈值(仅 color_protection 开时生效), 越小保护范围越大, 默认 20。\n"
+                               "Recolor threshold (color_protection ON only); smaller = wider protection; default 20."
                 }),
 
                 "feather_kernel": ("INT", {
                     "default": 20, "min": 0, "max": 256, "step": 1,
-                    "tooltip": "羽化半径(px): 贴图边缘柔化宽度。色相保护关闭时兼作 Patch 色彩同步的块尺寸基准(块尺寸≈2×羽化); 色相保护开启时块尺寸改为按裁块短边 12%(夹在 48~160), 不再跟随羽化。一般 15~40; 越大过渡越柔但可能侵入更多原始内容。连接 split_grid 时改为 0~100 对应 Element Tile Merge 节点的 feather 0~1.0, 100 即最大值(超过按 1.0)。\n"
-                               "--------------------------------------------------\n"
-                               "Feather radius (px): edge-softening width of the pasted crop. With color_protection OFF it also sets the Patch color-sync block size (~2×feather); with protection ON the block size becomes 12% of the crop short side (clamped 48~160) instead. "
-                               "Typical 15~40; larger = softer transition but may eat into more original content. With split_grid connected, 0~100 maps linearly to Element Tile Merge's feather 0~1.0 (100 = maximum, values above are clamped)."
+                    "tooltip": "羽化半径(px), 越大过渡越柔, 一般 15~40。连接 split_grid 时 0~100 对应其 feather 0~1.0。\n"
+                               "Feather radius (px); larger = softer, typical 15~40. With split_grid, 0~100 maps to its feather 0~1.0."
                 }),
 
                 "use_gpu": ("BOOLEAN", {
                     "default": True,
-                    "tooltip": "GPU 加速特征匹配(DISK/LoFTR)与色彩匹配。光流、TPS/warp、无缝克隆等 OpenCV 步骤仍在 CPU 运行。无显卡或显存不足时关闭。\n"
-                               "--------------------------------------------------\n"
-                               "Use GPU for feature matching (DISK/LoFTR) and color matching. OpenCV steps (optical flow, TPS/warp, seamless clone) stay on CPU. Turn off if no GPU or VRAM is insufficient."
+                    "tooltip": "GPU 加速特征匹配与色彩匹配; 光流/TPS/无缝克隆仍在 CPU。\n"
+                               "Use GPU for feature and color matching; optical flow / TPS / seamless clone stay on CPU."
                 }),
                 "force_recompute": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "强制清空对齐缓存并重新计算(缓存容量 4 组, LRU)。输入未变但想重跑对齐时开启。\n"
-                               "--------------------------------------------------\n"
-                               "Force-clear the alignment cache (LRU, 4 entries) and recompute. Enable when inputs are unchanged but you want alignment re-run."
+                    "tooltip": "清空对齐缓存并重新计算。\n"
+                               "Clear the alignment cache and recompute."
                 }),
             },
             "optional": {
                 "original_crop_A": ("IMAGE", {
-                    "tooltip": "可选: 编辑前的局部裁块(A), 与 B 同视角同内容。提供后启用桥接对齐 B→(等比)→A→(SIFT)→BG, 对位比自动匹配更稳, 且 Optical_Flow 开时仍执行光流精修; 不提供则直接在背景上自动特征匹配。\n"
-                               "原生支持 List / Batch / 单张输入; A 与 B 数量/尺寸不必严格一致(自动按索引配对)。\n"
-                               "--------------------------------------------------\n"
-                               "Optional: pre-edit local crop (A), same viewpoint/content as B. When provided, bridge alignment B→(scale)→A→(SIFT)→BG is used — "
-                               "more reliable placement than auto-matching, and optical-flow refinement still applies when Optical_Flow is ON.\n"
-                               "Natively accepts list / batch / single image; A and B counts/sizes need not match exactly (paired by index)."
+                    "tooltip": "可选: 编辑前裁块, 与 B 同视角。提供后走 B→A→BG 桥接对齐, 更稳; 按索引配对。\n"
+                               "Optional: pre-edit crop with the same view as B. Enables bridge alignment B→A→BG (more reliable); paired by index."
                 }),
                 
                 "split_grid": (GRID_TYPE, {
-                    "tooltip": "可选: ElementTileSplit 的 grid 信息。连接后使用 fade_top/bottom/left/right 平滑 S 形渐变 + 圆角 mask 高斯羽化，逐 tile 覆盖式合成。\n"
-                               "grid 里带锁边 edit_mask 时会一并剔除未重绘的锁定带（与 ElementTileMerge 行为一致）。\n"
-                               "grid 坐标作为布局锚点与保底; 有桥接A或可靠特征匹配时仍走 TPS/光流, 找不到可靠对应时直接按 grid 坐标放置。\n"
-                               "色彩匹配顺序与非 grid 模式一致。\n"
-                               "--------------------------------------------------\n"
-                               "Optional: grid from ElementTileSplit. Uses smoothstep fades, gaussian mask feathering and alpha-over compositing. "
-                               "If the grid carries an edge-lock edit_mask, the un-repainted locked band is excluded as well (same as ElementTileMerge). "
-                               "Grid coordinates act as the layout anchor and fallback; TPS / optical flow still run when bridge-A or reliable features are available, otherwise the grid placement is used as-is. "
-                               "Color-matching order is identical to non-grid mode."
+                    "tooltip": "可选: ElementTileSplit 的 grid, 启用渐变/圆角羽化与逐 tile 合成。\n"
+                               "Optional: grid from ElementTileSplit; enables fade/rounded feathering and per-tile compositing."
                 }),
             },
         }
@@ -387,85 +374,10 @@ class SmartMergeImages:
     # 声明接受 List 输入, 阻止 ComfyUI 对 List 输入做隐式"逐项展开"
     INPUT_IS_LIST = True
 
-    
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     def smart_merge(self, original_image, edited_crop_B, Optical_Flow, color_match, second_pass, feather_kernel,
-                    color_protection=False, Color_p_threshold=20.0, use_tps=True, warp_smooth=1.0,
+                    color_protection=False, Color_p_threshold=20.0, use_tps=True,
+                    Full_Optical_Flow=False, warp_smooth=1.0,
                     use_gpu=False, force_recompute=False,
                     original_crop_A=None, split_grid=None, unique_id=None, prompt=None, extra_pnginfo=None):
 
@@ -478,6 +390,7 @@ class SmartMergeImages:
         Color_p_threshold = self._unwrap_scalar(Color_p_threshold, 20.0)
         second_pass = self._unwrap_scalar(second_pass, False)
         use_tps = self._unwrap_scalar(use_tps, True)
+        full_optical_flow = self._unwrap_scalar(Full_Optical_Flow, False)
         warp_smooth = self._unwrap_scalar(warp_smooth, 1.0)
         feather_kernel = self._unwrap_scalar(feather_kernel, 20)
         use_gpu = self._unwrap_scalar(use_gpu, False)
@@ -514,9 +427,6 @@ class SmartMergeImages:
         B_orig_loop = 1
         crops_per_bg = B_crop
 
-        polish_step = 1 if warp_method else 0
-        total_steps = B_orig_loop * (crops_per_bg + polish_step)
-
         device = _sm_pick_device(use_gpu)
         print(f"[Smart Merge] 使用设备: {device} (use_gpu={bool(use_gpu)}) | "
               f"device: {device}, use_gpu={bool(use_gpu)}")
@@ -525,22 +435,31 @@ class SmartMergeImages:
             self._clear_cache()
             print("[Smart Merge] 🗑 强制重算,缓存已清空 | Force recompute: cache cleared")
 
-        align_key = self._make_align_key(
-            items_orig, items_B, items_A, warp_method, second_pass,
-            use_gpu, use_tps, split_grid=split_grid
+        place_key, tps_key, flow_key, pass2_key = self._make_stage_keys(
+            items_orig, items_B, items_A, split_grid,
+            use_tps, warp_method, second_pass
         )
 
-        cached_aligns = None if force_recompute else self._align_cache.get(align_key)
-        align_cache_hit = cached_aligns is not None
-
-        if align_cache_hit:
-            print(f"[Smart Merge] ✅ 命中对齐缓存,跳过特征匹配 (共 {len(cached_aligns)} 组) | Alignment cache hit, skipping feature matching ({len(cached_aligns)} entries)")
-        else:
-            print("[Smart Merge] ⏳ 未命中缓存,执行完整对齐计算 | Cache miss, running full alignment computation")
+        # 进度步数只计本次实际执行的阶段; 命中缓存的阶段不占步
+        stage_hint = self._resolve_cache_hit(
+            (place_key, tps_key, flow_key, pass2_key),
+            force_recompute=force_recompute, warp_method=warp_method,
+            second_pass=second_pass)[0]
+        steps_per_crop = 1  # 合成/校色
+        if stage_hint == "place":
+            steps_per_crop += 1
+        if use_tps and stage_hint in ("place", "after_place"):
+            steps_per_crop += 1
+        if warp_method and stage_hint in ("place", "after_place", "after_tps"):
+            steps_per_crop += 1
+        if second_pass and stage_hint in ("place", "after_place", "after_tps", "after_flow"):
+            steps_per_crop += 1
+        polish_step = 1 if full_optical_flow else 0
+        total_steps = B_orig_loop * crops_per_bg * steps_per_crop + polish_step
 
         result_images = []
-        total_crops = B_orig_loop * crops_per_bg
-        new_aligns_to_save = [None] * total_crops if not align_cache_hit else None
+        stage_times = {}
+        profile_snapshot(reset=True)
 
         use_grid_alpha = split_grid is not None
         
@@ -660,46 +579,53 @@ class SmartMergeImages:
                 prepared_crops = {}
                 color_prot_masks = {}
 
-                # 第一遍：倒序对齐所有分块，全局统计完成前不做局部校色或合成。
-                for crop_idx in range(end_idx - 1, start_idx - 1, -1):
-                    pbar.step()
+                # ---- 分阶段对齐(定位 H → TPS → 逐块光流 → 二阶段); 每阶段独立缓存 ----
+                stage_start, pass2_entries, flow_entries, tps_entries, place_entries = \
+                    self._resolve_cache_hit(
+                        (place_key, tps_key, flow_key, pass2_key),
+                        force_recompute=force_recompute, warp_method=warp_method,
+                        second_pass=second_pass)
 
-                    img_fg = self._item_to_uint8_rgb(items_B[crop_idx])
-                    h_fg, w_fg = img_fg.shape[:2]
+                if stage_start == "done":
+                    _sm_note("[Smart Merge] ✅ 命中全流程缓存: 定位 H + TPS + 逐块光流 + 二阶段 | full pipeline cache hit")
+                elif stage_start == "after_flow":
+                    _sm_note("[Smart Merge] ✅ 命中定位 H + TPS + 逐块光流缓存, 只补二阶段 | reuse placement/TPS/flow")
+                elif stage_start == "after_tps":
+                    _sm_note("[Smart Merge] ✅ 命中定位 H + TPS 缓存, 继续逐块光流/二阶段 | reuse placement/TPS")
+                elif stage_start == "after_place":
+                    _sm_note("[Smart Merge] ✅ 命中定位 H 缓存, 继续 TPS/光流/二阶段 | reuse placement")
+                else:
+                    _sm_note("[Smart Merge] ⏳ 未命中缓存, 执行完整对齐计算 | Cache miss, running full alignment computation")
 
-                    crop_idx_mask = None
-                    if use_grid_alpha and crop_idx < len(grid_tiles):
-                        m_tensor = grid_tiles[crop_idx].get("mask")
-                        if m_tensor is not None:
-                            if hasattr(m_tensor, "cpu"):
-                                crop_idx_mask = m_tensor.cpu().numpy()
-                                if crop_idx_mask.ndim == 4:
-                                    crop_idx_mask = crop_idx_mask[0, :, :, 0]
-                            elif isinstance(m_tensor, np.ndarray):
-                                crop_idx_mask = m_tensor
-                                if crop_idx_mask.ndim == 3:
-                                    crop_idx_mask = crop_idx_mask[..., 0]
-                            if crop_idx_mask is not None and crop_idx_mask.shape[:2] != (h_fg, w_fg):
-                                crop_idx_mask = cv2.resize(crop_idx_mask, (w_fg, h_fg), interpolation=cv2.INTER_LINEAR)
+                # 阶段 1: 定位 H (桥接/grid/自动)
+                if stage_start == "place":
+                    _t0 = time.perf_counter()
+                    place_entries = [None] * B_crop
+                    n_stage = end_idx - start_idx
+                    _sm_note(f"[Smart Merge] ▶ 阶段 1/4 定位 H: {n_stage} 个分块 | "
+                             f"stage 1/4 placement: {n_stage} crops")
+                    for crop_idx in range(end_idx - 1, start_idx - 1, -1):
+                        img_fg = self._item_to_uint8_rgb(items_B[crop_idx])
+                        h_fg, w_fg = img_fg.shape[:2]
 
-                    cached_edit_mask = None
-                    cached_residual = None
-                    if align_cache_hit and crop_idx < len(cached_aligns) and cached_aligns[crop_idx] is not None:
-                        cached = cached_aligns[crop_idx]
-                        warped_fg = cached["warped_fg"].copy()
-                        warped_mask = cached["warped_mask"].copy()
-                        cached_edit_mask = cached.get("edit_mask")
-                        cached_residual = cached.get("residual")
-                        align_state.last_residual_px = cached_residual
-                    
-                    else:
+                        crop_idx_mask = None
+                        if use_grid_alpha and crop_idx < len(grid_tiles):
+                            m_tensor = grid_tiles[crop_idx].get("mask")
+                            if m_tensor is not None:
+                                if hasattr(m_tensor, "cpu"):
+                                    crop_idx_mask = m_tensor.cpu().numpy()
+                                    if crop_idx_mask.ndim == 4:
+                                        crop_idx_mask = crop_idx_mask[0, :, :, 0]
+                                elif isinstance(m_tensor, np.ndarray):
+                                    crop_idx_mask = m_tensor
+                                    if crop_idx_mask.ndim == 3:
+                                        crop_idx_mask = crop_idx_mask[..., 0]
+                                if crop_idx_mask is not None and crop_idx_mask.shape[:2] != (h_fg, w_fg):
+                                    crop_idx_mask = cv2.resize(crop_idx_mask, (w_fg, h_fg), interpolation=cv2.INTER_LINEAR)
+
                         img_bridge_A = None
                         if items_A is not None and crop_idx < len(items_A):
                             img_bridge_A = self._item_to_uint8_rgb(items_A[crop_idx])
-
-                        success_align = False
-                        warped_fg = None
-                        warped_mask = None
 
                         # split_grid 坐标可给出绝对正确的 H, 优先使用
                         H_grid = None
@@ -715,6 +641,7 @@ class SmartMergeImages:
                                 H_grid = np.array([[sx, 0, tx], [0, sy, ty], [0, 0, 1]], dtype=np.float64)
                                 self._dlog(f"[Smart Merge] split_grid 坐标将作为对齐锚点+保底 (Tile {crop_idx}) | grid coords used as anchor & fallback")
 
+                        place = None
                         if H_grid is not None:
                             # grid 只提供布局/保底。有原始裁块 A 时, 先实测 A→BG 的放置,
                             H_bridge = None
@@ -724,40 +651,40 @@ class SmartMergeImages:
                                 h_A, w_A = img_bridge_A.shape[:2]
                                 H_A_to_BG = perform_sift_alignment(img_bridge_A, original_bg)
                                 if (H_A_to_BG is not None and h_A > 0 and w_A > 0
-                                        and _bridge_photometric_ok(
-                                            H_A_to_BG, img_bridge_A, original_bg)):
-                                    sx, sy = w_A / float(w_fg), h_A / float(h_fg)
-                                    H_FG_to_A = np.array([
-                                        [sx, 0, 0],
-                                        [0, sy, 0],
-                                        [0, 0, 1]
-                                    ], dtype=np.float64)
-                                    H_bridge = np.dot(H_A_to_BG, H_FG_to_A)
+                                        and np.all(np.isfinite(H_A_to_BG))):
+                                    # 实测 A→BG 始终留给 TPS 当目标; 光度校验只决定能否直接用于放置
                                     align_state.bridge_H_A2BG = H_A_to_BG
-                                elif H_A_to_BG is not None:
-                                    _sm_log("[Smart Merge] 桥接 A→BG 光度校验未通过, 本轮退化到 grid 锚定 | bridge A→BG failed photometric check, using grid anchor")
+                                    if _bridge_photometric_ok(
+                                            H_A_to_BG, img_bridge_A, original_bg):
+                                        sx, sy = w_A / float(w_fg), h_A / float(h_fg)
+                                        H_FG_to_A = np.array([
+                                            [sx, 0, 0],
+                                            [0, sy, 0],
+                                            [0, 0, 1]
+                                        ], dtype=np.float64)
+                                        H_bridge = np.dot(H_A_to_BG, H_FG_to_A)
+                                    else:
+                                        _sm_log("[Smart Merge] 桥接 A→BG 光度校验未通过, 放置退化到 grid 锚定 (TPS 仍使用该实测H) | bridge A→BG failed photometric check, grid anchor for placement")
 
-                            warped_fg, warped_mask, success_align = perform_kornia_alignment(
-                                align_state,
-                                img_fg, original_bg,
-                                warp_method=warp_method,
-                                second_pass=second_pass, device=device,
+                            place = perform_placement(
+                                align_state, img_fg, original_bg, device=device,
                                 preset_H=H_grid,
-                                use_tps=use_tps,
                                 base_mask=crop_idx_mask,
                                 is_grid_preset=True,
-                                bridge_H=H_bridge
+                                bridge_H=H_bridge,
+                                crop_index=crop_idx - start_idx,
+                                crop_total=end_idx - start_idx,
+                                bridge_A=getattr(align_state, 'bridge_A', None)
                             )
-                            if success_align:
+                            if place is not None:
                                 _sm_log("[Smart Merge] split_grid 对齐完成 | Grid alignment done")
-                                
+
                         # 桥接对齐: B → A → BG
                         elif img_bridge_A is not None:
                             h_A, w_A = img_bridge_A.shape[:2]
                             if h_A > 0 and w_A > 0:
                                 H_A_to_BG = perform_sift_alignment(img_bridge_A, original_bg)
                                 if H_A_to_BG is not None:
-                                    h_bg, w_bg = img_bg.shape[:2]
                                     sx, sy = w_A / float(w_fg), h_A / float(h_fg)
                                     H_FG_to_A = np.array([
                                         [sx, 0, 0],
@@ -765,68 +692,151 @@ class SmartMergeImages:
                                         [0, 0, 1]
                                     ], dtype=np.float64)
                                     H_Total = np.dot(H_A_to_BG, H_FG_to_A)
-                                    align_state.bridge_A = img_bridge_A  
+                                    align_state.bridge_A = img_bridge_A
                                     align_state.bridge_H_A2BG = H_A_to_BG
-                                    warped_fg, warped_mask, success_align = perform_kornia_alignment(
-                                        align_state,
-                                        img_fg, original_bg,
-                                        warp_method=warp_method,
-                                        second_pass=second_pass, device=device,
+                                    place = perform_placement(
+                                        align_state, img_fg, original_bg, device=device,
                                         preset_H=H_Total,
-                                        use_tps=use_tps,
                                         base_mask=crop_idx_mask,
                                         crop_index=crop_idx - start_idx,
-                                        crop_total=end_idx - start_idx
+                                        crop_total=end_idx - start_idx,
+                                        bridge_A=img_bridge_A
                                     )
-                                    if success_align:
+                                    if place is not None:
                                         _sm_log("[Smart Merge] 桥接对齐 B→A→BG 完成 (含畸变校正) | Bridge alignment B→A→BG done (with deformation correction)")
 
-
-                        if not success_align:
-                            warped_fg, warped_mask, ok = perform_kornia_alignment(
-                                align_state,
-                                img_fg, original_bg,
-                                warp_method=warp_method,
-                                second_pass=second_pass, use_tps=use_tps, device=device,
+                        if place is None:
+                            place = perform_placement(
+                                align_state, img_fg, original_bg, device=device,
                                 base_mask=crop_idx_mask,
                                 crop_index=crop_idx - start_idx,
-                                crop_total=end_idx - start_idx
+                                crop_total=end_idx - start_idx,
+                                bridge_A=getattr(align_state, 'bridge_A', None)
                             )
-                            if ok:
-                                success_align = True
-                            else:
-                                _sm_log(f"[Smart Merge] 分块 {crop_idx} 无可靠放置, 跳过以保护整图 | "
-                                      f"tile {crop_idx} skipped: no reliable placement")
-                                skipped_tiles.append(crop_idx)
-                                continue
+                        if place is None:
+                            _sm_log(f"[Smart Merge] 分块 {crop_idx} 无可靠放置, 跳过以保护整图 | "
+                                  f"tile {crop_idx} skipped: no reliable placement")
+                            skipped_tiles.append(crop_idx)
+                            pbar.step(desc="Smart Merge · H")
+                            continue
+                        place_entries[crop_idx] = place
+                        pbar.step(desc="Smart Merge · H")
+                    self._cache_stage(place_key, place_entries, "定位 H | placement")
+                    stage_times["place"] = stage_times.get("place", 0.0) + (time.perf_counter() - _t0)
+                    stage_start = "after_place"
 
-                    if cached_edit_mask is not None and cached_edit_mask.shape == original_bg.shape[:2]:
-                        align_state.last_edit_mask = cached_edit_mask.copy()
+                # 阶段 2: 趋势 TPS
+                if stage_start == "after_place":
+                    _t0 = time.perf_counter()
+                    tps_entries = [None] * B_crop
+                    n_stage = end_idx - start_idx
+                    if use_tps:
+                        _sm_note(f"[Smart Merge] ▶ 阶段 2/4 趋势 TPS: {n_stage} 个分块 | "
+                                 f"stage 2/4 TPS: {n_stage} crops")
+                    for crop_idx in range(end_idx - 1, start_idx - 1, -1):
+                        pe = place_entries[crop_idx]
+                        if pe is None:
+                            continue
+                        img_fg = self._item_to_uint8_rgb(items_B[crop_idx])
+                        img_bridge_A = None
+                        if items_A is not None and crop_idx < len(items_A):
+                            img_bridge_A = self._item_to_uint8_rgb(items_A[crop_idx])
+                        tps_entries[crop_idx] = apply_tps_stage(
+                            align_state, pe, img_fg, original_bg, device=device,
+                            use_tps=use_tps, bridge_A=img_bridge_A)
+                        if use_tps:
+                            pbar.step(desc="Smart Merge · TPS")
+                    self._cache_stage(tps_key, tps_entries, "TPS")
+                    stage_times["tps"] = stage_times.get("tps", 0.0) + (time.perf_counter() - _t0)
+                    stage_start = "after_tps"
+
+                # 阶段 3: 逐块光流
+                if stage_start == "after_tps":
+                    if warp_method:
+                        _t0 = time.perf_counter()
+                        flow_entries = [None] * B_crop
+                        n_stage = end_idx - start_idx
+                        _sm_note(f"[Smart Merge] ▶ 阶段 3/4 逐块光流: {n_stage} 个分块 | "
+                                 f"stage 3/4 per-crop flow: {n_stage} crops")
+                        for crop_idx in range(end_idx - 1, start_idx - 1, -1):
+                            te = tps_entries[crop_idx]
+                            if te is None:
+                                continue
+                            flow_entries[crop_idx] = apply_flow_stage(
+                                align_state, te["warped_fg"], te["warped_mask"], original_bg,
+                                device=device, flow_scale=te.get("flow_scale", 1.0),
+                                style=te.get("flow_style", "generic"),
+                                g_base=te.get("g_base"), edit_mask=te.get("edit_mask"))
+                            pbar.step(desc="Smart Merge · FLOW")
+                        self._cache_stage(flow_key, flow_entries, "逐块光流 | per-crop flow")
+                        stage_times["flow"] = stage_times.get("flow", 0.0) + (time.perf_counter() - _t0)
                     else:
-                        align_state.last_edit_mask = _compute_edit_mask(
+                        flow_entries = tps_entries
+                    stage_start = "after_flow"
+
+                # 阶段 4: 二阶段逐块光流
+                if stage_start == "after_flow":
+                    if second_pass:
+                        _t0 = time.perf_counter()
+                        pass2_entries = [None] * B_crop
+                        n_stage = end_idx - start_idx
+                        _sm_note(f"[Smart Merge] ▶ 阶段 4/4 二阶段逐块光流: {n_stage} 个分块 | "
+                                 f"stage 4/4 pass2 flow: {n_stage} crops")
+                        for crop_idx in range(end_idx - 1, start_idx - 1, -1):
+                            fe = flow_entries[crop_idx]
+                            if fe is None:
+                                continue
+                            refresh_mask = (fe.get("flow_style", "generic") == "generic"
+                                            and not warp_method)
+                            pass2_entries[crop_idx] = apply_second_pass_stage(
+                                align_state, fe["warped_fg"], fe["warped_mask"], original_bg,
+                                device=device, flow_scale=fe.get("flow_scale", 1.0),
+                                edit_mask=fe.get("edit_mask"), refresh_mask=refresh_mask)
+                            pbar.step(desc="Smart Merge · PASS2")
+                        self._cache_stage(pass2_key, pass2_entries, "二阶段逐块光流 | pass2 flow")
+                        stage_times["pass2"] = stage_times.get("pass2", 0.0) + (time.perf_counter() - _t0)
+                    else:
+                        pass2_entries = flow_entries
+                    stage_start = "done"
+
+                final_entries = pass2_entries if second_pass else flow_entries
+
+                _tc = time.perf_counter()
+                for crop_idx in range(end_idx - 1, start_idx - 1, -1):
+                    pbar.step(desc="Smart Merge · COMPOSE")
+                    fe = (final_entries[crop_idx]
+                          if final_entries is not None and crop_idx < len(final_entries) else None)
+                    if fe is None:
+                        if crop_idx not in skipped_tiles:
+                            skipped_tiles.append(crop_idx)
+                        continue
+
+                    warped_fg = fe["warped_fg"].copy()
+                    warped_mask = fe["warped_mask"].copy()
+                    edit_mask = fe.get("edit_mask")
+                    if edit_mask is not None and edit_mask.shape == original_bg.shape[:2]:
+                        edit_mask = edit_mask.copy()
+                    else:
+                        edit_mask = _compute_edit_mask(
                             original_bg, warped_fg, valid_mask=warped_mask, device=device
                         )
-                    if cached_residual is not None:
-                        align_state.last_residual_px = cached_residual
+                    align_state.last_edit_mask = edit_mask
+                    align_state.last_residual_px = fe.get("residual")
+                    # 命中缓存时跳过各阶段, 仍需还原最终 flow_scale 供整图精修使用
+                    align_state.flow_scale = fe.get("flow_scale", align_state.flow_scale)
 
-                    if new_aligns_to_save is not None:
-                        new_aligns_to_save[crop_idx] = {
-                            "warped_fg": warped_fg.copy(),
-                            "warped_mask": warped_mask.copy(),
-                            "edit_mask": align_state.last_edit_mask.copy() if align_state.last_edit_mask is not None else None,
-                            "residual": align_state.last_residual_px,
-                        }
-
-                    prepared_crops[crop_idx] = (warped_fg, warped_mask, align_state.last_edit_mask)
+                    prepared_crops[crop_idx] = (warped_fg, warped_mask, edit_mask)
                     if color_protection:
                         thr = max(1.0, float(Color_p_threshold))
                         if abs(thr - 20.0) < 1e-6:
-                            color_prot_masks[crop_idx] = align_state.last_edit_mask
+                            color_prot_masks[crop_idx] = edit_mask
                         else:
                             color_prot_masks[crop_idx] = _compute_edit_mask(
                                 original_bg, warped_fg, d_lo=thr, d_hi=thr * 3.0,
                                 valid_mask=warped_mask, device=device)
 
+                _sm_note(f"[Smart Merge] ▶ 合成/校色: {len(prepared_crops)} 个分块 | "
+                         f"compose: {len(prepared_crops)} crops")
                 global_lab_shift = None
                 if color_match != "Alpha Soft Blend":
                     shift_crops = prepared_crops
@@ -945,18 +955,34 @@ class SmartMergeImages:
                 if compositor is not None:
                     img_result = compositor.finish(original_bg)
                     img_bg = img_result.copy()
-                
-                if union_mask.max() > 0.5 and warp_method:
-                    try:
-                        polish_edit_mask = union_edit_mask if union_edit_mask.min() < 0.99 else None
-                        img_result = global_flow_polish(
-                            img_result, original_bg, union_mask, edit_mask=polish_edit_mask,
-                            warp_smooth=warp_smooth,
-                            flow_scale=align_state.flow_scale)
-                    except Exception as e:
-                        _sm_note(f"[Smart Merge] 整图精修失败: {e} | global polish failed")
+                stage_times["compose"] = stage_times.get("compose", 0.0) + (time.perf_counter() - _tc)
+
+                if union_mask.max() > 0.5 and full_optical_flow:
+                    polish_key = self._make_polish_key(
+                        pass2_key, color_match, color_protection,
+                        Color_p_threshold, feather_kernel, warp_smooth)
+                    polished = None if force_recompute else self._polish_cache.get(polish_key)
+                    if polished is not None:
+                        img_result = polished.copy()
+                        _sm_note("[Smart Merge] ✅ 命中整图光流精修缓存 | polish cache hit")
+                    else:
+                        _sm_note("[Smart Merge] ▶ 整图光流精修 | global polish")
+                        _tp = time.perf_counter()
+                        try:
+                            polish_edit_mask = union_edit_mask if union_edit_mask.min() < 0.99 else None
+                            img_result = global_flow_polish(
+                                img_result, original_bg, union_mask, edit_mask=polish_edit_mask,
+                                warp_smooth=warp_smooth,
+                                flow_scale=align_state.flow_scale)
+                            self._polish_cache[polish_key] = img_result.copy()
+                        except Exception as e:
+                            _sm_note(f"[Smart Merge] 整图精修失败: {e} | global polish failed")
+                        stage_times["polish"] = stage_times.get("polish", 0.0) + (time.perf_counter() - _tp)
+                elif union_mask.max() > 0.5:
+                    _sm_log("[Smart Merge] 整图光流已关闭 (Full_Optical_Flow=off) | "
+                            "global polish disabled")
                 if polish_step:
-                    pbar.step(desc="Smart Merge · polish")
+                    pbar.step(desc="Smart Merge · POLISH")
 
                 result_images.append(torch.from_numpy(img_result.astype(np.float32) / 255.0))
 
@@ -969,11 +995,18 @@ class SmartMergeImages:
         pbar.close()
         set_active_progress(None)
 
-        if new_aligns_to_save is not None and any(x is not None for x in new_aligns_to_save):
-            self._align_cache[align_key] = new_aligns_to_save
-            _n_ok = sum(1 for x in new_aligns_to_save if x is not None)
-            print(f"[Smart Merge] 💾 已缓存 {_n_ok}/{len(new_aligns_to_save)} 个对齐结果 | "
-                  f"Cached {_n_ok}/{len(new_aligns_to_save)} alignments")
+        if stage_times:
+            _names = {"place": "定位", "tps": "TPS", "flow": "光流",
+                      "pass2": "二阶段", "compose": "合成", "polish": "整图精修"}
+            _parts = [f"{_names[k]} {stage_times[k]:.1f}s" for k in _names if k in stage_times]
+            _prof = profile_snapshot()
+            if _prof and "place" in stage_times:
+                _sub = [f"{lab} {_prof[k]:.1f}s" for k, lab in
+                        (("sift", "桥接"), ("photo", "光度"),
+                         ("place_warp", "变形"), ("place_mask", "掩码")) if k in _prof]
+                if _sub:
+                    _parts[0] += " (" + " / ".join(_sub) + ")"
+            _sm_log("[Smart Merge] 分阶段耗时: " + " / ".join(_parts) + " | stage timings")
 
 
         if len(result_images) == 1:

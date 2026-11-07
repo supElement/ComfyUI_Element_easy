@@ -4,6 +4,7 @@
 import cv2
 import numpy as np
 import torch
+import time
 import kornia.feature as KF
 
 from dataclasses import dataclass, field
@@ -17,7 +18,7 @@ from .sm_common import (
     _sm_numpy,
     _sm_rgb_to_lab,
     _sm_fast_blur,
-    _sm_median,
+    _sm_u8_median,
 )
 from .sm_config import (
     B2BG_LAYOUT_MAX_RESID,
@@ -32,6 +33,8 @@ from .sm_config import (
     GRID_ANCHOR_MAX_PX,
     GRID_ANCHOR_TOLERANCE,
     GRID_AUTO_MIN_INLIERS,
+    REGION_MARGIN_PX,
+    SECOND_PASS_FLOW_PX,
 )
 from .sm_flow import (
     _brighten_for_match,
@@ -39,9 +42,24 @@ from .sm_flow import (
     _match_histogram,
     _match_histogram_rgb,
     _to_flow_luma,
-    refine_second_pass,
     refine_with_optical_flow,
 )
+
+# 定位阶段的分项耗时(仅 debug 汇总使用): sift / photo / place_warp / place_mask
+_PROFILE = {}
+# 合成阶段最多读到掩码 bbox+512(feather 上限 256), 640 留余量
+_PLACE_WARP_MARGIN = 640
+
+
+def _prof_add(key, dt):
+    _PROFILE[key] = _PROFILE.get(key, 0.0) + dt
+
+
+def profile_snapshot(reset=False):
+    snap = dict(_PROFILE)
+    if reset:
+        _PROFILE.clear()
+    return snap
 
 
 @dataclass
@@ -56,6 +74,8 @@ class AlignState:
     match_level: object = None
     last_edit_mask: object = None
     last_residual_px: object = None
+    flow_style: str = "generic"   # "bridge" / "generic": 逐块光流走哪套验收口径
+    flow_g_base: object = None    # 桥接 TPS 被拒时, 光流的前置残差(不必重测)
     b2bg_layout_obs: dict = field(default_factory=dict)
 
 
@@ -96,6 +116,13 @@ def _arr_fingerprint(arr, tag=""):
            + "_" + "x".join(map(str, arr.shape))
 
 def perform_sift_alignment( query_img, train_img):
+    _t = time.perf_counter()
+    try:
+        return _sift_bridge_alignment(query_img, train_img)
+    finally:
+        _prof_add("sift", time.perf_counter() - _t)
+
+def _sift_bridge_alignment( query_img, train_img):
     H, info = _sift_bridge_homography(query_img, train_img, max_dim=1536,
                                            nfeatures=5000, contrast=0.04,
                                            cache_tag="bg_sift")
@@ -175,10 +202,12 @@ def _sift_bridge_homography( query_img, train_img, max_dim, nfeatures,
         S_inv = np.array([[1.0/scale, 0, 0], [0, 1.0/scale, 0], [0, 0, 1]], dtype=np.float64)
         H = S_inv @ H @ S
 
-    # 裁块 A 可以按内容原生分辨率送入, 此时它比 BG 小好几倍, 合法的 H 面积比也会远大于 1;
-    # 上界放宽到"A 铺满整张 BG", 透视/边长比/凸性仍能拦住退化 H, 放置的正确性由随后的光度校验把关。
+    # 裁块 A 可以按内容原生分辨率送入(比 BG 小, 面积比远大于 1), 也可能本身是被放大的分块
+    # (比 BG 大数倍, 如 4x 分块面积比 0.0625)。退化由透视/边长比/凸性/越界把关,
+    # 放置的正确性由随后的 _bridge_photometric_ok 把关。
     max_area_ratio = max(6.0, float(w_t * h_t) / float(max(w_q * h_q, 1)))
     if not _homography_is_sane(H, h_q, w_q, h_t, w_t,
+                                    min_area_ratio=0.01,
                                     max_area_ratio=max_area_ratio):
         _sm_log("[Smart Merge] A→BG 单应性未通过体检(透视/形状/凸性), 弃用桥接 | A→BG homography failed sanity check, discarding bridge")
         return None, "单应性体检未过"
@@ -336,9 +365,10 @@ def _resolve_grid_alignment(state, query_img, train_img, base_mask, H_grid, H_br
     优先级:
       1) 桥接 H(A→BG): 来自未编辑原块与背景的实测, 是放置位置最可靠的证据;
          grid 坐标在这里只当布局参考, 不参与竞争。
-      2) 无桥接时才做 B→BG 特征匹配, 且必须同时满足: 内点足够、偏离 grid 在
-         容差内、结构评分不劣于 grid。
-      3) 都不成立 → grid 保底。
+      2) 无桥接时做 B→BG 特征匹配: 只要求内点足够且结构评分不劣于 grid。
+         不再限制偏离 grid 的像素容差——真实漂移会被容差误判为匹配失败。
+      3) 特征匹配被结构评分否决时, 用它落在 grid 邻域内的内点重估。
+      4) 都不成立 → grid 保底。
     """
     h_q, w_q = query_img.shape[:2]
     h_t, w_t = train_img.shape[:2]
@@ -364,16 +394,16 @@ def _resolve_grid_alignment(state, query_img, train_img, base_mask, H_grid, H_br
         _sm_log("[Smart Merge] Grid锚定: 特征匹配失败, 使用grid保底 | auto-match failed, grid fallback")
         return H_grid, "Grid_Base", -1
 
-    tol = _grid_anchor_tol_px(H_grid, w_q, h_q)
     dev = _homography_deviation(H_auto, H_grid, w_q, h_q)
-    if n_inl >= GRID_AUTO_MIN_INLIERS and dev <= tol \
+    if n_inl >= GRID_AUTO_MIN_INLIERS \
             and _grid_candidate_ok(query_img, train_img, base_mask, H_auto, H_grid):
-        _sm_log(f"[Smart Merge] Grid锚定: 特征匹配偏离grid {dev:.1f}px ≤ 容差{tol:.1f}px, "
-                   f"内点{n_inl}, 采用特征精修 | auto-match accepted")
+        _sm_log(f"[Smart Merge] Grid锚定: 采用特征匹配 (内点{n_inl}, 偏离grid {dev:.1f}px) | "
+                   f"auto-match accepted")
         return H_auto, (m_auto or "Grid_Auto"), n_inl
 
-    _sm_log(f"[Smart Merge] Grid锚定: 自动匹配不可信(内点{n_inl}, 偏离{dev:.1f}px/容差{tol:.1f}px), "
+    _sm_log(f"[Smart Merge] Grid锚定: 自动匹配不可信(内点{n_inl}, 偏离{dev:.1f}px), "
                f"尝试邻域重估 | auto-match rejected, trying anchored refit")
+    tol = _grid_anchor_tol_px(H_grid, w_q, h_q)
     H_anch = _anchor_refit_homography(state, 
         H_auto, H_grid, w_q, h_q, h_t, w_t, tol,
         min_area_ratio=1e-4, max_area_ratio=1e4,
@@ -872,15 +902,49 @@ def _filter_reliable_correspondences( q, t, h_t, w_t, edit_mask):
                f"(改色区剔除 {len(q) - n_keep} 点) | reliable correspondences")
     return q3, t3, True
 
+def _projected_region( H, w_q, h_q, w_t, h_t, margin=REGION_MARGIN_PX):
+    """H 投影后 query 覆盖区外扩 margin 的矩形; 覆盖整幅或投影异常时返回 None。"""
+    corners = np.float32([[0, 0], [w_q, 0], [w_q, h_q], [0, h_q]]).reshape(1, -1, 2)
+    proj = cv2.perspectiveTransform(corners, np.asarray(H, dtype=np.float64)).reshape(-1, 2)
+    if not np.all(np.isfinite(proj)):
+        return None
+    x0 = int(np.floor(proj[:, 0].min())) - margin
+    y0 = int(np.floor(proj[:, 1].min())) - margin
+    x1 = int(np.ceil(proj[:, 0].max())) + margin
+    y1 = int(np.ceil(proj[:, 1].max())) + margin
+    x0, y0 = max(0, x0), max(0, y0)
+    x1, y1 = min(w_t, x1), min(h_t, y1)
+    if x1 - x0 < 32 or y1 - y0 < 32:
+        return None
+    if x0 == 0 and y0 == 0 and x1 == w_t and y1 == h_t:
+        return None
+    return x0, y0, x1, y1
+
 def _bridge_photometric_ok( H, query_img, train_img):
+    _t = time.perf_counter()
+    try:
+        return _bridge_photometric_check(H, query_img, train_img)
+    finally:
+        _prof_add("photo", time.perf_counter() - _t)
+
+def _bridge_photometric_check( H, query_img, train_img):
     """桥接H质量粗检: CLAHE 归一化后灰度中位差 + 高梯度区方向余弦一致性。
     对明暗差异鲁棒，同时能抓到局部结构错位。"""
     h_t, w_t = train_img.shape[:2]
     h_q, w_q = query_img.shape[:2]
-    mask = cv2.warpPerspective(np.ones((h_q, w_q), np.float32), H, (w_t, h_t), flags=cv2.INTER_LINEAR)
+    reg = _projected_region(H, w_q, h_q, w_t, h_t)
+    if reg is None:
+        x0 = y0 = 0
+        rw, rh = w_t, h_t
+        H_reg = H
+    else:
+        x0, y0, x1, y1 = reg
+        rw, rh = x1 - x0, y1 - y0
+        H_reg = np.dot(np.array([[1.0, 0, -x0], [0, 1.0, -y0], [0, 0, 1.0]]), H)
+    mask = cv2.warpPerspective(np.ones((h_q, w_q), np.float32), H_reg, (rw, rh), flags=cv2.INTER_LINEAR)
     if float(mask.sum()) < 100.0:
         return False
-    warped = cv2.warpPerspective(query_img, H, (w_t, h_t), flags=cv2.INTER_LINEAR,
+    warped = cv2.warpPerspective(query_img, H_reg, (rw, rh), flags=cv2.INTER_LINEAR,
                                  borderMode=cv2.BORDER_REFLECT101)
     m = cv2.erode((mask > 0.5).astype(np.uint8), np.ones((15, 15), np.uint8)) > 0
     if not np.any(m):
@@ -888,7 +952,8 @@ def _bridge_photometric_ok( H, query_img, train_img):
 
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     g1 = clahe.apply(cv2.cvtColor(warped, cv2.COLOR_RGB2GRAY)).astype(np.float32)
-    g2 = clahe.apply(cv2.cvtColor(train_img, cv2.COLOR_RGB2GRAY)).astype(np.float32)
+    g2 = clahe.apply(cv2.cvtColor(train_img[y0:y0 + rh, x0:x0 + rw],
+                                  cv2.COLOR_RGB2GRAY)).astype(np.float32)
 
     med = float(np.median(np.abs(g1[m] - g2[m])))
     if med > BRIDGE_MAX_MEDIAN_DIFF:
@@ -911,10 +976,32 @@ def _bridge_photometric_ok( H, query_img, train_img):
             return False
     return True
 
+def _mask_region( mask, shape, margin=REGION_MARGIN_PX):
+    """掩码有效区外扩 margin 后的矩形; 覆盖整幅时返回 None。"""
+    u8 = (mask > 0.5).astype(np.uint8)
+    pts = cv2.findNonZero(u8)
+    if pts is None:
+        return None
+    x, y, rw, rh = cv2.boundingRect(pts)
+    h, w = shape[:2]
+    x0, y0 = max(0, x - margin), max(0, y - margin)
+    x1, y1 = min(w, x + rw + margin), min(h, y + rh + margin)
+    if x0 == 0 and y0 == 0 and x1 == w and y1 == h:
+        return None
+    return x0, y0, x1, y1
+
 def _photometric_score( warped_fg, warped_mask, train_img, edit_mask=None):
     """对齐质量评分: 掩码内灰度绝对差中位数。有 edit_mask 时剔除改色区。"""
     if warped_fg.shape[:2] != train_img.shape[:2]:
         return 1e9
+    reg = _mask_region(warped_mask, warped_fg.shape)
+    if reg is not None:
+        x0, y0, x1, y1 = reg
+        warped_fg = warped_fg[y0:y1, x0:x1]
+        warped_mask = warped_mask[y0:y1, x0:x1]
+        train_img = train_img[y0:y1, x0:x1]
+        if edit_mask is not None:
+            edit_mask = edit_mask[y0:y1, x0:x1]
     m_geo = cv2.erode((warped_mask > 0.5).astype(np.uint8), np.ones((15, 15), np.uint8)) > 0
     m = m_geo
     if edit_mask is not None:
@@ -1062,9 +1149,58 @@ def filter_correspondences_local_affine( pts_q, pts_t, k=8, inlier_thresh=4.0):
         keep_mask = np.ones(len(pts_q), dtype=bool)
     return pts_q[keep_mask], pts_t[keep_mask]
 
+def _quadratic_basis(pts, center, scale):
+    xn = (pts[:, 0] - center[0]) / scale
+    yn = (pts[:, 1] - center[1]) / scale
+    return np.stack([np.ones_like(xn), xn, yn, xn * xn, xn * yn, yn * yn], axis=1)
+
+def _fit_quadratic_trend(src, disp, iters=3):
+    """6 项二次曲面拟合位移场, 只保留整体形变趋势。
+    Huber 权抑制局部不一致点; 6 个自由度没有表达小面积突变的能力。"""
+    center = src.mean(axis=0)
+    scale = max(float(np.abs(src - center).max()), 1.0)
+    basis = _quadratic_basis(src, center, scale)
+    coef = np.zeros((6, 2), dtype=np.float64)
+    w = np.ones(len(src), dtype=np.float64)
+    for _ in range(iters):
+        sw = np.sqrt(w)[:, None]
+        for c in range(2):
+            coef[:, c], *_ = np.linalg.lstsq(
+                basis * sw, disp[:, c] * sw[:, 0], rcond=None)
+        resid = np.linalg.norm(basis @ coef - disp, axis=1)
+        sigma = max(1.4826 * float(np.median(resid)), 1.0)
+        w = 1.0 / (1.0 + (resid / (2.0 * sigma)) ** 2)
+    return coef, center, scale
+
+def _eval_quadratic_trend(coef, center, scale, pts):
+    return _quadratic_basis(pts, center, scale) @ coef
+
 def warp_tps( warped_fg_src, warped_mask_src, train_img, pts_src, pts_dst,
-             reg_lambda=5, max_disp=64.0, max_points=1500):
-    """TPS 全局薄板样条: 均匀降采样→全局平滑场(数学保证无波浪)→粗网格评估→场高斯平滑"""
+             reg_lambda=5, max_disp=64.0, max_points=1500, trend_only=False):
+    """只在该块掩码区域(外扩 REGION_MARGIN_PX)内求场/重采样, 其余画布原样保留。"""
+    reg = _mask_region(warped_mask_src, warped_fg_src.shape)
+    if reg is None:
+        return _warp_tps_field(warped_fg_src, warped_mask_src, train_img,
+                               pts_src, pts_dst, reg_lambda, max_disp,
+                               max_points, trend_only)
+    x0, y0, x1, y1 = reg
+    off = np.array([x0, y0], dtype=np.float64)
+    fg_r, mask_r = _warp_tps_field(
+        warped_fg_src[y0:y1, x0:x1], warped_mask_src[y0:y1, x0:x1],
+        train_img[y0:y1, x0:x1], pts_src - off, pts_dst - off,
+        reg_lambda, max_disp, max_points, trend_only)
+    if fg_r is None:
+        return None, None
+    fg_out = warped_fg_src.copy()
+    fg_out[y0:y1, x0:x1] = fg_r
+    mask_out = warped_mask_src.copy()
+    mask_out[y0:y1, x0:x1] = mask_r
+    return fg_out, mask_out
+
+def _warp_tps_field( warped_fg_src, warped_mask_src, train_img, pts_src, pts_dst,
+             reg_lambda=5, max_disp=64.0, max_points=1500, trend_only=False):
+    """TPS 全局薄板样条: 均匀降采样→全局平滑场(数学保证无波浪)→粗网格评估→场高斯平滑
+    trend_only=True 时改用二次曲面趋势场: 只校正整体弧形/尺度趋势, 无局部自由度。"""
     from scipy.interpolate import RBFInterpolator
     from scipy.spatial import cKDTree
     src = pts_src.astype(np.float64)
@@ -1131,10 +1267,17 @@ def warp_tps( warped_fg_src, warped_mask_src, train_img, pts_src, pts_dst,
     perm = rng.permutation(n)
     n_fit = max(8, int(n * 0.8))
     if n - n_fit >= 4:
-        rbf_cv = RBFInterpolator(src[perm[:n_fit]], dst[perm[:n_fit]],
-                                 kernel="thin_plate_spline",
-                                 smoothing=max(reg_lambda * 2.0, 4.0))
-        resid = dst[perm[n_fit:]] - rbf_cv(src[perm[n_fit:]])
+        if trend_only:
+            cv_coef, cv_center, cv_scale = _fit_quadratic_trend(
+                src[perm[:n_fit]], disp[perm[:n_fit]])
+            hold = src[perm[n_fit:]]
+            pred = hold + _eval_quadratic_trend(cv_coef, cv_center, cv_scale, hold)
+            resid = dst[perm[n_fit:]] - pred
+        else:
+            rbf_cv = RBFInterpolator(src[perm[:n_fit]], dst[perm[:n_fit]],
+                                     kernel="thin_plate_spline",
+                                     smoothing=max(reg_lambda * 2.0, 4.0))
+            resid = dst[perm[n_fit:]] - rbf_cv(src[perm[n_fit:]])
         smooth_err = float(np.median(np.linalg.norm(resid, axis=1)))
         if smooth_err > 6.0:
             _sm_log(f"[Smart Merge] TPS 拒绝: 留出残差{smooth_err:.1f}px>6 (匹配混乱) | chaotic")
@@ -1149,21 +1292,38 @@ def warp_tps( warped_fg_src, warped_mask_src, train_img, pts_src, pts_dst,
         _sm_log(f"[Smart Merge] TPS 限幅收紧: {max_disp:.0f}→{_cap:.1f}px | cap tightened")
     max_disp = _cap
 
-    disp = disp * np.clip(max_disp / np.maximum(mag, 1e-6), 0.0, 1.0)[:, None]
-    rbf = RBFInterpolator(src, src + disp, kernel="thin_plate_spline",
-                          smoothing=reg_lambda)
     h, w = train_img.shape[:2]
     step = max(8, int(np.ceil(np.sqrt(w * h / 120000.0)))) 
     gx, gy = np.meshgrid(np.arange(0, w, step), np.arange(0, h, step))
     gp = np.stack([gx.ravel(), gy.ravel()], axis=1)
-    fg = rbf(gp) - gp
-    tree = cKDTree(src)
-    dnn, _ = tree.query(gp, k=1)
-    ref = max(float(np.median(tree.query(src, k=2)[0][:, 1])), 12.0)
-    decay = 0.20 + 0.80 * np.exp(-((dnn / (3.0 * ref)) ** 2))  
-    fg = fg * decay[:, None]
-    fmag = np.linalg.norm(fg, axis=1)
-    fg = fg * np.clip(max_disp / np.maximum(fmag, 1e-6), 0.0, 1.0)[:, None]
+    if trend_only:
+        # 二次曲面趋势场: 不允许局部自由度, 也不做距离衰减(衰减本身是 <100px 尺度的变化)
+        coef, center, scale = _fit_quadratic_trend(src, disp)
+        fg = _eval_quadratic_trend(coef, center, scale, gp)
+        # 限幅只在对应点覆盖范围内评估, 画布远场的外推值不参与整体缩放
+        lo = src.min(axis=0)
+        hi = src.max(axis=0)
+        pad = 0.25 * (hi - lo + 1.0)
+        inb = np.all((gp >= lo - pad) & (gp <= hi + pad), axis=1)
+        fmax = float(np.linalg.norm(fg[inb], axis=1).max()) if inb.any() else 0.0
+        shrink = min(1.0, max_disp / max(fmax, 1e-6))
+        if shrink < 1.0:
+            fg = fg * shrink
+            _sm_log(f"[Smart Merge] 趋势场限幅: 整体缩放 {shrink:.3f} | trend field scaled")
+        fmag = np.linalg.norm(fg, axis=1)
+        fg = fg * np.clip(max_disp / np.maximum(fmag, 1e-6), 0.0, 1.0)[:, None]
+    else:
+        disp = disp * np.clip(max_disp / np.maximum(mag, 1e-6), 0.0, 1.0)[:, None]
+        rbf = RBFInterpolator(src, src + disp, kernel="thin_plate_spline",
+                              smoothing=reg_lambda)
+        fg = rbf(gp) - gp
+        tree = cKDTree(src)
+        dnn, _ = tree.query(gp, k=1)
+        ref = max(float(np.median(tree.query(src, k=2)[0][:, 1])), 12.0)
+        decay = 0.20 + 0.80 * np.exp(-((dnn / (3.0 * ref)) ** 2))  
+        fg = fg * decay[:, None]
+        fmag = np.linalg.norm(fg, axis=1)
+        fg = fg * np.clip(max_disp / np.maximum(fmag, 1e-6), 0.0, 1.0)[:, None]
     gh, gw = gx.shape
     k = int(max(5, step)) | 1
     fg2 = fg.reshape(gh, gw, 2).astype(np.float32)
@@ -1178,7 +1338,8 @@ def warp_tps( warped_fg_src, warped_mask_src, train_img, pts_src, pts_dst,
                           borderMode=cv2.BORDER_REPLICATE)
     warped_mask = cv2.remap(warped_mask_src, map_x, map_y, interpolation=cv2.INTER_LINEAR,
                             borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-    _sm_log(f"[Smart Merge] TPS 场生效: {n}/{n_raw}点(保留/原始) 中位位移{med_mag:.1f}px "
+    _sm_log(f"[Smart Merge] {'二次趋势' if trend_only else 'TPS'} 场生效: "
+          f"{n}/{n_raw}点(保留/原始) 中位位移{med_mag:.1f}px "
           f"CV残差{smooth_err:.1f}px 覆盖{cov}/256")
     return warped_fg, warped_mask
 
@@ -1324,29 +1485,33 @@ def estimate_homography(state, query_img, train_img, device="cpu",
     method_used = state.match_level or "DISK"
     return H, inliers, num_inliers, method_used
 
-def perform_kornia_alignment(state, query_img, train_img, warp_method=False, second_pass=False,
-                             device="cpu", preset_H=None, max_flow_px=None, use_tps=True, base_mask=None,
-                             is_grid_preset=False, bridge_H=None, crop_index=0, crop_total=1):
+def perform_placement(state, query_img, train_img, *, device="cpu", preset_H=None,
+                      base_mask=None, is_grid_preset=False, bridge_H=None,
+                      crop_index=0, crop_total=1, bridge_A=None):
+    """阶段 1: 定位 H 并把分块变换到背景画布, 不含 TPS / 光流。
 
+    返回的 dict 可整体缓存, 后续 TPS / 光流阶段只依赖这里的结果。
+    """
     h_q, w_q = query_img.shape[:2]
     h_t, w_t = train_img.shape[:2]
 
     # 估流尺度: 桥接 A 与编辑分块 B 的尺度比。A 由上游缩放到内容原生分辨率时,
     # 光流就在原生分辨率上估, 不再被画布分辨率拖着走。
     flow_scale = getattr(state, 'flow_scale', 1.0)
-    _bridge_a = getattr(state, 'bridge_A', None)
-    if _bridge_a is not None and _bridge_a.shape[1] > 0 and w_q > 0:
-        flow_scale = min(1.0, _bridge_a.shape[1] / float(w_q))
+    if bridge_A is not None and bridge_A.shape[1] > 0 and w_q > 0:
+        flow_scale = min(1.0, bridge_A.shape[1] / float(w_q))
     state.flow_scale = flow_scale
-    
+
     state.last_edit_mask = None
     state.last_residual_px = None
+    state.flow_style = "generic"
+    state.flow_g_base = None
 
     H = None
     method_used = None
     num_inliers = 0
     is_bridge = False
-    
+
     preset_valid = preset_H is not None and _homography_is_sane(
         preset_H, h_q, w_q, h_t, w_t,
         min_area_ratio=1e-4 if is_grid_preset else 0.01,
@@ -1357,36 +1522,111 @@ def perform_kornia_alignment(state, query_img, train_img, warp_method=False, sec
     if preset_valid:
         if is_grid_preset:
             # grid 坐标只是布局参考。有桥接 A 时优先用 A→BG 的实测放置;
-            H, method_used, num_inliers = _resolve_grid_alignment(state, 
-                query_img, train_img, base_mask, preset_H, bridge_H, device)
+            H, method_used, num_inliers = _resolve_grid_alignment(
+                state, query_img, train_img, base_mask, preset_H, bridge_H, device)
             is_bridge = True
         elif _bridge_photometric_ok(preset_H, query_img, train_img):
             H = preset_H
             method_used = "Bridge(B→A→BG)"
             num_inliers = -1
             is_bridge = True
-    
 
-    if is_bridge:
-        try:
-            fg_pre = cv2.warpPerspective(query_img, H, (w_t, h_t), flags=cv2.INTER_LANCZOS4)
-            pre_base = base_mask if base_mask is not None else np.ones((h_q, w_q), dtype=np.float32)
-            mask_pre = cv2.warpPerspective(pre_base, H, (w_t, h_t), flags=cv2.INTER_LINEAR)
-            state.last_edit_mask = _compute_edit_mask(train_img, fg_pre, valid_mask=mask_pre, device=device)
-            _sm_log(f"[Smart Merge] 预生成结构掩码: 阻断面积占比 {(state.last_edit_mask < 0.5).mean()*100:.1f}%")
-        except Exception as e:
-            print(f"[Smart Merge] 预生成掩码失败: {e}")
-            state.last_edit_mask = None
-    
-    use_tps_path = (use_tps and preset_H is not None and is_bridge
-                    and getattr(state, 'bridge_A', None) is not None
-                    and getattr(state, 'bridge_H_A2BG', None) is not None)
+    if H is None:
+        H, b2bg_method, b2bg_resid = _select_b2bg_homography(
+            state, query_img, train_img, base_mask, device,
+            crop_index=crop_index, crop_total=crop_total)
+        if H is None:
+            return None
+        method_used = b2bg_method
+        _sm_log(f"[Smart Merge] B→BG 对齐: {method_used} (残差 {b2bg_resid:.2f}px) | "
+              f"B→BG alignment via {method_used}")
+
+    if base_mask is None:
+        base_mask = np.ones((h_q, w_q), dtype=np.float32)
+    _t_warp = time.perf_counter()
+    # 画布外区域后续只会在掩码 bbox 附近被读到, 只 warp 该范围再贴回全画布。
+    reg = _projected_region(H, w_q, h_q, w_t, h_t, margin=_PLACE_WARP_MARGIN)
+    if reg is None:
+        warped_fg = cv2.warpPerspective(
+            query_img, H, (w_t, h_t),
+            flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT101
+        )
+        warped_mask = cv2.warpPerspective(
+            base_mask, H, (w_t, h_t),
+            flags=cv2.INTER_LINEAR
+        )
+    else:
+        x0, y0, x1, y1 = reg
+        H_reg = np.dot(np.array([[1.0, 0, -x0], [0, 1.0, -y0], [0, 0, 1.0]]), H)
+        fg_r = cv2.warpPerspective(
+            query_img, H_reg, (x1 - x0, y1 - y0),
+            flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT101
+        )
+        mask_r = cv2.warpPerspective(
+            base_mask, H_reg, (x1 - x0, y1 - y0), flags=cv2.INTER_LINEAR
+        )
+        warped_fg = np.zeros((h_t, w_t, query_img.shape[2]), dtype=query_img.dtype)
+        warped_mask = np.zeros((h_t, w_t), dtype=base_mask.dtype)
+        warped_fg[y0:y1, x0:x1] = fg_r
+        warped_mask[y0:y1, x0:x1] = mask_r
+    _prof_add("place_warp", time.perf_counter() - _t_warp)
+    _t_mask = time.perf_counter()
+    try:
+        edit_mask = _compute_edit_mask(
+            train_img, warped_fg, valid_mask=warped_mask, device=device)
+    except Exception as e:
+        if not is_bridge:
+            raise
+        print(f"[Smart Merge] 预生成掩码失败: {e}")
+        edit_mask = None
+    _prof_add("place_mask", time.perf_counter() - _t_mask)
+    state.last_edit_mask = edit_mask
+    if is_bridge and edit_mask is not None:
+        _sm_log(f"[Smart Merge] 预生成结构掩码: 阻断面积占比 {(edit_mask < 0.5).mean()*100:.1f}%")
+
+    return {
+        "H": H,
+        "method": method_used,
+        "num_inliers": num_inliers,
+        "is_bridge": bool(is_bridge),
+        "bridge_H_A2BG": getattr(state, 'bridge_H_A2BG', None),
+        "disk_pts_q": getattr(state, 'disk_pts_q', None),
+        "disk_pts_t": getattr(state, 'disk_pts_t', None),
+        "flow_scale": flow_scale,
+        "warped_fg": warped_fg,
+        "warped_mask": warped_mask,
+        "edit_mask": edit_mask,
+    }
+
+
+def apply_tps_stage(state, place, query_img, train_img, *, device="cpu", use_tps=True,
+                    bridge_A=None):
+    """阶段 2: 在定位结果上做趋势 TPS(可选)。"""
+    h_q, w_q = query_img.shape[:2]
+    h_t, w_t = train_img.shape[:2]
+
+    warped_fg = place["warped_fg"]
+    warped_mask = place["warped_mask"]
+    state.last_edit_mask = place.get("edit_mask")
+    state.last_residual_px = None
+    state.flow_style = "generic"
+    state.flow_g_base = None
+    state.flow_scale = place.get("flow_scale", getattr(state, 'flow_scale', 1.0))
+    state.disk_pts_q = place.get("disk_pts_q")
+    state.disk_pts_t = place.get("disk_pts_t")
+    state.bridge_H_A2BG = place.get("bridge_H_A2BG")
+
+    H = place.get("H")
+    bridge_H_A2BG = place.get("bridge_H_A2BG")
+    bridge_path_done = False
+    use_tps_path = (use_tps and bool(place.get("is_bridge")) and H is not None
+                    and bridge_A is not None and bridge_H_A2BG is not None)
     if use_tps_path:
         # LoFTR 内部把每张图各自缩到长边 1024, 所以 B 是重绘分块、A 是原生小图时会留下
         # 相对尺度差(A 原样 356 vs B 缩到 1024)。这里把小的 A 放大到 B 的像素尺寸再匹配,
         # 匹配点随后按 (w_A/w_q, h_A/h_q) 换算回 A 原生坐标, TPS 拿到的仍是 A 坐标。
         # 反方向(缩 B)会丢掉重绘细节, 匹配精度受限于小图, 实测更差。
-        bridge_a = state.bridge_A
+        bridge_a = bridge_A
         if bridge_a.shape[:2] != (h_q, w_q):
             h_a, w_a = bridge_a.shape[:2]
             a_norm = cv2.resize(bridge_a, (w_q, h_q),
@@ -1402,21 +1642,19 @@ def perform_kornia_alignment(state, query_img, train_img, warp_method=False, sec
             if n_pts < 8:
                 _sm_log(f"[Smart Merge] TPS: B↔A匹配不足({n_pts}点), 跳过 | too few matches")
             else:
+                bridge_path_done = True
+                state.flow_style = "bridge"
                 ones_b = np.hstack([pts_b, np.ones((n_pts, 1))])
                 q = (H @ ones_b.T).T
                 q = q[:, :2] / q[:, 2:]
                 ones_a = np.hstack([pts_a, np.ones((n_pts, 1))])
-                t = (state.bridge_H_A2BG @ ones_a.T).T
+                t = (bridge_H_A2BG @ ones_a.T).T
                 t = t[:, :2] / t[:, 2:]
-                
-                base_mask_inner = base_mask if base_mask is not None else np.ones(query_img.shape[:2], dtype=np.float32)
-                warped_fg0 = cv2.warpPerspective(query_img, H, (w_t, h_t), flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT101)
-                warped_mask0 = cv2.warpPerspective(base_mask_inner, H, (w_t, h_t), flags=cv2.INTER_LINEAR)
-                warped_fg, warped_mask = warped_fg0, warped_mask0
 
+                warped_fg0, warped_mask0 = warped_fg, warped_mask
                 em_for_score = getattr(state, 'last_edit_mask', None)
 
-    # TPS 点只做几何有效性筛选: 用 edit_mask 会把未校正的畸变误判为有意编辑, 丢掉正确点。
+                # TPS 点只做几何有效性筛选: 用 edit_mask 会把未校正的畸变误判为有意编辑, 丢掉正确点。
                 q_tps, t_tps = q, t
                 if len(q) > 4:
                     keep_idx = []
@@ -1433,13 +1671,14 @@ def perform_kornia_alignment(state, query_img, train_img, warp_method=False, sec
                         t_tps = t[keep_idx]
                         _sm_log(f"[Smart Merge] TPS 匹配点过滤(几何): 保留 {len(keep_idx)}/{n_pts} 点")
 
-    # 执行 TPS; 前后候选用同一份基础 edit_mask 评分
+                # 执行 TPS; 前后候选用同一份基础 edit_mask 评分
                 tps_used = False
                 g_base = None
                 g_base_p85 = None
                 if len(q_tps) >= 4:
                     tps_fg, tps_mask = warp_tps(
-                        warped_fg0, warped_mask0, train_img, q_tps, t_tps, reg_lambda=1.5)
+                        warped_fg0, warped_mask0, train_img, q_tps, t_tps,
+                        reg_lambda=1.5, trend_only=True)
                     if tps_fg is not None:
                         g0_med, g0_p85 = _flow_residual_score(warped_fg0, warped_mask0, train_img, edit_mask=em_for_score)
                         g1_med, g1_p85 = _flow_residual_score(tps_fg, tps_mask, train_img, edit_mask=em_for_score)
@@ -1452,85 +1691,25 @@ def perform_kornia_alignment(state, query_img, train_img, warp_method=False, sec
                         if scores_valid and g1_med <= g0_med + 0.10 and g1_p85 <= g0_p85 + 0.15 and p1t <= p0t + 2.0:
                             warped_fg, warped_mask = tps_fg, tps_mask
                             tps_used = True
-                            _sm_log(f"[Smart Merge] TPS 验收通过: 几何残差 {g0_med:.2f}px→{g1_med:.2f}px "
+                            _sm_log(f"[Smart Merge] TPS趋势 验收通过: 几何残差 {g0_med:.2f}px→{g1_med:.2f}px "
                                   f"(p85 {g0_p85:.2f}→{g1_p85:.2f}) | TPS accepted")
                         else:
                             g_base = g0_med
                             g_base_p85 = g0_p85
-                            _sm_log(f"[Smart Merge] TPS 拒绝: 几何残差 {g0_med:.2f}px→{g1_med:.2f}px "
+                            _sm_log(f"[Smart Merge] TPS趋势 拒绝: 几何残差 {g0_med:.2f}px→{g1_med:.2f}px "
                                   f"(p85 {g0_p85:.2f}→{g1_p85:.2f}), 光度 {p0t:.1f}→{p1t:.1f} | TPS rejected")
                 else:
-                    _sm_log(f"[Smart Merge] TPS 跳过，仅使用基础对齐 | TPS skipped, using base alignment")
+                    _sm_log(f"[Smart Merge] TPS趋势 跳过，仅使用基础对齐 | TPS skipped, using base alignment")
 
-    # 二阶段精校: 开关打开就执行, 不做残差评分判定(细节尺度评分不可靠)
-                pass2_used = False
-                if second_pass:
-                    fg2, mask2 = refine_second_pass(
-                        warped_fg, warped_mask, train_img, device, max_disp=16.0)
-                    if fg2 is not None:
-                        warped_fg, warped_mask = fg2, mask2
-                        pass2_used = True
-                        _sm_log("[Smart Merge] 二阶段精校已应用 | pass2 applied")
-                if pass2_used:
-                    # 对齐结果已变, 逐块光流必须重新量当前基线
-                    g_base = g_base_p85 = None
-
-                if tps_used or pass2_used or state.last_edit_mask is None:
+                if tps_used or state.last_edit_mask is None:
                     state.last_edit_mask = _compute_edit_mask(
                         train_img, warped_fg, valid_mask=warped_mask
                     , device=device)
-                em_for_score = state.last_edit_mask
-
-                if warp_method:
-                    if g_base is None:
-                        g0m, g0p = _flow_residual_score(
-                            warped_fg, warped_mask, train_img, edit_mask=em_for_score)
-                    else:
-                        g0m, g0p = g_base, g_base_p85
-                    fg_r, mask_r = refine_with_optical_flow(
-                        warped_fg, warped_mask, train_img,
-                        device=device, max_flow_px=10.0, edit_mask=em_for_score,
-                        flow_scale=flow_scale)
-                    # 前后同口径: 用同一份 edit_mask 评分
-                    g1m, g1p = _flow_residual_score(
-                        fg_r, mask_r, train_img, edit_mask=em_for_score)
-                    if _flow_acceptable(g0m, g0p, g1m, g1p):
-                        warped_fg, warped_mask = fg_r, mask_r
-                        state.last_residual_px = g1m
-                        _sm_log(f"[Smart Merge] 逐块光流生效: {g0m:.2f}px→{g1m:.2f}px "
-                              f"(p85 {g0p:.2f}→{g1p:.2f}) | per-crop flow accepted")
-                    else:
-                        state.last_residual_px = g0m
-                        _sm_log(f"[Smart Merge] 逐块光流拒绝: {g0m:.2f}px→{g1m:.2f}px "
-                              f"(p85 {g0p:.2f}→{g1p:.2f}) | per-crop flow rejected")
+                state.flow_g_base = None if g_base is None else (g_base, g_base_p85)
                 state.match_level = "TPS+LoFTR"
-                return warped_fg, warped_mask, True
 
-    if H is None:
-        H, b2bg_method, b2bg_resid = _select_b2bg_homography(state, 
-            query_img, train_img, base_mask, device,
-            crop_index=crop_index, crop_total=crop_total)
-        if H is None:
-            return None, None, False
-        method_used = b2bg_method
-        _sm_log(f"[Smart Merge] B→BG 对齐: {method_used} (残差 {b2bg_resid:.2f}px) | "
-              f"B→BG alignment via {method_used}")
-
-    if base_mask is None:
-        base_mask = np.ones((h_q, w_q), dtype=np.float32)
-    warped_fg = cv2.warpPerspective(
-        query_img, H, (w_t, h_t),
-        flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT101
-    )
-    warped_mask = cv2.warpPerspective(
-        base_mask, H, (w_t, h_t),
-        flags=cv2.INTER_LINEAR
-    )
-    state.last_edit_mask = _compute_edit_mask(
-        train_img, warped_fg, valid_mask=warped_mask
-    , device=device)
-
-    if use_tps and getattr(state, 'disk_pts_q', None) is not None and len(state.disk_pts_q) >= 8:
+    if not bridge_path_done and use_tps and getattr(state, 'disk_pts_q', None) is not None \
+            and len(state.disk_pts_q) >= 8:
         try:
             _ones = np.hstack([state.disk_pts_q, np.ones((len(state.disk_pts_q), 1))])
             q = (H @ _ones.T).T
@@ -1547,7 +1726,7 @@ def perform_kornia_alignment(state, query_img, train_img, warp_method=False, sec
                 reliable = list(range(len(q)))
             q, t = q[reliable], t[reliable]
 
-    # 可靠区外推: 只用未改色且局部一致的点建 TPS, 其余区域由平滑场外推。
+            # 可靠区外推: 只用未改色且局部一致的点建 TPS, 其余区域由平滑场外推。
             q, t, extrapolated = _filter_reliable_correspondences(
                 q, t, h_t, w_t, state.last_edit_mask)
             if extrapolated:
@@ -1555,7 +1734,8 @@ def perform_kornia_alignment(state, query_img, train_img, warp_method=False, sec
                       f"reliable-region TPS")
 
             tps_fg, tps_mask = warp_tps(
-                warped_fg, warped_mask, train_img, q, t, reg_lambda=1.5)
+                warped_fg, warped_mask, train_img, q, t,
+                reg_lambda=1.5, trend_only=True)
             if tps_fg is not None:
                 g0_med, g0_p85 = _flow_residual_score(
                     warped_fg, warped_mask, train_img, edit_mask=state.last_edit_mask)
@@ -1568,40 +1748,153 @@ def perform_kornia_alignment(state, query_img, train_img, warp_method=False, sec
                 if (scores_valid and g1_med <= g0_med + slack_med
                         and g1_p85 <= g0_p85 + slack_p85):
                     warped_fg, warped_mask = tps_fg, tps_mask
-                    _sm_log(f"[Smart Merge] TPS(DISK内点) 通过: {g0_med:.2f}px→{g1_med:.2f}px"
+                    _sm_log(f"[Smart Merge] TPS趋势(DISK内点) 通过: {g0_med:.2f}px→{g1_med:.2f}px"
                           f"{' (可靠区外推)' if extrapolated else ''} | TPS accepted")
                 else:
-                    _sm_log(f"[Smart Merge] TPS(DISK内点) 拒绝: {g0_med:.2f}px→{g1_med:.2f}px | TPS rejected")
+                    _sm_log(f"[Smart Merge] TPS趋势(DISK内点) 拒绝: {g0_med:.2f}px→{g1_med:.2f}px | TPS rejected")
         except Exception as e:
-            print(f"[Smart Merge] TPS(DISK内点) 失败: {e} | TPS failed")
+            print(f"[Smart Merge] TPS趋势(DISK内点) 失败: {e} | TPS failed")
 
-    if warp_method:
+    return {
+        "warped_fg": warped_fg,
+        "warped_mask": warped_mask,
+        "edit_mask": state.last_edit_mask,
+        "residual": None,
+        "flow_style": state.flow_style,
+        "g_base": state.flow_g_base,
+        "flow_scale": state.flow_scale,
+    }
+
+
+def apply_flow_stage(state, warped_fg, warped_mask, train_img, *, device="cpu",
+                     flow_scale=1.0, style="generic", g_base=None, edit_mask=None):
+    """阶段 3: 逐块光流精修(可选)。"""
+    state.flow_scale = flow_scale
+    if style == "bridge":
+        # 桥接 TPS 路径: 用 TPS 阶段的同一份 edit_mask 评分
+        state.last_edit_mask = edit_mask
+        em_for_score = edit_mask
+        if g_base is None:
+            g0m, g0p = _flow_residual_score(
+                warped_fg, warped_mask, train_img, edit_mask=em_for_score)
+        else:
+            g0m, g0p = g_base
+        fg_r, mask_r = refine_with_optical_flow(
+            warped_fg, warped_mask, train_img,
+            device=device, max_flow_px=10.0, edit_mask=em_for_score,
+            flow_scale=flow_scale)
+        g1m, g1p = _flow_residual_score(
+            fg_r, mask_r, train_img, edit_mask=em_for_score)
+        if _flow_acceptable(g0m, g0p, g1m, g1p):
+            warped_fg, warped_mask = fg_r, mask_r
+            state.last_residual_px = g1m
+            _sm_log(f"[Smart Merge] 逐块光流生效: {g0m:.2f}px→{g1m:.2f}px "
+                  f"(p85 {g0p:.2f}→{g1p:.2f}) | per-crop flow accepted")
+        else:
+            state.last_residual_px = g0m
+            _sm_log(f"[Smart Merge] 逐块光流拒绝: {g0m:.2f}px→{g1m:.2f}px "
+                  f"(p85 {g0p:.2f}→{g1p:.2f}) | per-crop flow rejected")
+        state.flow_style = "bridge"
+    else:
         state.last_edit_mask = _compute_edit_mask(
-            train_img, warped_fg, valid_mask=warped_mask
-        , device=device)
+            train_img, warped_fg, valid_mask=warped_mask, device=device)
         em_for_score = state.last_edit_mask
-        g0m, g0p = _flow_residual_score(warped_fg, warped_mask, train_img, edit_mask=em_for_score)
+        g0m, g0p = _flow_residual_score(
+            warped_fg, warped_mask, train_img, edit_mask=em_for_score)
         state.last_residual_px = g0m
         if g0m < 1.2:
             _sm_log(f"[Smart Merge] H后残差已很小({g0m:.2f}px), 跳过光流精修 | residual tiny, flow skipped")
-            return warped_fg, warped_mask, True
-            
-        refined_fg, refined_mask = refine_with_optical_flow(
-            warped_fg, warped_mask, train_img, device,
-            edit_mask=em_for_score, flow_scale=flow_scale
-        )
-        em_refined = _compute_edit_mask(train_img, refined_fg, valid_mask=refined_mask, device=device)
-        g1m, g1p = _flow_residual_score(refined_fg, refined_mask, train_img, edit_mask=em_refined)
+        else:
+            refined_fg, refined_mask = refine_with_optical_flow(
+                warped_fg, warped_mask, train_img, device,
+                edit_mask=em_for_score, flow_scale=flow_scale
+            )
+            em_refined = _compute_edit_mask(train_img, refined_fg, valid_mask=refined_mask, device=device)
+            g1m, g1p = _flow_residual_score(refined_fg, refined_mask, train_img, edit_mask=em_refined)
 
-        if _flow_acceptable(g0m, g0p, g1m, g1p):
-            state.last_residual_px = g1m
-            _sm_log(f"[Smart Merge] H+光流精修生效: {g0m:.2f}px→{g1m:.2f}px "
-                  f"(p85 {g0p:.2f}→{g1p:.2f}) | H+flow accepted")
-            return refined_fg, refined_mask, True
-        _sm_log(f"[Smart Merge] H+光流精修拒绝: {g0m:.2f}px→{g1m:.2f}px "
-              f"(p85 {g0p:.2f}→{g1p:.2f}) | H+flow rejected")
-        return warped_fg, warped_mask, True
-    return warped_fg, warped_mask, True
+            if _flow_acceptable(g0m, g0p, g1m, g1p):
+                warped_fg, warped_mask = refined_fg, refined_mask
+                state.last_residual_px = g1m
+                _sm_log(f"[Smart Merge] H+光流精修生效: {g0m:.2f}px→{g1m:.2f}px "
+                      f"(p85 {g0p:.2f}→{g1p:.2f}) | H+flow accepted")
+            else:
+                _sm_log(f"[Smart Merge] H+光流精修拒绝: {g0m:.2f}px→{g1m:.2f}px "
+                      f"(p85 {g0p:.2f}→{g1p:.2f}) | H+flow rejected")
+        state.flow_style = "generic"
+
+    return {
+        "warped_fg": warped_fg,
+        "warped_mask": warped_mask,
+        "edit_mask": state.last_edit_mask,
+        "residual": state.last_residual_px,
+        "flow_style": state.flow_style,
+        "flow_scale": flow_scale,
+    }
+
+
+def apply_second_pass_stage(state, warped_fg, warped_mask, train_img, *, device="cpu",
+                            flow_scale=1.0, edit_mask=None, refresh_mask=False):
+    """阶段 4: 二阶段逐块光流(位移上限更小)。"""
+    state.flow_scale = flow_scale
+    if edit_mask is None or refresh_mask:
+        edit_mask = _compute_edit_mask(
+            train_img, warped_fg, valid_mask=warped_mask, device=device)
+    state.last_edit_mask = edit_mask
+    g2m, g2p = _flow_residual_score(
+        warped_fg, warped_mask, train_img, edit_mask=edit_mask)
+    fg2, mask2 = refine_with_optical_flow(
+        warped_fg, warped_mask, train_img, device,
+        max_flow_px=SECOND_PASS_FLOW_PX, edit_mask=edit_mask,
+        flow_scale=flow_scale)
+    r2m, r2p = _flow_residual_score(
+        fg2, mask2, train_img, edit_mask=edit_mask)
+    warped_fg, warped_mask = fg2, mask2
+    state.last_residual_px = r2m
+    _sm_log(f"[Smart Merge] 二阶段逐块光流: {g2m:.2f}px→{r2m:.2f}px "
+          f"(p85 {g2p:.2f}→{r2p:.2f}) | pass2 per-crop flow applied")
+
+    return {
+        "warped_fg": warped_fg,
+        "warped_mask": warped_mask,
+        "edit_mask": edit_mask,
+        "residual": r2m,
+        "flow_scale": flow_scale,
+    }
+
+
+def perform_kornia_alignment(state, query_img, train_img, warp_method=False, second_pass=False,
+                             device="cpu", preset_H=None, max_flow_px=None, use_tps=True, base_mask=None,
+                             is_grid_preset=False, bridge_H=None, crop_index=0, crop_total=1):
+    """一次性跑完四个阶段(兼容入口); 节点内部按阶段调用以便分段缓存。"""
+    bridge_A = getattr(state, 'bridge_A', None)
+    place = perform_placement(
+        state, query_img, train_img, device=device, preset_H=preset_H,
+        base_mask=base_mask, is_grid_preset=is_grid_preset, bridge_H=bridge_H,
+        crop_index=crop_index, crop_total=crop_total, bridge_A=bridge_A)
+    if place is None:
+        return None, None, False
+
+    out = apply_tps_stage(
+        state, place, query_img, train_img, device=device,
+        use_tps=use_tps, bridge_A=bridge_A)
+
+    if warp_method:
+        out = apply_flow_stage(
+            state, out["warped_fg"], out["warped_mask"], train_img,
+            device=device, flow_scale=out.get("flow_scale", 1.0),
+            style=out.get("flow_style", "generic"),
+            g_base=out.get("g_base"), edit_mask=out.get("edit_mask"))
+
+    if second_pass:
+        refresh_mask = (out.get("flow_style", "generic") == "generic"
+                        and not warp_method)
+        out = apply_second_pass_stage(
+            state, out["warped_fg"], out["warped_mask"], train_img,
+            device=device, flow_scale=out.get("flow_scale", 1.0),
+            edit_mask=out.get("edit_mask"), refresh_mask=refresh_mask)
+
+    return out["warped_fg"], out["warped_mask"], True
+
 
 @torch.no_grad()
 def _compute_edit_mask( warped_A, warped_B, d_lo=20.0, d_hi=60.0, valid_mask=None, *, device):
@@ -1661,7 +1954,7 @@ def _compute_edit_mask( warped_A, warped_B, d_lo=20.0, d_hi=60.0, valid_mask=Non
         d = diff.clamp(0.0, 255.0).floor()          # 对齐 uint8 截断
         median_size = min(15, hh if hh % 2 else hh - 1, ww if ww % 2 else ww - 1)
         if median_size >= 3:
-            d = _sm_median(d, median_size)
+            d = _sm_u8_median(d, median_size)
         d = _sm_fast_blur(d, 6.2)
         return ((hi - d) / max(hi - lo, 1e-6)).clamp(0.0, 1.0)
 

@@ -3,13 +3,12 @@
 
 import cv2
 import numpy as np
-import torch
 
 from .sm_common import (
     _sm_note,
     _sm_log,
 )
-from .sm_config import FLOW_DENOISE_PX, MAX_FLOW_PX
+from .sm_config import FLOW_DENOISE_PX, FLOW_MAX_DIM, MAX_FLOW_PX
 
 
 def _suppress_tangential_flow(flow, gx, gy, coherence_lo=0.5, min_strength=100.0,
@@ -81,12 +80,12 @@ def refine_with_optical_flow( warped_fg, warped_mask, train_img,
     sub_mask = np.ascontiguousarray(warped_mask[y0:y1, x0:x1])
     sub_bg = np.ascontiguousarray(train_img[y0:y1, x0:x1])
 
-    # 估流尺度: 内容原生分辨率比例, 长边上限 2048 兜住超大画布耗时
+    # 估流尺度: 内容原生分辨率比例, 长边上限兜住超大画布耗时
     sh, sw = sub_fg.shape[:2]
     s = float(flow_scale)
     if not np.isfinite(s) or s <= 0.0:
         s = 1.0
-    s = min(s, 1.0, 2048.0 / float(max(sh, sw)))
+    s = min(s, 1.0, FLOW_MAX_DIM / float(max(sh, sw)))
     if s < 0.999:
         fw, fh = max(8, int(round(sw * s))), max(8, int(round(sh * s)))
         s = fw / float(sw)
@@ -142,9 +141,10 @@ def _denoise_flow_field(flow):
     该噪声随 1/s 上采样放大后, 就是沿长直边出现的台阶/波浪。"""
     return cv2.GaussianBlur(flow, (7, 7), 1.2)
 
-def _constrain_flow_quadratic(flow):
+def _constrain_flow_quadratic(flow, weight=None):
     """把逐块流场约束为二次曲面: 保留整体平移/尺度和二阶形变,
-    去掉沿长直边缓慢变化的低频梯度——该梯度正是竖边被拉弯的来源。"""
+    去掉沿长直边缓慢变化的低频梯度——该梯度正是竖边被拉弯的来源。
+    weight 为可靠度: 不可靠区的零流不应参与趋势拟合。"""
     h, w = flow.shape[:2]
     if h < 8 or w < 8:
         return flow
@@ -153,10 +153,19 @@ def _constrain_flow_quadratic(flow):
     xn, yn = np.meshgrid(xs, ys)
     basis = np.stack([np.ones(h * w), xn.ravel(), yn.ravel(),
                       xn.ravel() ** 2, (xn * yn).ravel(), yn.ravel() ** 2], 1)
+    wts = None
+    if weight is not None:
+        wts = np.clip(np.asarray(weight, dtype=np.float64).ravel(), 0.0, 1.0)
+        if wts.shape[0] != h * w or float(wts.sum()) < 1.0:
+            wts = None
     out = flow.copy()
     for c in range(2):
-        coef, *_ = np.linalg.lstsq(basis, flow[:, :, c].ravel().astype(np.float64),
-                                   rcond=None)
+        y = flow[:, :, c].ravel().astype(np.float64)
+        if wts is None:
+            coef, *_ = np.linalg.lstsq(basis, y, rcond=None)
+        else:
+            sw = np.sqrt(wts)
+            coef, *_ = np.linalg.lstsq(basis * sw[:, None], y * sw, rcond=None)
         out[:, :, c] = (basis @ coef).reshape(h, w).astype(np.float32)
     return out
 
@@ -202,7 +211,7 @@ def _refine_with_dis( gray_warped, gray_target, warped_mask,
                                         FLOW_DENOISE_PX * s, 7.0 * s)
     flow = _fill_flow_from_reliable(flow, reliability,
                                          kernel_size=_flow_kernel(41, s))
-    return _constrain_flow_quadratic(_denoise_flow_field(flow))
+    return _constrain_flow_quadratic(_denoise_flow_field(flow), reliability)
 
 def _refine_with_farneback( gray_warped, gray_target, warped_mask,
                            max_flow_px=15.0, scale=1.0):
@@ -257,7 +266,7 @@ def _refine_with_farneback( gray_warped, gray_target, warped_mask,
                                         FLOW_DENOISE_PX * s, 7.0 * s)
     flow = _fill_flow_from_reliable(flow, reliability,
                                          kernel_size=_flow_kernel(41, s))
-    return _constrain_flow_quadratic(_denoise_flow_field(flow))
+    return _constrain_flow_quadratic(_denoise_flow_field(flow), reliability)
 
 def _to_flow_luma(img):
     """光流输入：提取 Lab 的 L 通道（亮度），配合直方图匹配抵抗偏色。"""
@@ -349,42 +358,6 @@ def _defocus_equalize(sharp_l, ref_l, mask):
         f"sigma={best_sigma} | defocus equalized (flow input only)")
     return cv2.GaussianBlur(sharp_l, (0, 0), best_sigma), best_sigma
 
-def refine_second_pass( warped_fg, warped_mask, train_img, device, max_disp=64.0):
-    """二阶段精校: 已warp的块与BG同坐标系、小位移, 再做一次LoFTR稀疏匹配求残差场"""
-    from .sm_align import (filter_correspondences_local_affine,
-                           match_with_loftr, warp_tps)
-    try:
-        h_t, w_t = train_img.shape[:2]
-        ys, xs = np.where(warped_mask > 0.5)
-        if len(ys) < 100:
-            return None, None
-        pad = 48
-        y0, y1 = max(0, ys.min() - pad), min(h_t, ys.max() + pad)
-        x0, x1 = max(0, xs.min() - pad), min(w_t, xs.max() + pad)
-        if (y1 - y0) < 64 or (x1 - x0) < 64:
-            return None, None
-        roi_fg = warped_fg[y0:y1, x0:x1]
-        roi_bg = train_img[y0:y1, x0:x1]
-        pts_w, pts_b = match_with_loftr(roi_fg, roi_bg, device)
-        # 各块 ROI 尺寸不同, LoFTR 的激活块会一直滞留; 用完即还给驱动,
-        # 否则整轮 15 块的保留显存会累积到十几 GB。
-        if "cuda" in str(device):
-            torch.cuda.empty_cache()
-        if pts_w is None or len(pts_w) < 12:
-            return None, None
-        pts_w, pts_b = filter_correspondences_local_affine(pts_w, pts_b)
-        if len(pts_w) < 12:
-            return None, None
-        off = np.array([x0, y0], dtype=np.float32)
-        pts_w = pts_w + off[None, :]
-        pts_b = pts_b + off[None, :]
-        return warp_tps(warped_fg, warped_mask, train_img,
-                             pts_w, pts_b, reg_lambda=1.5,
-                             max_disp=max_disp, max_points=1500)
-    except Exception as e:
-        print(f"[Smart Merge] 二阶段精校失败: {e}")
-        return None, None
-
 def global_flow_polish( merged_img, original_bg, union_mask, max_disp=12.0, edit_mask=None,
                        warp_smooth=1.0, flow_scale=1.0):
     """整图光流精修: 合成图 vs 原图, 补低纹理区残余位移。优先 DIS, 不支持时降级 Farneback。
@@ -393,7 +366,7 @@ def global_flow_polish( merged_img, original_bg, union_mask, max_disp=12.0, edit
     s = float(flow_scale)
     if not np.isfinite(s) or s <= 0.0:
         s = 1.0
-    s = min(s, 1.0, 2048.0 / float(max(h, w)))
+    s = min(s, 1.0, FLOW_MAX_DIM / float(max(h, w)))
     if s < 0.999:
         ph, pw = max(16, int(round(h * s))), max(16, int(round(w * s)))
         s = pw / float(w)

@@ -60,10 +60,11 @@ def _sm_log(*args, **kwargs):
 
 
 class _MergeProgress:
-    """单行进度条: 每个分块的匹配+合成算一步, 整图精修算一步。
+    """单行进度条: 每个实际执行的阶段(定位/TPS/光流/二阶段/合成)按分块计一步。
 
     同时驱动 ComfyUI 前端进度(ProgressBar hook)与后台单行进度条(tqdm)。
-    输出的条数 = 分块数 + (Optical_Flow 开时 1 步整图精修)。
+    步数 = 分块数 × (本次实际执行的阶段数 + 1 合成) + (Full_Optical_Flow 开时 1 步整图精修);
+    命中的缓存阶段不占用步数。
     """
 
     def __init__(self, total):
@@ -92,6 +93,14 @@ class _MergeProgress:
             print(msg)
 
     def close(self):
+        # 跳过的分块不计步, 收尾时对齐到满格, 避免前端停在 <100%
+        if self.current < self.total:
+            self.current = self.total
+            if self._hook is not None:
+                self._hook.update_absolute(self.current, self.total)
+            if self._bar is not None:
+                self._bar.n = self.current
+                self._bar.refresh()
         if self._bar is not None:
             self._bar.close()
 

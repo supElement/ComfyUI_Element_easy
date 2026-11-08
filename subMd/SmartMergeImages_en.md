@@ -96,8 +96,8 @@ Only active when `color_protection` is ON; it decides which pixels count as "edi
 
 ### 9. Feathering `feather_kernel` (default 20, range 0~256)
 The soft transition width at the paste edge; it also affects the scale of color correction:
-- **Without `split_grid`**: feather is a pixel width. With `color_protection` OFF the `Patch_based_color` block size ≈ `max(32, 2×feather)` and the boundary band width also follows feather; with protection ON the block size becomes 12% of the crop short side (clamped 48~160) and no longer follows feather.
 - **With `split_grid` connected**: alpha / feathering switches to Element Tile Merge's feather semantics — **0~100 maps to 0~1.0, 100 = maximum** (values above 100 are clamped to 1.0). Straight-edge ramp widths, radial corner ramps and the tile-mask feather width all scale by that fraction; the color-match block size still uses the number as pixels.
+- **Tile overlaps without `split_grid`**: overlap bands on each side are derived from the intersection of the tile mask bboxes, and a complementary smoothstep inside each band gives weights that always sum to 1 (normalized compositing, so the background never shows through); feather controls the band width (half-width = feather/2, capped at half the overlap depth).
 - **Larger (30~60 without grid)**: softer seams; the most direct and safest way to hide hard cuts/offsets.
 - **Smaller**: sharper edges, but pixel-level misalignment cuts become visible.
 

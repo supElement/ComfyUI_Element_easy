@@ -379,32 +379,130 @@ def _grid_tile_weight( tile_info, bbox, crop_mask, h_bg, w_bg, overlap, feather_
             weight = weight * edit_w
     return weight
 
-def _alpha_blend_crop( fg, bg, mask_float, feather_kernel):
-    """羽化 alpha 混合: 分块与背景按软 mask 过渡。"""
-    soft = make_edge_safe_soft_mask(mask_float, feather_kernel)[:, :, None]
-    blended = fg.astype(np.float32) * soft + bg.astype(np.float32) * (1.0 - soft)
-    return np.clip(blended, 0, 255).astype(np.uint8)
+def _overlap_bands(boxes, feather_px):
+    """非 grid: 由分块 bbox 相交求每块四边的重叠带 (中心, 半宽)。
+
+    同一对相邻块拿到的中心和半宽完全相同, 所以两侧 smoothstep 互补, 归一化后
+    重叠区权重和恒为 1 —— 与 ETM 的 fade 斜坡同一个几何。
+    """
+    n = len(boxes)
+    bands = [[None, None, None, None] for _ in range(n)]
+
+    def _set(i, side, mid, half, prio):
+        cur = bands[i][side]
+        if cur is None or prio > cur[2]:
+            bands[i][side] = (mid, half, prio)
+
+    for i in range(n):
+        xi0, yi0, xi1, yi1 = boxes[i]
+        for j in range(i + 1, n):
+            xj0, yj0, xj1, yj1 = boxes[j]
+            xo = min(xi1, xj1) - max(xi0, xj0)
+            yo = min(yi1, yj1) - max(yi0, yj0)
+            if xo <= 0 or yo <= 0:
+                continue
+            if xo <= yo:
+                half = max(0.5, min(float(feather_px) * 0.5, xo * 0.5))
+                if xj0 >= xi0:
+                    mid = (xi1 + xj0) * 0.5
+                    _set(i, 2, mid, half, yo)
+                    _set(j, 0, mid, half, yo)
+                else:
+                    mid = (xj1 + xi0) * 0.5
+                    _set(i, 0, mid, half, yo)
+                    _set(j, 2, mid, half, yo)
+            else:
+                half = max(0.5, min(float(feather_px) * 0.5, yo * 0.5))
+                if yj0 >= yi0:
+                    mid = (yi1 + yj0) * 0.5
+                    _set(i, 3, mid, half, xo)
+                    _set(j, 1, mid, half, xo)
+                else:
+                    mid = (yj1 + yi0) * 0.5
+                    _set(i, 1, mid, half, xo)
+                    _set(j, 3, mid, half, xo)
+    return [[(b[0], b[1]) if b is not None else None for b in row] for row in bands]
+
+def _overlap_crossfade_weight( crop_mask, origin, bands):
+    """mask × 四边互补斜坡; 无重叠的一侧保持 mask 原值。"""
+    weight = np.clip(crop_mask, 0.0, 1.0).astype(np.float32)
+    if not any(b is not None for b in bands):
+        return weight
+    ox, oy = origin
+    h, w = weight.shape
+    xs = np.arange(w, dtype=np.float32) + ox + 0.5
+    ys = np.arange(h, dtype=np.float32) + oy + 0.5
+
+    def _ramp(pos, band, outward):
+        mid, half = band
+        t = 0.5 + (mid - pos if outward else pos - mid) / (2.0 * max(half, 1e-3))
+        t = np.clip(t, 0.0, 1.0)
+        return (t * t * (3.0 - 2.0 * t)).astype(np.float32)
+
+    left, top, right, bottom = bands
+    if left is not None:
+        weight *= _ramp(xs, left, False)[None, :]
+    if right is not None:
+        weight *= _ramp(xs, right, True)[None, :]
+    if top is not None:
+        weight *= _ramp(ys, top, False)[:, None]
+    if bottom is not None:
+        weight *= _ramp(ys, bottom, True)[:, None]
+    return weight
+
+def pad_canvas_edges( mask, canvas_sides, depth=6):
+    """画布侧的亚像素缺边: 按列/行把首个满覆盖像素向外补到画布边。
+
+    只补 mask, 不动分块图像：模糊需要画布外侧的连续边界, 否则最外圈 alpha
+    会被衰减而透出原图。"""
+    left, top, right, bottom = canvas_sides
+    d = max(1, int(depth))
+    h, w = mask.shape[:2]
+
+    def _extend(axis, reverse):
+        if mask.shape[axis] == 0:
+            return
+        full = np.clip(mask, 0.0, 1.0) >= 0.999
+        f, m = full, mask
+        if axis == 0 and reverse:
+            f, m = full[::-1], mask[::-1]
+        elif axis == 1 and reverse:
+            f, m = full[:, ::-1], mask[:, ::-1]
+        has = f.any(axis=axis)
+        idx = f.argmax(axis=axis)
+        idx = np.where(has & (idx <= d), idx, 0)
+        if not np.any(idx > 0):
+            return
+        if axis == 0:
+            m[np.arange(h)[:, None] < idx[None, :]] = 1.0
+        else:
+            m[np.arange(w)[None, :] < idx[:, None]] = 1.0
+
+    if top:
+        _extend(0, False)
+    if bottom:
+        _extend(0, True)
+    if left:
+        _extend(1, False)
+    if right:
+        _extend(1, True)
 
 def make_edge_safe_soft_mask( mask_float, feather_kernel):
     h, w = mask_float.shape[:2]
-    mask_8u = (np.clip(mask_float, 0, 1) * 255).astype(np.uint8)
+    mask = np.clip(mask_float, 0.0, 1.0).astype(np.float32)
 
     if feather_kernel <= 0:
-        return mask_float.astype(np.float32)
+        return mask
 
-    pad = max(feather_kernel * 3, 30)
-    padded = cv2.copyMakeBorder(mask_8u, pad, pad, pad, pad, cv2.BORDER_REPLICATE)
-
-    erode_size = max(3, int(feather_kernel))
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (erode_size, erode_size))
-    eroded = cv2.erode(padded, kernel, iterations=1)
-
-    blur_size = (int(feather_kernel) * 2) | 1
-    blurred = cv2.GaussianBlur(eroded.astype(np.float32) / 255.0, (blur_size, blur_size), 0)
+    # 与 grid 的 tile_mask 同一条: 向外 pad 后用 σ=feather/3 羽化再切回, 不做腐蚀。
+    # 腐蚀会把过渡整体内推, 50% 线离开切口, 分块边缘因此露出底图。
+    pad = max(int(feather_kernel) * 3, 30)
+    padded = cv2.copyMakeBorder(mask, pad, pad, pad, pad, cv2.BORDER_REPLICATE)
+    sigma = max(0.1, int(feather_kernel) / 3.0)
+    blurred = cv2.GaussianBlur(padded, (0, 0), sigma)
 
     soft = blurred[pad:pad + h, pad:pad + w]
-    soft = np.minimum(soft, mask_float.astype(np.float32))
-    return soft
+    return np.minimum(soft, mask)
 
 def seamless_clone_crop(fg, bg, mask_float):
     mask_8u = (np.clip(mask_float, 0, 1) * 255).astype(np.uint8)

@@ -157,9 +157,9 @@ def _luminance_color_sync( fg, bg, mask_float, edit_mask=None, *, device):
     return _sm_lab_to_u8(lab_fg)
 
 def _apply_color_match( fg, bg, mask_float, mode, feather_kernel,
-                       edit_mask, apply_mask, grid_weight=False, canvas_sides=None,
+                       edit_mask, grid_weight=False, canvas_sides=None,
     *, device):
-    """返回 (处理后的 fg, 是否已完成背景融合)。"""
+    """返回校色后的 fg；羽化/合成由调用方统一处理。"""
     if mode == "Patch_based_color":
         if edit_mask is None:
             patch = max(32, int(feather_kernel) * 2)
@@ -177,14 +177,14 @@ def _apply_color_match( fg, bg, mask_float, mode, feather_kernel,
         try:
             fg = patch_based_color_sync(
                 fg, bg, mask_float, patch_size=patch, overlap=overlap,
-                edit_mask=edit_mask, apply_mask=apply_mask, grid_weight=grid_weight, device=device)
+                edit_mask=edit_mask, grid_weight=grid_weight, device=device)
         except Exception as e:
             print(f"[Smart Merge] Patch 色彩匹配失败: {e}, 降级 Alpha | "
                   f"Patch color sync failed: {e}, downgraded to Alpha")
-        return fg, False
+        return fg
 
     if mode == "LAB_Mean":
-        return _lab_mean_color_sync(fg, bg, mask_float, edit_mask=edit_mask, device=device), False
+        return _lab_mean_color_sync(fg, bg, mask_float, edit_mask=edit_mask, device=device)
 
     if mode in ("Laplacian Pyramid Blend", "SeamlessClone (PS Auto Blend)"): 
         fg = _luminance_color_sync(fg, bg, mask_float, edit_mask=edit_mask, device=device)
@@ -199,16 +199,16 @@ def _apply_color_match( fg, bg, mask_float, mode, feather_kernel,
         try:
             return laplacian_pyramid_blend(
                 fg, bg, soft, levels, canvas_mask=canvas_mask,
-                canvas_sides=canvas_sides), True
+                canvas_sides=canvas_sides)
         except Exception as e:
             print(f"[Smart Merge] 拉普拉斯金字塔融合失败: {e}, 降级 Alpha | "
                   f"Laplacian pyramid blend failed: {e}, downgraded to Alpha")
-            return fg, False
+            return fg
 
     if mode == "SeamlessClone (PS Auto Blend)":
-        return seamless_clone_crop(fg, bg, mask_float)
+        return seamless_clone_crop(fg, bg, mask_float)[0]
 
-    return fg, False
+    return fg
 
 def _color_sample_mask(mask_float, edit_mask=None):
     base = np.clip(mask_float.astype(np.float32), 0.0, 1.0)
@@ -282,7 +282,7 @@ def _apply_lowfreq_lab_field( lab_fg, lab_bg, weight, sigma, limit,
 
 @torch.no_grad()
 def patch_based_color_sync( fg, bg, mask_float, patch_size=64, overlap=32,
-                           edit_mask=None, apply_mask=None, grid_weight=False,
+                           edit_mask=None, grid_weight=False,
     *, device):
     """默认使用旧版全强度校正；提供 edit_mask 时启用鲁棒的改色保护校正。"""
     h, w = fg.shape[:2]
@@ -392,11 +392,7 @@ def patch_based_color_sync( fg, bg, mask_float, patch_size=64, overlap=32,
         if grid_weight:
             field = field * edited_scale
         else:
-            apply_w = apply_mask if apply_mask is not None else mask_float
-            apply_w = np.clip(np.asarray(apply_w, dtype=np.float32), 0.0, 1.0)
-            if apply_w.shape != mask_bool.shape:
-                apply_w = mask_bool.astype(np.float32)
-            aw = _sm_fit(_sm_as_float(apply_w, dev).clamp(0.0, 1.0), h, w) * edited_scale
+            aw = _sm_fit(_sm_as_float(mask_float, dev).clamp(0.0, 1.0), h, w) * edited_scale
             peak = float(aw.max())
             if peak > 1e-6:
                 aw = aw / peak
@@ -407,14 +403,19 @@ def patch_based_color_sync( fg, bg, mask_float, patch_size=64, overlap=32,
         field = (correction_sum / weight_map[..., None].clamp_min(1e-6)).unsqueeze(0)
         field = _sm_median(field, 5)
         ksize = overlap // 2 * 2 + 1
-        field = _sm_blur_ksize(field, ksize)
         if grid_weight:
+            field = _sm_blur_ksize(field, ksize)
             valid = (weight_map > 1e-6).float()
             num = _sm_blur_ksize(field * valid[None, ..., None], ksize)
             den = _sm_blur_ksize(valid[None, ..., None], ksize)
             filled = num / den.clamp_min(1e-6)
             field = torch.where((den > 1e-6).expand_as(field), filled, field)
         else:
+            # 归一化外推: 切口一带也用内部场值补足, 否则亮分块的边缘比内部校得轻。
+            valid = (weight_map > 1e-6).float()[None, ..., None]
+            num = _sm_blur_ksize(field * valid, ksize)
+            den = _sm_blur_ksize(valid, ksize)
+            field = num / den.clamp_min(1e-6)
             field = field * _sm_as_float(mask_float, dev).clamp(0.0, 1.0)
 
     return _sm_lab_to_u8(lab_fg + field)
@@ -481,15 +482,13 @@ def boundary_aware_color_sync( fg, bg, mask_float, band_width=21, strength=1.0, 
         correction_field = correction_field * _edited_scale(
             edit_mask, fg.shape, sigma=max(4.0, band_width / 4.0),
             base=COLOR_LOCAL_EDITED_SCALE, device=device)
-        soft_mask = _sm_fast_blur(_sm_as_float(mask_float, dev),
-                                  max(2.0, 0.15 * (band_width | 1)))
     else:
         dist = cv2.distanceTransform(1 - (mask_float > 0.5).astype(np.uint8), cv2.DIST_L2, 5)
         max_dist = float(dist.max()) + 1e-6
         decay = (0.4 + 0.6 * (1.0 - _sm_as_float(dist, dev) / max_dist)).clamp(0.4, 1.0)
-        soft_ksize = max(3, int(band_width) | 1)
-        soft_sigma = max(0.1, 0.3 * ((soft_ksize - 1) * 0.5 - 1.0) + 0.8)
-        soft_mask = _sm_fast_blur(_sm_as_float(mask_float, dev), soft_sigma)
+
+    # 校色要一直做到切口: 羽化只在合成时施加, 这里再衰减会让亮分块留下边缘亮线。
+    soft_mask = _sm_as_float(mask_float, dev).clamp(0.0, 1.0)
 
     strength_vec = torch.tensor((0.6, 1.0, 1.0), dtype=lab_fg.dtype, device=dev) * strength
     lab_corrected = lab_fg + correction_field * decay * soft_mask * strength_vec

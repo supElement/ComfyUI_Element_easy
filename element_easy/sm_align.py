@@ -1485,6 +1485,52 @@ def estimate_homography(state, query_img, train_img, device="cpu",
     method_used = state.match_level or "DISK"
     return H, inliers, num_inliers, method_used
 
+_CANVAS_SNAP_PX = 8.0
+
+def _snap_canvas_edges( H, base_mask, w_q, h_q, w_t, h_t):
+    """贴画布边的分块按原始边长 1:1 放置。
+
+    分块本身就是画布分辨率的裁块, H 里那零点几个百分点的缩放是匹配误差;
+    直接采样会整块重采样, 画布边上看起来就是被拉伸的。贴边块只保留平移,
+    把 <8px 的缩放误差还原成 1:1, 边缘像素才真正来自 B。"""
+    if H is None or w_q <= 0 or h_q <= 0 or w_t <= 0 or h_t <= 0:
+        return H
+    x0, y0, bw, bh = 0, 0, w_q, h_q
+    if base_mask is not None:
+        mx, my, mw, mh = cv2.boundingRect((base_mask > 0.5).astype(np.uint8))
+        if mw > 0 and mh > 0:
+            x0, y0, bw, bh = mx, my, mw, mh
+    src = np.float32([[x0, y0], [x0 + bw, y0], [x0 + bw, y0 + bh], [x0, y0 + bh]])
+    dst = cv2.perspectiveTransform(src.reshape(-1, 1, 2), np.asarray(H, dtype=np.float64))
+    dst = dst.reshape(-1, 2)
+    lo_x, hi_x = float(dst[:, 0].min()), float(dst[:, 0].max())
+    lo_y, hi_y = float(dst[:, 1].min()), float(dst[:, 1].max())
+    snap_x = (abs(lo_x) <= _CANVAS_SNAP_PX or abs(hi_x - w_t) <= _CANVAS_SNAP_PX)
+    snap_y = (abs(lo_y) <= _CANVAS_SNAP_PX or abs(hi_y - h_t) <= _CANVAS_SNAP_PX)
+    if not (snap_x or snap_y):
+        return H
+
+    def _axis(lo, hi, target_hi, span_ref, flush_lo, flush_hi):
+        span = hi - lo
+        if span <= 1e-6 or span_ref <= 0:
+            return 1.0, 0.0
+        a = span_ref / span
+        if abs(span - span_ref) > max(_CANVAS_SNAP_PX, 0.02 * span_ref):
+            # 真实缩放: 只把贴边侧钉到画布边, 幅度不变。
+            a = (target_hi / span) if flush_lo else ((target_hi - lo) / span if flush_hi else 1.0)
+        if flush_lo:
+            return a, -a * lo
+        if flush_hi:
+            return a, target_hi - a * hi
+        return a, (lo + hi) * 0.5 * (1.0 - a)
+
+    ax, bx = _axis(lo_x, hi_x, w_t, bw,
+                   abs(lo_x) <= _CANVAS_SNAP_PX, abs(hi_x - w_t) <= _CANVAS_SNAP_PX)
+    ay, by = _axis(lo_y, hi_y, h_t, bh,
+                   abs(lo_y) <= _CANVAS_SNAP_PX, abs(hi_y - h_t) <= _CANVAS_SNAP_PX)
+    A = np.array([[ax, 0.0, bx], [0.0, ay, by], [0.0, 0.0, 1.0]], dtype=np.float64)
+    return np.dot(A, np.asarray(H, dtype=np.float64))
+
 def perform_placement(state, query_img, train_img, *, device="cpu", preset_H=None,
                       base_mask=None, is_grid_preset=False, bridge_H=None,
                       crop_index=0, crop_total=1, bridge_A=None):
@@ -1543,13 +1589,14 @@ def perform_placement(state, query_img, train_img, *, device="cpu", preset_H=Non
 
     if base_mask is None:
         base_mask = np.ones((h_q, w_q), dtype=np.float32)
+    H = _snap_canvas_edges(H, base_mask, w_q, h_q, w_t, h_t)
     _t_warp = time.perf_counter()
     # 画布外区域后续只会在掩码 bbox 附近被读到, 只 warp 该范围再贴回全画布。
     reg = _projected_region(H, w_q, h_q, w_t, h_t, margin=_PLACE_WARP_MARGIN)
     if reg is None:
         warped_fg = cv2.warpPerspective(
             query_img, H, (w_t, h_t),
-            flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT101
+            flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REPLICATE
         )
         warped_mask = cv2.warpPerspective(
             base_mask, H, (w_t, h_t),
@@ -1560,7 +1607,7 @@ def perform_placement(state, query_img, train_img, *, device="cpu", preset_H=Non
         H_reg = np.dot(np.array([[1.0, 0, -x0], [0, 1.0, -y0], [0, 0, 1.0]]), H)
         fg_r = cv2.warpPerspective(
             query_img, H_reg, (x1 - x0, y1 - y0),
-            flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT101
+            flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REPLICATE
         )
         mask_r = cv2.warpPerspective(
             base_mask, H_reg, (x1 - x0, y1 - y0), flags=cv2.INTER_LINEAR

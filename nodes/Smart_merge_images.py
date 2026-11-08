@@ -36,10 +36,12 @@ from ..element_easy.sm_align import (
 )
 from ..element_easy.sm_flow import global_flow_polish
 from ..element_easy.sm_compose import (
-    _alpha_blend_crop,
     _blend_pads,
     _grid_tile_weight,
+    _overlap_bands,
+    _overlap_crossfade_weight,
     make_edge_safe_soft_mask,
+    pad_canvas_edges,
 )
 
 try:
@@ -573,7 +575,7 @@ class SmartMergeImages:
                 union_mask = np.zeros(img_bg.shape[:2], dtype=np.float32)
                 union_edit_mask = np.ones(img_bg.shape[:2], dtype=np.float32)
                 
-                compositor = _GridCompositor(img_bg.shape) if use_grid_alpha else None
+                compositor = _GridCompositor(img_bg.shape)
 
                 img_result = img_bg.copy()
                 prepared_crops = {}
@@ -849,6 +851,16 @@ class SmartMergeImages:
                         _sm_log(f"[Smart Merge] 轻度整图 LAB 前置校正: {global_lab_shift.round(2).tolist()} | "
                               f"global coarse LAB shift")
 
+                # 非 grid: 重叠区的过渡带由各块 mask bbox 相交反推
+                compose_boxes = {}
+                for _k, (_fg, _m, _em) in prepared_crops.items():
+                    _x, _y, _w, _h = cv2.boundingRect((_m > 0.5).astype(np.uint8))
+                    if _w > 0 and _h > 0:
+                        compose_boxes[_k] = (_x, _y, _x + _w, _y + _h)
+                _order = sorted(compose_boxes)
+                band_by_idx = dict(zip(_order, _overlap_bands(
+                    [compose_boxes[k] for k in _order], float(feather_kernel))))
+
                 for crop_idx in range(end_idx - 1, start_idx - 1, -1):
                     if crop_idx not in prepared_crops:
                         continue
@@ -856,7 +868,6 @@ class SmartMergeImages:
 
                     h_bg, w_bg = img_bg.shape[:2]
                     bounds_mask_float = warped_mask.copy()
-                    bounds_mask_8u = (bounds_mask_float * 255).astype(np.uint8)
                     y_idx, x_idx = np.where(bounds_mask_float > 0.0)
 
                     if len(y_idx) == 0:
@@ -873,7 +884,6 @@ class SmartMergeImages:
                     crop_bg = img_bg[ymin:ymax, xmin:xmax]
                     crop_fg = warped_fg[ymin:ymax, xmin:xmax].copy()
                     crop_mask_float = bounds_mask_float[ymin:ymax, xmin:xmax]
-                    crop_mask_8u = bounds_mask_8u[ymin:ymax, xmin:xmax]
                     prot_full = color_prot_masks.get(crop_idx)
                     color_edit_mask = (prot_full[ymin:ymax, xmin:xmax]
                                        if prot_full is not None else None)
@@ -884,26 +894,26 @@ class SmartMergeImages:
 
                     tile_info = (grid_tiles[crop_idx]
                                  if (use_grid_alpha and crop_idx < len(grid_tiles)) else None)
+                    canvas_sides = (xmin <= 0, ymin <= 0, xmax >= w_bg, ymax >= h_bg)
+                    pad_canvas_edges(crop_mask_float, canvas_sides)
                     weight_local = None
                     if tile_info is not None:
                         grid_overlap = int((split_grid or {}).get("overlap", 0))
                         weight_local = _grid_tile_weight(
                             tile_info, (xmin, ymin, xmax, ymax), crop_mask_float,
                             h_bg, w_bg, grid_overlap, feather_kernel)
-
-                    # grid 的校正场连续外推，alpha 只在最终合成时施加一次。
-                    if weight_local is None and color_edit_mask is not None:
-                        color_apply_mask = make_edge_safe_soft_mask(
-                            crop_mask_float, int(max(0, feather_kernel)))
                     else:
-                        color_apply_mask = None
+                        soft = make_edge_safe_soft_mask(
+                            crop_mask_float, feather_kernel)
+                        bands = band_by_idx.get(crop_idx)
+                        weight_local = (_overlap_crossfade_weight(
+                            soft, (xmin, ymin), bands) if bands is not None else soft)
 
-                    # 裁块哪一侧正好是画布边: 只给 Laplacian 最粗层做边界条件, 不动 alpha。
-                    canvas_sides = (xmin <= 0, ymin <= 0, xmax >= w_bg, ymax >= h_bg)
-                    crop_fg, color_done = _apply_color_match(
+                    # 羽化只进合成权重, 色彩匹配用整块 B / grid 的连续校正场。
+                    crop_fg = _apply_color_match(
                         crop_fg, crop_bg, crop_mask_float, color_match,
-                        feather_kernel, color_edit_mask, color_apply_mask,
-                        grid_weight=weight_local is not None,
+                        feather_kernel, color_edit_mask,
+                        grid_weight=tile_info is not None,
                         canvas_sides=canvas_sides, device=device)
 
                     if tile_info is not None:
@@ -913,35 +923,8 @@ class SmartMergeImages:
                         compositor.add(crop_fg, weight_local, (xmin, ymin, xmax, ymax),
                                        None if is_bg else layer)
                     else:
-                        crop_result = crop_fg if color_done else _alpha_blend_crop(
-                            crop_fg, crop_bg, crop_mask_float, feather_kernel)
-
-                        # 画布边缘 5px 渐变, 避免硬边
-                        edge_blend = np.zeros_like(crop_mask_float)
-                        edge_width = 5
-                        if ymin == 0:
-                            wgt = np.linspace(1, 0, edge_width)[:, None]
-                            edge_blend[:edge_width, :] = wgt * crop_mask_float[:edge_width, :]
-                        if ymax == h_bg:
-                            wgt = np.linspace(0, 1, edge_width)[:, None]
-                            edge_blend[-edge_width:, :] = wgt * crop_mask_float[-edge_width:, :]
-                        if xmin == 0:
-                            wgt = np.linspace(1, 0, edge_width)[None, :]
-                            edge_blend[:, :edge_width] = np.maximum(
-                                edge_blend[:, :edge_width], wgt * crop_mask_float[:, :edge_width])
-                        if xmax == w_bg:
-                            wgt = np.linspace(0, 1, edge_width)[None, :]
-                            edge_blend[:, -edge_width:] = np.maximum(
-                                edge_blend[:, -edge_width:], wgt * crop_mask_float[:, -edge_width:])
-
-                        if edge_blend.max() > 0.01:
-                            eb3 = edge_blend[:, :, np.newaxis]
-                            crop_result = (crop_fg.astype(np.float32) * eb3
-                                           + crop_result.astype(np.float32) * (1.0 - eb3))
-                            crop_result = np.clip(crop_result, 0, 255).astype(np.uint8)
-
-                        img_result[ymin:ymax, xmin:xmax] = crop_result
-                        img_bg = img_result.copy()
+                        compositor.add(crop_fg, weight_local,
+                                       (xmin, ymin, xmax, ymax), None)
 
                     union_mask = np.maximum(union_mask, warped_mask)
                     if crop_edit_mask_full is not None and crop_edit_mask_full.shape == union_edit_mask.shape:
@@ -952,9 +935,8 @@ class SmartMergeImages:
                              f"对应的 AI 编辑不会出现在成品中, 这些区域保留原图 | "
                              f"tiles {skipped_tiles} not merged (original content kept)")
 
-                if compositor is not None:
-                    img_result = compositor.finish(original_bg)
-                    img_bg = img_result.copy()
+                img_result = compositor.finish(original_bg)
+                img_bg = img_result.copy()
                 stage_times["compose"] = stage_times.get("compose", 0.0) + (time.perf_counter() - _tc)
 
                 if union_mask.max() > 0.5 and full_optical_flow:

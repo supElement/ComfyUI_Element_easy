@@ -91,6 +91,7 @@ _try_register("MinimaxH3LatentUpscaler_Adv")
 _try_register("Element_scene_detection")
 _try_register("Element_multi_ref")
 _try_register("Element_prompt_presets")
+_try_register("Element_value_remap")
 
 
 #-----------------

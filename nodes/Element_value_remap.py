@@ -66,4 +66,4 @@ class ElementValueRemap:
 
 
 NODE_CLASS_MAPPINGS = {"Element_Value_Remap": ElementValueRemap}
-NODE_DISPLAY_NAME_MAPPINGS = {"Element_Value_Remap": "Element Value Remap"}
+NODE_DISPLAY_NAME_MAPPINGS = {"Element_Value_Remap": "Element_random_value_remap"}

@@ -55,7 +55,7 @@
 
 **🔧 数值与文本小工具**
 
-- [Element_ListGraph](#Element_ListGraph) · [Frame Calculator](#frame-calculator) · [ImageSize Div](#imagesize-div) · [Element_Prompt_Presets](#Element_Prompt_Presets) · [random_chars](#random_chars) · [text_line_break](#text_line_break)
+- [Element_ListGraph](#Element_ListGraph) · [Frame Calculator](#frame-calculator) · [ImageSize Div](#imagesize-div) · [Element_Prompt_Presets](#Element_Prompt_Presets) · [Element_value_remap](#Element_value_remap) · [random_chars](#random_chars) · [text_line_break](#text_line_break)
 
 ---
 ## bug修复与优化
@@ -332,6 +332,22 @@ mask 描边：内外描边宽度和模糊度单独控制，支持非描边区域
 - 预设存储位置 ComfyUI\user\element_easy\promptPresets\prompts.json。
 
 <img width="1687" height="575" alt="image" src="https://github.com/user-attachments/assets/473d16e5-006f-43ad-96e5-14b566cb9a96" />
+
+---
+
+<a id="Element_value_remap"></a>
+## Element_value_remap
+
+<sub>v1.8.5 新增</sub>
+
+把输入的数值（最常见的是 ComfyUI 的 seed）稳定映射到 [min, max] 区间，输出 float 和 int 两个端口。
+
+- value 输入端口可选，同时接受 int 和 float，例如直接接 Seed / Primitive 节点；不接输入时，每次执行在 min ~ max 之间随机输出；
+- 执行后会在输出端口左侧显示本次数值：float 最多保留 6 位小数，int 原样显示；
+- min / max 是浮点参数，可以为负数；
+- 同一个输入值每次得到同一个结果；不同 seed 在区间内散开，配合 seed 的固定 / 增量 / 减量 / 随机模式可随队列变化；
+- min 比 max 大时按两者围成的区间处理；
+- 若区间内没有整数（如 0.2 ~ 0.8），int 端口输出四舍五入值。
 
 ---
 <a id="random_chars"></a>

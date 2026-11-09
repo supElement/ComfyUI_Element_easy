@@ -321,15 +321,17 @@ mask 描边：内外描边宽度和模糊度单独控制，支持非描边区域
 <a id="Element_Prompt_Presets"></a>
 ## Element_Prompt_Presets
 
-<sub>v1.7.9 新增 · v1.8.0 增强 </sub>
+<sub>v1.7.9 新增 · v1.8.4 增强 </sub>
 
 详细说明：[中文](subMd/Element_prompt_presets_zh.md) | [English](subMd/Element_prompt_presets_en.md)</sub>
 
 - 提示词管理节点：按「分类 → 词条」点选提示词，直接在节点上编辑、新建、删除，并可导出 JSON 备份，支持导入 json、xlsx、csv 格式文件。
+- 支持在弹窗中多选词条：prompt_text 输出按 link 分隔符合并的单段文本，prompt_list 输出词条文本列表；选择状态随工作流保存，弹窗中也可直接删除词条 / 分类。
+- 词条可标记为 tags 或 Natural language：entry 选项在 tags 词条名后显示实心圆点（仅显示，不进入输出）；新建时勾选 tags，或用「修改标签」标记；多选弹窗可按两类过滤。
 - 整段/单行两种输出；开启 single_line 后按 seed 从整段文本中抽取一行，配合固定/增量/减量/随机四种 seed 模式，可随队列自动轮换不同句子。
 - 预设存储位置 ComfyUI\user\element_easy\promptPresets\prompts.json。
 
-<img width="1535" height="514" alt="image" src="https://github.com/user-attachments/assets/89d9aa52-131e-48f5-beea-0ab27e76e858" />
+<img width="1687" height="575" alt="image" src="https://github.com/user-attachments/assets/473d16e5-006f-43ad-96e5-14b566cb9a96" />
 
 ---
 <a id="random_chars"></a>

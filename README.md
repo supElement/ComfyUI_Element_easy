@@ -55,7 +55,7 @@
 
 **🔧 数值与文本小工具**
 
-- [Element_ListGraph](#Element_ListGraph) · [Frame Calculator](#frame-calculator) · [ImageSize Div](#imagesize-div) · [Element_Prompt_Presets](#Element_Prompt_Presets) · [Element_value_remap](#Element_value_remap) · [random_chars](#random_chars) · [text_line_break](#text_line_break)
+- [Element_ListGraph](#Element_ListGraph) · [Frame Calculator](#frame-calculator) · [ImageSize Div](#imagesize-div) · [Element_Prompt_Presets](#Element_Prompt_Presets) · [Element_random_value_remap](#Element_random_value_remap) · [random_chars](#random_chars) · [text_line_break](#text_line_break)
 
 ---
 ## bug修复与优化
@@ -335,8 +335,8 @@ mask 描边：内外描边宽度和模糊度单独控制，支持非描边区域
 
 ---
 
-<a id="Element_value_remap"></a>
-## Element_value_remap
+<a id="Element_random_value_remap"></a>
+## Element_random_value_remap
 
 <sub>v1.8.5 新增</sub>
 

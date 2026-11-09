@@ -3,6 +3,7 @@
 # 数据文件：ComfyUI/user/element_easy/promptPresets/prompts.json
 import base64
 import csv
+import hashlib
 import io
 import json
 import locale
@@ -20,6 +21,7 @@ import folder_paths
 from server import PromptServer
 
 DB_FILENAME = "prompts.json"
+LEGACY_TAGS_FILENAME = "prompt_tags.json"
 FALLBACK_PRESET = "default"
 FALLBACK_PROMPT = "new prompt"
 
@@ -42,13 +44,15 @@ def _unwrap_payload(data):
         return data
     for key in ("presets", "categories"):
         inner = data.get(key)
-        if isinstance(inner, dict) and inner and all(isinstance(v, dict) for v in inner.values()):
+        if isinstance(inner, dict) and inner and all(
+            isinstance(v, dict) and not _is_entry(v) for v in inner.values()
+        ):
             return inner
     return data
 
 
 def _clean_db(data):
-    """兼容 Prompt Database 的 {分类: {词条: 文本}} 结构。"""
+    """兼容 {分类: {词条: 文本}} 与 {分类: {词条: {"text": ..., "tags": true}}}。"""
     data = _unwrap_payload(data)
     if not isinstance(data, dict):
         return {}
@@ -58,13 +62,33 @@ def _clean_db(data):
         if not preset or not isinstance(prompts, dict):
             continue
         clean_prompts = {}
-        for name, text in prompts.items():
+        for name, value in prompts.items():
             name = str(name).strip()
             if not name:
                 continue
-            clean_prompts[name] = text if isinstance(text, str) else str(text)
+            clean_prompts[name] = _entry_value(_entry_text(value), _entry_tags(value))
         out[preset] = clean_prompts
     return out
+
+
+def _entry_text(value):
+    if isinstance(value, dict):
+        value = value.get("text", "")
+    return value if isinstance(value, str) else str(value)
+
+
+def _entry_tags(value):
+    return isinstance(value, dict) and bool(value.get("tags"))
+
+
+def _entry_value(text, tags):
+    return {"text": text, "tags": True} if tags else text
+
+
+def _is_entry(value):
+    return isinstance(value, str) or (
+        isinstance(value, dict) and isinstance(value.get("text"), str)
+    )
 
 
 def _read_db():
@@ -73,10 +97,11 @@ def _read_db():
         return {}
     try:
         with open(path, "r", encoding="utf-8") as f:
-            return _clean_db(json.load(f))
+            db = _clean_db(json.load(f))
     except Exception as e:
         print(f"[Element_prompt_presets] 读取 {path} 失败: {e}")
         return {}
+    return _migrate_legacy_tags(db)
 
 
 def _write_db(db):
@@ -88,11 +113,43 @@ def _write_db(db):
     os.replace(tmp, path)
 
 
+def _migrate_legacy_tags(db):
+    """旧版把 tags 存在独立文件里，这里并入 prompts.json 后删除旧文件。"""
+    path = os.path.join(_store_dir(), LEGACY_TAGS_FILENAME)
+    if not os.path.isfile(path):
+        return db
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            legacy = json.load(f)
+    except Exception:
+        legacy = {}
+    changed = False
+    if isinstance(legacy, dict):
+        for preset, entries in legacy.items():
+            if not isinstance(entries, dict):
+                continue
+            for name, flag in entries.items():
+                if flag and name in db.get(preset, {}):
+                    db[preset][name] = _entry_value(_entry_text(db[preset][name]), True)
+                    changed = True
+    if changed:
+        _write_db(db)
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+    return db
+
+
 def _state(db):
     return {
         "success": True,
         "presets": _sorted_names(db.keys()),
         "prompts": {preset: _sorted_names(prompts.keys()) for preset, prompts in db.items()},
+        "tags": {
+            preset: {name: True for name, value in prompts.items() if _entry_tags(value)}
+            for preset, prompts in db.items()
+        },
         "dir": _store_dir(),
     }
 
@@ -125,6 +182,16 @@ def _parse_preset(data, fallback_name):
         raise ValueError("预设内容为空")
 
     values = list(data.values())
+    if all(_is_entry(v) for v in values):
+        prompts = {}
+        for name, value in data.items():
+            name = str(name).strip()
+            if name:
+                prompts[name] = _entry_value(_entry_text(value), _entry_tags(value))
+        if prompts:
+            return {fallback_name: prompts}
+        raise ValueError("预设中没有有效词条")
+
     if all(isinstance(v, dict) for v in values):
         out = {}
         for preset, prompts in data.items():
@@ -132,23 +199,13 @@ def _parse_preset(data, fallback_name):
             if not preset:
                 continue
             clean = {}
-            for name, text in prompts.items():
+            for name, value in prompts.items():
                 name = str(name).strip()
                 if name:
-                    clean[name] = text if isinstance(text, str) else str(text)
+                    clean[name] = _entry_value(_entry_text(value), _entry_tags(value))
             out[preset] = clean
         if out:
             return out
-        raise ValueError("预设中没有有效词条")
-
-    if all(isinstance(v, str) for v in values):
-        prompts = {}
-        for name, text in data.items():
-            name = str(name).strip()
-            if name:
-                prompts[name] = text
-        if prompts:
-            return {fallback_name: prompts}
         raise ValueError("预设中没有有效词条")
 
     raise ValueError("预设结构无法识别（不能混合分类和文本）")
@@ -321,6 +378,26 @@ def _single_line(text, seed):
     return lines[int(seed) % len(lines)]
 
 
+def _selected_pairs(selection):
+    try:
+        data = json.loads(selection) if selection else []
+    except Exception:
+        return []
+    pairs = []
+    for item in data if isinstance(data, list) else []:
+        if isinstance(item, (list, tuple)) and len(item) == 2:
+            preset, prompt = str(item[0]), str(item[1])
+            if preset and prompt:
+                pairs.append((preset, prompt))
+    return pairs
+
+
+def _entry_seed(seed, preset, prompt):
+    # 哈希派生而非 seed+i：仿射偏移仍受 lcm 周期限制
+    key = f"{seed}|{preset}|{prompt}".encode("utf-8")
+    return int.from_bytes(hashlib.blake2b(key, digest_size=8).digest(), "big")
+
+
 _COLLATOR = None
 
 # Windows 系统语言 LCID → 排序 locale
@@ -412,18 +489,47 @@ class ElementPromptPresets:
                     "control_after_generate": True,
                 }),
                 "prompt_text": ("STRING", {"multiline": True, "default": ""}),
-            }
+            },
+            "optional": {
+                "link": ("STRING", {"default": ", "}),
+                "selection": ("STRING", {"default": "[]"}),
+            },
         }
 
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("prompt_text",)
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("prompt_text", "prompt_list")
+    OUTPUT_IS_LIST = (False, True)
     FUNCTION = "get_prompt"
     CATEGORY = "Element_easy/Text"
 
-    def get_prompt(self, presets="", entry="", single_line=False, seed=0, prompt_text=""):
-        if single_line:
-            return (_single_line(prompt_text, seed),)
-        return (prompt_text,)
+    @classmethod
+    def IS_CHANGED(cls, **kwargs):
+        try:
+            stamp = os.path.getmtime(_store_path())
+        except OSError:
+            stamp = 0
+        return f"{stamp}|{kwargs.get('selection', '')}"
+
+    def get_prompt(self, presets="", entry="", single_line=False, seed=0,
+                   prompt_text="", link=", ", selection="[]"):
+        texts = []
+        pairs = _selected_pairs(selection)
+        if pairs:
+            db = _read_db()
+            for preset, prompt in pairs:
+                if (preset, prompt) == (presets, entry):
+                    value = prompt_text
+                elif prompt in db.get(preset, {}):
+                    value = _entry_text(db[preset][prompt])
+                else:
+                    continue
+                texts.append(_single_line(value, _entry_seed(seed, preset, prompt)) if single_line else value)
+
+        if texts:
+            return ((link or "").join(texts), texts,)
+
+        current = _single_line(prompt_text, seed) if single_line else prompt_text
+        return (current, [current],)
 
 
 NODE_CLASS_MAPPINGS = {"Element_prompt_presets": ElementPromptPresets}
@@ -441,9 +547,12 @@ async def eepp_state(request):
 async def eepp_prompts(request):
     preset = request.rel_url.query.get("presets", "")
     db = _read_db()
+    prompts = db.get(preset, {})
+    names = _sorted_names(prompts.keys())
     return web.json_response({
         "success": True,
-        "prompts": _sorted_names(db.get(preset, {}).keys()),
+        "prompts": names,
+        "tags": {name: True for name, value in prompts.items() if _entry_tags(value)},
     })
 
 
@@ -454,7 +563,7 @@ async def eepp_text(request):
     db = _read_db()
     return web.json_response({
         "success": True,
-        "prompt_text": db.get(preset, {}).get(prompt, ""),
+        "prompt_text": _entry_text(db.get(preset, {}).get(prompt, "")),
     })
 
 
@@ -469,7 +578,8 @@ async def eepp_save(request):
     text = "" if text is None else str(text)
     with _STORE_LOCK:
         db = _read_db()
-        db.setdefault(preset, {})[prompt] = text
+        prompts = db.setdefault(preset, {})
+        prompts[prompt] = _entry_value(text, _entry_tags(prompts.get(prompt)))
         _write_db(db)
     out = _state(db)
     out["message"] = f"已保存：{preset} / {prompt}"
@@ -489,10 +599,32 @@ async def eepp_create(request):
         db = _read_db()
         if prompt in db.get(preset, {}):
             return _error(f"词条已存在：{preset} / {prompt}", status=409)
-        db.setdefault(preset, {})[prompt] = text
+        db.setdefault(preset, {})[prompt] = _entry_value(text, bool(data.get("tags")))
         _write_db(db)
     out = _state(db)
     out["message"] = f"已新建：{preset} / {prompt}"
+    return web.json_response(out)
+
+
+@PromptServer.instance.routes.post("/element_prompt_presets/toggle_tags")
+async def eepp_toggle_tags(request):
+    data = await request.json()
+    preset = str(data.get("presets") or "").strip()
+    prompt = str(data.get("prompt") or "").strip()
+    if not preset or not prompt:
+        return _error("presets 和 prompt 不能为空")
+    with _STORE_LOCK:
+        db = _read_db()
+        prompts = db.get(preset)
+        if prompts is None or prompt not in prompts:
+            return _error(f"词条不存在：{preset} / {prompt}", status=404)
+        value = prompts[prompt]
+        enabled = not _entry_tags(value)
+        prompts[prompt] = _entry_value(_entry_text(value), enabled)
+        _write_db(db)
+    out = _state(db)
+    out["tags_on"] = enabled
+    out["message"] = f"{prompt}: {'tags' if enabled else 'natural language'} | {prompt}：{'标签' if enabled else '自然语言'}"
     return web.json_response(out)
 
 

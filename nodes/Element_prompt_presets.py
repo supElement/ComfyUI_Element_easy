@@ -516,14 +516,25 @@ class ElementPromptPresets:
         pairs = _selected_pairs(selection)
         if pairs:
             db = _read_db()
+            picked = []
             for preset, prompt in pairs:
+                stored = db.get(preset, {})
                 if (preset, prompt) == (presets, entry):
                     value = prompt_text
-                elif prompt in db.get(preset, {}):
-                    value = _entry_text(db[preset][prompt])
+                elif prompt in stored:
+                    value = _entry_text(stored[prompt])
                 else:
                     continue
-                texts.append(_single_line(value, _entry_seed(seed, preset, prompt)) if single_line else value)
+                picked.append((preset, prompt, value, _entry_tags(stored.get(prompt))))
+
+            texts = [
+                _single_line(value, _entry_seed(seed, preset, prompt)) if single_line else value
+                for preset, prompt, value, _ in picked
+            ]
+
+            # 全选自然语言时合并没有意义：prompt_text 改为按 seed 抽一条完整条目
+            if single_line and picked and not any(item[3] for item in picked):
+                return (picked[int(seed) % len(picked)][2], texts)
 
         if texts:
             return ((link or "").join(texts), texts,)

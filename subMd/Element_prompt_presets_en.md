@@ -10,7 +10,7 @@ Presets, including their tags marks, are stored in `ComfyUI/user/element_easy/pr
 |---|---|
 | presets | Category (e.g. fantasy / portrait / narrative) |
 | entry | Entry under the selected category; tagged entries show a solid dot `⬤` after the name (display only, never included in the output) |
-| single_line | When on, output **one line** per text; when off, output the whole text |
+| single_line | When on, output **one line** per text; when off, output the whole text. With a selection made up entirely of natural language entries, prompt_text outputs the **complete entry** drawn by seed instead |
 | seed | Seed used to pick the line |
 | prompt_text | The prompt text box, showing the selected entry; editable |
 | link | Separator used to merge selected entries into one text, default `, ` |
@@ -74,6 +74,8 @@ With a multi-selection, every entry uses its own derived seed instead of sharing
 
 - Derived seed = `hash(seed, category, entry)`, so line choices are unrelated across entries and do not jump in sync when the seed changes;
 - With N entries of n₁ … n_N lines each, about `n₁ × n₂ × … × n_N` combinations are possible (sharing one seed allows at most their least common multiple).
+
+When every selected entry is natural language (no tags), prompt_text is no longer merged: entry index = `seed % selected entry count` (in dialog order), and that entry's **complete text** is output without line picking; prompt_list still follows the per-entry one-line rule above. As soon as one tags entry is in the selection, prompt_text goes back to per-entry line picking + `link` merge.
 
 | Control mode | Behaviour |
 |---|---|

@@ -467,15 +467,14 @@ class ElementPromptPresets:
     @classmethod
     def INPUT_TYPES(cls):
         db = _read_db()
-        presets = list(db.keys())
-        first_prompts = list(db.get(presets[0], {}).keys()) if presets else []
+        presets = _sorted_names(db.keys())
         if not presets:
             presets = [FALLBACK_PRESET]
-        prompt_names = _ordered_prompt_names(db, first_prompts)
+        # 默认词条要和默认分类同源，否则新节点会显示「A 分类 + B 分类词条」的错位组合
+        first_prompts = _sorted_names(db.get(presets[0], {}).keys())
+        prompt_names = _sorted_names(set(_ordered_prompt_names(db, first_prompts)))
         if not prompt_names:
             prompt_names = [FALLBACK_PROMPT]
-        presets = _sorted_names(presets)
-        prompt_names = _sorted_names(set(prompt_names))
         default_prompt = first_prompts[0] if first_prompts else prompt_names[0]
         return {
             "required": {

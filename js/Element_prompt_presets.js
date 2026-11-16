@@ -429,6 +429,13 @@ function setup(node) {
         node.setDirtyCanvas?.(true, true);
     }
 
+    // 服务端 entry 候选是全库并集，先收成当前值，等 /state 返回后再换成当前分类的词条
+    function primeEntryList() {
+        const current = promptWidget.value;
+        setCombo(promptWidget, current ? [current] : [], current);
+        applyEntryLabels();
+    }
+
     function readSelection() {
         try {
             const data = JSON.parse(selectionWidget?.value || "[]");
@@ -1123,11 +1130,14 @@ function setup(node) {
 
     const controller = {
         initialized: false,
+        primeEntryList,
         refreshAfterConfigure() {
             return refreshState(presetWidget.value, promptWidget.value, true);
         },
     };
     node.__eepp = controller;
+
+    setTimeout(primeEntryList, 0);
 
     setTimeout(() => {
         if (controller.initialized) return;
@@ -1161,6 +1171,7 @@ app.registerExtension({
             const controller = this.__eepp;
             if (controller) {
                 controller.initialized = true;
+                controller.primeEntryList?.();
                 setTimeout(() => {
                     controller.refreshAfterConfigure()
                         .catch((error) => toast(error.message || String(error), true));

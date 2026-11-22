@@ -307,7 +307,7 @@ mask 描边：内外描边宽度和模糊度单独控制，支持非描边区域
 
 详细说明：[中文](subMd/Element_ModelMerge_zh.md) | [English](subMd/Element_ModelMerge_en.md)
 
-用一条曲线决定每个 block 取 model1 的比例，把 model2 按深度混进去。一个通用节点通过 `model_type` 切换 Krea2 / MOSS Image / Qwen Image / MiniMax H3 / Auraflow / LTXV / SDXL / WAN 2.1；非 block 层由对应的 8 个 Extras 节点提供比例，未连接时全为 1.0。曲线 y=1 为只取 model1，y=0 为只取 model2，画布上带 y=0.5 与 x=0.5 参考线。
+用一条曲线决定每个 block 取 model1 的比例，把 model2 按深度混进去。一个通用节点通过 `model_type` 切换 Krea2、MOSS Image、 Qwen Image、 MiniMax H3、 Auraflow、 LTXV、 SDXL、 WAN 2.1；非 block 层由对应的 8 个 Extras 节点提供比例，未连接时全为 1.0。曲线 y=1 为只取 model1，y=0 为只取 model2，画布上带 y=0.5 与 x=0.5 参考线。
 
 <img width="1164" height="844" alt="image" src="https://github.com/user-attachments/assets/63b95a61-6b40-45b1-8a70-96e2b5f52632" />
 

@@ -8,7 +8,7 @@
 
 import { app } from "/../scripts/app.js";
 import { $el } from "/../scripts/ui.js";
-import { eeMarkForward } from "./ee_canvas_utils.js";
+import { eeMarkForward, eeHitCurvePoint } from "./ee_canvas_utils.js";
 import { isNodes2_0, hideWidgetAndSlot } from "./ee_node_utils.js";
 
 
@@ -24,7 +24,6 @@ const MIN_NODE_WIDTH = 240;
 const MIN_NODE_HEIGHT = 280;
 const NON_WIDGET_HEIGHT = 122; // 预览55 + 槽位行24 + 按钮行22 + 边距，canvas 为 flex 自适应
 const MIN_WIDGET_HEIGHT = 100;
-const GRAB_THRESHOLD = 0.08;
 const POINT_RADIUS = 4;
 const POINT_COLOR = "#1E88E5";
 const CURVE_COLOR = "#fff";
@@ -774,7 +773,7 @@ function setup(node) {
         let pts = strToPts(gw.value);
 
         if (e.button === 2) {
-            const idx = pts.findIndex(p => Math.hypot(p.x - x, p.y - y) < GRAB_THRESHOLD);
+            const idx = eeHitCurvePoint(pts, x, y, rect.width, rect.height);
             if (idx > 0 && idx < pts.length - 1 && pts.length > MIN_POINTS) {
                 pushUndo(gw.value);
                 pts.splice(idx, 1);
@@ -785,7 +784,7 @@ function setup(node) {
         }
 
         if (e.button === 0) {
-            let existingIdx = pts.findIndex(p => Math.hypot(p.x - x, p.y - y) < GRAB_THRESHOLD);
+            let existingIdx = eeHitCurvePoint(pts, x, y, rect.width, rect.height);
 
             if (existingIdx >= 0) {
                 dragIdx = existingIdx;
@@ -851,7 +850,7 @@ function setup(node) {
             draw(pts);
         }
 
-        const over = pts.some(p => Math.hypot(p.x - x, p.y - y) < GRAB_THRESHOLD);
+        const over = eeHitCurvePoint(pts, x, y, rect.width, rect.height) !== -1;
         canvas.style.cursor = dragIdx >= 0 || over ? "pointer" : "crosshair";
     };
     

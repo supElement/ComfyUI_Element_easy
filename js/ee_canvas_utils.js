@@ -129,3 +129,22 @@ export function eeMarkForward(el) {
     wrap.setAttribute("data-ee-forward-wheel", "1");
   }
 }
+
+// 曲线点命中：按像素距离判定。归一化坐标的 x/y 分母不同（宽 vs 高），
+// 直接比较归一化距离会让横向和纵向的宽容度不一致。
+export function eeHitCurvePoint(pts, x, y, w, h, radius = 8, wrapX = false) {
+  let best = -1;
+  let bestDist = radius;
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i];
+    let dx = Math.abs((Array.isArray(p) ? p[0] : p.x) - x);
+    if (wrapX) dx = Math.min(dx, 1 - dx);
+    const dy = ((Array.isArray(p) ? p[1] : p.y) - y) * h;
+    const d = Math.hypot(dx * w, dy);
+    if (d <= bestDist) {
+      bestDist = d;
+      best = i;
+    }
+  }
+  return best;
+}

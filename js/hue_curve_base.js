@@ -3,7 +3,7 @@
 // 共享工具（isNodes2_0 / hideWidgetAndSlot / 隔离执行）见 ee_node_utils.js。
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
-import { eeMarkForward } from "./ee_canvas_utils.js";
+import { eeMarkForward, eeHitCurvePoint } from "./ee_canvas_utils.js";
 import { isNodes2_0, hideWidgetAndSlot, eeRunIsolatedPreview } from "./ee_node_utils.js";
 
 export function registerHueCurveNode(cfg) {
@@ -577,20 +577,27 @@ export function registerHueCurveNode(cfg) {
                     return [Math.max(0, Math.min(1, x)), Math.max(0, Math.min(1, y))];
                 };
 
+                // Hue 的 x 是环形色相，命中时按环形最短距离计算
+                const hitCurvePoint = (x, y) => eeHitCurvePoint(
+                    curvePoints, x, y,
+                    canvas.width - PADDING * 2,
+                    canvas.height - PADDING * 2,
+                    8 * (canvas.clientWidth ? canvas.width / canvas.clientWidth : 1),
+                    true
+                );
+
+                canvas.addEventListener("mousemove", (e) => {
+                    if (isDragging) {
+                        canvas.style.cursor = "pointer";
+                        return;
+                    }
+                    const [x, y] = getPos(e);
+                    canvas.style.cursor = hitCurvePoint(x, y) !== -1 ? "pointer" : "crosshair";
+                });
+
                 canvas.addEventListener("mousedown", (e) => {
                     const [x, y] = getPos(e);
-                    let closestIdx = -1, minDist = 0.05;
-                
-                    for (let i = 0; i < curvePoints.length; i++) {
-                        const dxRaw = Math.abs(curvePoints[i][0] - x);
-                        const dx = Math.min(dxRaw, 1 - dxRaw); // 考虑Hue环形距离
-                        const dy = Math.abs(curvePoints[i][1] - y);
-                        const dist = Math.hypot(dx, dy);
-                        if (dist < minDist) { 
-                            minDist = dist; 
-                            closestIdx = i; 
-                        }
-                    }
+                    const closestIdx = hitCurvePoint(x, y);
 
                     if (e.button === 0) { 
                         if (closestIdx !== -1) {

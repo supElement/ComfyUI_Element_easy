@@ -1,6 +1,6 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
-import { eeMarkForward } from "./ee_canvas_utils.js";
+import { eeMarkForward, eeHitCurvePoint } from "./ee_canvas_utils.js";
 import { isNodes2_0, hideWidgetAndSlot, eeRunIsolatedPreview } from "./ee_node_utils.js";
 
 
@@ -594,19 +594,26 @@ app.registerExtension({
                     return [Math.max(0, Math.min(1, x)), Math.max(0, Math.min(1, y))];
                 };
 
+                const hitCurvePoint = (x, y) => eeHitCurvePoint(
+                    curveData[activeChannel], x, y,
+                    canvas.width - PADDING * 2,
+                    canvas.height - PADDING * 2,
+                    8 * (canvas.clientWidth ? canvas.width / canvas.clientWidth : 1)
+                );
+
+                canvas.addEventListener("mousemove", (e) => {
+                    if (isDragging) {
+                        canvas.style.cursor = "pointer";
+                        return;
+                    }
+                    const [x, y] = getPos(e);
+                    canvas.style.cursor = hitCurvePoint(x, y) !== -1 ? "pointer" : "crosshair";
+                });
+
                 canvas.addEventListener("mousedown", (e) => {
                     const [x, y] = getPos(e);
                     const pts = curveData[activeChannel];
-                    
-                    let closestIdx = -1;
-                    let minDist = 0.05; 
-                    for (let i = 0; i < pts.length; i++) {
-                        let dist = Math.hypot(pts[i][0] - x, pts[i][1] - y);
-                        if (dist < minDist) {
-                            minDist = dist;
-                            closestIdx = i;
-                        }
-                    }
+                    const closestIdx = hitCurvePoint(x, y);
 
                     if (e.button === 0) { 
                         if (closestIdx === -1) {
